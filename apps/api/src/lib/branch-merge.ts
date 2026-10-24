@@ -6,7 +6,9 @@ import {
   builds,
   desc,
   eq,
+  recomputeRunStatus,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   type DB,
@@ -21,7 +23,12 @@ import {
   recordBranchMergeOutcome,
 } from "./branch-merge-metrics.js";
 import type { Broadcaster } from "./broadcast.js";
-import { addDiffJob } from "./diff-enqueue.js";
+import {
+  addStepDiffJobs,
+  NEW_STEP_GENERATION,
+  stepDiffJob,
+  type StepDiffJob,
+} from "./diff-enqueue.js";
 
 /**
  * Shared backing implementation for the cross-branch baseline merge.
@@ -183,6 +190,8 @@ export async function mergeBranchBaselinesImpl(
   //    success response with the skipped list.
   const enqueued: Array<{ variationId: string; runId: string }> = [];
   const skipped: Array<{ variationId: string; reason: string }> = [];
+  // One job per copied step, each queued by its insert at version 1.
+  const jobs: StepDiffJob[] = [];
 
   for (const source of latestPerVariation) {
     const sourceShots = await deps.db
@@ -213,15 +222,20 @@ export async function mergeBranchBaselinesImpl(
       continue;
     }
 
-    // Synthetic test_run on toBranch. `merge: true` + threshold override 0
-    // matches legacy diffTollerancePercent: 0. The diff worker takes over
-    // from here — byte-identical → ADR-032 auto-approve, divergent →
-    // unresolved.
+    // Synthetic test_run on toBranch. Threshold override 0 matches legacy
+    // diffTollerancePercent: 0. The diff worker takes over from here —
+    // byte-identical → ADR-032 auto-approve, divergent → unresolved.
+    // `merge` (a baseline row exists for the run) and the status are the
+    // rollup's, recomputed below once the steps exist.
     //
     // ADR-038: test_runs no longer carries testVariationId/browser/viewport/
     // os/device — those live on test_variations and screenshots. We create the
     // run with only project/build/name/branch, then insert screenshot rows
     // that reference the source variation directly.
+    //
+    // Locks: the run is new, so no other transaction can lock it before this
+    // one commits; the copies below take only `KEY SHARE` on their variation
+    // (foreign key), which no diff commit's lock conflicts with.
     const runRows = await deps.db
       .insert(testRuns)
       .values({
@@ -231,7 +245,6 @@ export async function mergeBranchBaselinesImpl(
         name: variation.name,
         customTags: variation.customTags,
         status: "running",
-        merge: true,
         diffThresholdOverride: 0,
       })
       .returning();
@@ -248,42 +261,42 @@ export async function mergeBranchBaselinesImpl(
     // Screenshot rows — reference the same content-addressed imageKey as
     // the source. ADR-038: unique constraint is (run_id, name, viewport);
     // we copy the source checkpoint's identity columns for traceability.
+    // Each copy is queued by its insert, like an upload's step.
+    const stepIds: string[] = [];
     for (const shot of sourceShots) {
-      await deps.db.insert(screenshots).values({
-        runId: run.id,
-        projectId,
-        testVariationId: shot.testVariationId,
-        name: shot.name,
-        imageKey: shot.imageKey,
-        domKey: shot.domKey,
-        elementMapKey: shot.elementMapKey,
-        viewport: shot.viewport,
-        browser: shot.browser,
-        os: shot.os,
-        device: shot.device,
-        matchLevel: shot.matchLevel,
-      });
+      const [copy] = await deps.db
+        .insert(screenshots)
+        .values({
+          runId: run.id,
+          projectId,
+          testVariationId: shot.testVariationId,
+          name: shot.name,
+          imageKey: shot.imageKey,
+          domKey: shot.domKey,
+          elementMapKey: shot.elementMapKey,
+          viewport: shot.viewport,
+          browser: shot.browser,
+          os: shot.os,
+          device: shot.device,
+          matchLevel: shot.matchLevel,
+          diffGeneration: NEW_STEP_GENERATION,
+          diffQueuedAt: sql`clock_timestamp()`,
+        })
+        .returning({ id: screenshots.id });
+      stepIds.push(copy!.id);
     }
 
-    // Best-effort enqueue — a queue blip should not fail an otherwise
-    // successful synthetic run. Bytes are persisted, the reviewer can
-    // manually re-trigger via setIgnoreAreas (which re-enqueues). Deferred to
-    // after-commit when the caller is transaction-scoped (onCommit) so the
-    // worker never sees the job before the run/screenshot rows.
-    const runId = run.id;
-    const enqueueDiff = async (): Promise<void> => {
-      try {
-        await addDiffJob(
-          { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
-          "branch_merge",
-          { runId, projectId },
-        );
-      } catch (err) {
-        deps.log.warn({ err, runId, projectId }, "merge_diff_enqueue_failed");
-      }
-    };
-    if (deps.onCommit) deps.onCommit(enqueueDiff);
-    else await enqueueDiff();
+    // The run's totals, as an upload keeps them: its step count, and the
+    // status from its steps (`running` until every copy has its verdict).
+    await deps.db
+      .update(testRuns)
+      .set({ checkpointCount: stepIds.length })
+      .where(eq(testRuns.id, run.id));
+    await recomputeRunStatus(deps.db, run.id);
+
+    for (const screenshotId of stepIds) {
+      jobs.push(stepDiffJob(run, screenshotId, NEW_STEP_GENERATION));
+    }
 
     enqueued.push({ variationId: source.variationId, runId: run.id });
     recordBranchMergeOutcome(deps.telemetry.metrics, "enqueued");
@@ -292,6 +305,34 @@ export async function mergeBranchBaselinesImpl(
       event: "testRun_created",
       data: { id: run.id },
     });
+  }
+
+  // Best-effort enqueue of every copied step, in one bulk — a queue blip
+  // should not fail an otherwise successful merge. Bytes are persisted, and
+  // the reconciler re-queues a step whose job was lost. Deferred to
+  // after-commit when the caller is transaction-scoped (onCommit) so the
+  // worker never sees a job before the run/screenshot rows.
+  if (jobs.length > 0) {
+    const enqueueDiffs = async (): Promise<void> => {
+      const refused = await addStepDiffJobs(
+        { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
+        "branch_merge",
+        jobs,
+      );
+      for (const { job, err } of refused) {
+        deps.log.warn(
+          {
+            err,
+            runId: job.runId,
+            projectId,
+            screenshotId: job.screenshotId,
+          },
+          "merge_diff_enqueue_failed",
+        );
+      }
+    };
+    if (deps.onCommit) deps.onCommit(enqueueDiffs);
+    else await enqueueDiffs();
   }
 
   // After all synthetic runs are inserted, signal the build summary to

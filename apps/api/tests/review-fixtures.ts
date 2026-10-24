@@ -69,6 +69,11 @@ export interface ReviewRunSpec {
    */
   lifecycle?: RunStatus;
   override?: RunStatusOverride | null;
+  /**
+   * The run's id. Default: random. Pin it to make ids sort against capture
+   * order, for a test of anything ordered by run id.
+   */
+  runId?: string;
 }
 
 export interface ReviewShot {
@@ -182,6 +187,7 @@ async function insertRun(
   const [run] = await h.db
     .insert(testRuns)
     .values({
+      ...(spec.runId !== undefined ? { id: spec.runId } : {}),
       buildId: ctx.buildId,
       projectId: ctx.projectId,
       name: `run-${ctx.tag}`,

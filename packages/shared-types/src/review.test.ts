@@ -62,6 +62,7 @@ describe("review enums", () => {
       "already_decided",
       "nothing_to_approve",
       "not_in_run",
+      "diff_failed",
     ]);
     expect(revertSkipReasonSchema.options).toEqual([
       "already_undone",

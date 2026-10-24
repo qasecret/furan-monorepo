@@ -81,6 +81,18 @@ const target = (runId: string, screenshotId: string) => ({
   screenshotId,
 });
 
+/** `RevertResult.rediffSteps`' order: by run id, then step id. */
+const stepOrder = (steps: Array<{ runId: string; screenshotId: string }>) =>
+  [...steps].sort((a, b) =>
+    a.runId !== b.runId
+      ? a.runId < b.runId
+        ? -1
+        : 1
+      : a.screenshotId < b.screenshotId
+        ? -1
+        : 1,
+  );
+
 /** The structured refusal a review error carries. */
 function refusal(err: unknown): { code: string; message: string } {
   expect(err).toBeInstanceOf(TRPCError);
@@ -539,8 +551,8 @@ d("revertAction", () => {
         actionId,
         reverted: 1,
         skipped: [],
-        // Every run with an approve undone is re-diffed (R28).
-        rediffRunIds: [s.runId],
+        // Every undone approve's step is re-diffed (R28).
+        rediffSteps: [{ runId: s.runId, screenshotId: home.id }],
         runs: [{ runId: s.runId, status: "unresolved" }],
       });
       const run = await runRow(s.runId);
@@ -728,7 +740,7 @@ d("revertAction", () => {
       actionId,
       reverted: 1,
       skipped: [],
-      rediffRunIds: [],
+      rediffSteps: [],
       runs: [{ runId: s.runId, status: "unresolved" }],
     });
     expect((await decisionsOfAction(actionId))[0]!.revertedAt).not.toBeNull();
@@ -768,7 +780,7 @@ d("revertAction", () => {
         skipped: [
           { checkpointId: home.id, reason: "superseded_newer_capture" },
         ],
-        rediffRunIds: [],
+        rediffSteps: [],
         runs: [{ runId: s.runId, status: "passed" }],
       });
       expect(await baselinesOfRun(s.runId)).toHaveLength(1);
@@ -862,7 +874,7 @@ d("revertAction", () => {
         expect(res.skipped).toEqual([
           { checkpointId: decided.id, reason: "superseded_newer_capture" },
         ]);
-        expect(res.rediffRunIds).toEqual([]);
+        expect(res.rediffSteps).toEqual([]);
         expect(await baselinesOfRun(decided.runId)).toHaveLength(1);
         expect((await decisionsOfAction(actionId))[0]!.revertedAt).toBeNull();
       },
@@ -948,7 +960,7 @@ d("revertAction", () => {
         actionId,
         reverted: 0,
         skipped: [{ checkpointId: home.id, reason: "not_undoable_legacy" }],
-        rediffRunIds: [],
+        rediffSteps: [],
         runs: [{ runId: s.runId, status: "passed" }],
       });
       // A refusal for any reason but already_undone is audited (R26).
@@ -1063,7 +1075,7 @@ d("revertAction", () => {
         actionId,
         reverted: 0,
         skipped: [{ checkpointId: home.id, reason: "already_undone" }],
-        rediffRunIds: [],
+        rediffSteps: [],
         runs: [{ runId: s.runId, status: "unresolved" }],
       });
       expect((await decisionsOfAction(actionId))[0]).toEqual(afterFirst);
@@ -1113,7 +1125,7 @@ d("revertAction", () => {
         skipped: [
           { checkpointId: home.id, reason: "superseded_variation_edit" },
         ],
-        rediffRunIds: [],
+        rediffSteps: [],
         runs: [{ runId: s.runId, status: "passed" }],
       });
       expect(await variationRow(home.variationId)).toEqual(edited);
@@ -1288,7 +1300,7 @@ d("revertAction", () => {
         actionId,
         reverted: 1,
         skipped: [],
-        rediffRunIds: [s.runId],
+        rediffSteps: [{ runId: s.runId, screenshotId: home.id }],
         runs: [{ runId: s.runId, status: "running" }],
       });
       const shot = await shotRow(home.id);
@@ -1320,12 +1332,14 @@ d("revertAction", () => {
 
       const res = await revert(s.editor, actionId);
 
-      expect(res.rediffRunIds).toEqual([s.runId]);
+      expect(res.rediffSteps).toEqual([
+        { runId: s.runId, screenshotId: home.id },
+      ]);
       expect(res.runs).toEqual([{ runId: s.runId, status: "unresolved" }]);
       expect((await shotRow(home.id)).verdict).toBe("unresolved");
     });
 
-    test("every run with an approve undone is re-diffed, once, ascending; a run with only rejects undone is not (R28)", async () => {
+    test("every undone approve's step is re-diffed, once, ascending run id; a run with only rejects undone is not (R28)", async () => {
       const s = await seed({
         checkpoints: [
           { name: "home", verdict: "unresolved", withBaseline: true },
@@ -1347,19 +1361,45 @@ d("revertAction", () => {
         target(r3.runId, r3.shots.login!.id),
       ]);
 
-      // Two approves in one run and one in another: each run once, ascending.
+      // Two approves in one run and one in another: each step once, grouped
+      // by run, ascending.
       const first = await revert(s.editor, approved);
       expect(first.reverted).toBe(3);
-      expect(first.rediffRunIds).toEqual([s.runId, r2.runId].sort());
+      expect(first.rediffSteps).toEqual(
+        stepOrder([
+          { runId: s.runId, screenshotId: s.shots.home!.id },
+          { runId: s.runId, screenshotId: s.shots.cart!.id },
+          { runId: r2.runId, screenshotId: r2.shots.home!.id },
+        ]),
+      );
       expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ action_id: approved, rediff: 2 }),
+        expect.objectContaining({ action_id: approved, rediff: 3 }),
         "review_reverted",
       );
 
       // A reject changes no baseline: nothing for a re-diff to correct.
       const second = await revert(s.editor, rejected);
       expect(second.reverted).toBe(1);
-      expect(second.rediffRunIds).toEqual([]);
+      expect(second.rediffSteps).toEqual([]);
+    });
+
+    test("only the undone approves' steps are named, not the run's other steps", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+          { name: "cart", verdict: "passed" },
+          { name: "login", verdict: "unresolved" },
+        ],
+      });
+      const actionId = await decide(s, "approved", [
+        target(s.runId, s.shots.home!.id),
+      ]);
+
+      const res = await revert(s.editor, actionId);
+
+      expect(res.rediffSteps).toEqual([
+        { runId: s.runId, screenshotId: s.shots.home!.id },
+      ]);
     });
 
     test("a run whose only approve is refused is not re-diffed (R28)", async () => {
@@ -1382,7 +1422,7 @@ d("revertAction", () => {
           reason: "superseded_newer_capture",
         },
       ]);
-      expect(res.rediffRunIds).toEqual([]);
+      expect(res.rediffSteps).toEqual([]);
     });
 
     describe("a retried undo (R30: the re-diff may have been lost after the first commit)", () => {
@@ -1404,20 +1444,22 @@ d("revertAction", () => {
       test("asks again for the runs that still have a checkpoint without a verdict, and writes no second audit row", async () => {
         const { s, home, actionId } = await approvedAndRediffed();
         const first = await revert(s.editor, actionId);
-        expect(first.rediffRunIds).toEqual([s.runId]);
+        expect(first.rediffSteps).toEqual([
+          { runId: s.runId, screenshotId: home.id },
+        ]);
         expect((await shotRow(home.id)).verdict).toBeNull();
         expect(await revertAudit(actionId)).toHaveLength(1);
         logger.info.mockClear();
 
         // The caller's enqueue after the first commit was lost: the retry
-        // finds everything already undone and still names the run.
+        // finds everything already undone and still names the step.
         const retry = await revert(s.editor, actionId);
 
         expect(retry).toEqual({
           actionId,
           reverted: 0,
           skipped: [{ checkpointId: home.id, reason: "already_undone" }],
-          rediffRunIds: [s.runId],
+          rediffSteps: [{ runId: s.runId, screenshotId: home.id }],
           runs: [{ runId: s.runId, status: "running" }],
         });
         expect(await revertAudit(actionId)).toHaveLength(1);
@@ -1434,7 +1476,7 @@ d("revertAction", () => {
 
         const retry = await revert(s.editor, actionId);
 
-        expect(retry.rediffRunIds).toEqual([]);
+        expect(retry.rediffSteps).toEqual([]);
         expect(retry.skipped).toEqual([
           { checkpointId: home.id, reason: "already_undone" },
         ]);
@@ -1463,7 +1505,39 @@ d("revertAction", () => {
         const retry = await revert(s.editor, actionId);
 
         expect(retry.reverted).toBe(0);
-        expect(retry.rediffRunIds).toEqual([r2.runId]);
+        expect(retry.rediffSteps).toEqual([
+          { runId: r2.runId, screenshotId: r2.shots.cart!.id },
+        ]);
+      });
+
+      test("names the waiting run's steps without a verdict, and only those", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+            { name: "cart", verdict: "passed" },
+            { name: "login", verdict: "passed" },
+          ],
+        });
+        const home = s.shots.home!;
+        const actionId = await decide(s, "approved", [
+          target(s.runId, home.id),
+        ]);
+        await rediffNow(home.id);
+        await revert(s.editor, actionId);
+        // Another step of the run is waiting for a diff of its own.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: null, verdictAt: null })
+          .where(eq(screenshots.id, s.shots.login!.id));
+
+        const retry = await revert(s.editor, actionId);
+
+        expect(retry.rediffSteps).toEqual(
+          stepOrder([
+            { runId: s.runId, screenshotId: home.id },
+            { runId: s.runId, screenshotId: s.shots.login!.id },
+          ]),
+        );
       });
 
       test("an undone reject never asks for a re-diff, whatever the verdicts", async () => {
@@ -1484,7 +1558,7 @@ d("revertAction", () => {
 
         const retry = await revert(s.editor, actionId);
 
-        expect(retry.rediffRunIds).toEqual([]);
+        expect(retry.rediffSteps).toEqual([]);
       });
     });
   });
@@ -1513,7 +1587,7 @@ d("revertAction", () => {
       actionId,
       reverted: 1,
       skipped: [],
-      rediffRunIds: [s.runId],
+      rediffSteps: [{ runId: s.runId, screenshotId: home.id }],
       runs: [{ runId: s.runId, status: "unresolved" }],
     });
     expect(await baselinesOfRun(s.runId)).toEqual([]);
@@ -1823,7 +1897,7 @@ d("revertAction", () => {
       actionId,
       reverted: 0,
       skipped: [{ checkpointId: home.id, reason: "already_undone" }],
-      rediffRunIds: [],
+      rediffSteps: [],
       runs: [{ runId: s.runId, status: "unresolved" }],
     });
     expect(await baselinesOfRun(s.runId)).toEqual([]);

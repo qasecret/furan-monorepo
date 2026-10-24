@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -7,7 +8,9 @@ import {
   eq,
   projectMembers,
   projects,
+  recomputeRunStatus,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
@@ -20,6 +23,7 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
@@ -31,6 +35,13 @@ import {
   diffJobsEnqueued,
   type TestApp,
 } from "./helpers.js";
+
+// `recomputeRunStatus` calls straight through; the spy lets a test see which
+// runs the merge recomputed.
+vi.mock("@furan/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@furan/db")>();
+  return { ...actual, recomputeRunStatus: vi.fn(actual.recomputeRunStatus) };
+});
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -249,13 +260,15 @@ d("tRPC projects.mergeBranchBaselines", () => {
     expect(mainBuild?.branchName).toBe("main");
     expect(mainBuild?.ciBuildId).toBe("merge:feature/x->main");
 
-    // Three merge=true runs on main with threshold override 0.
+    // Three runs on main with threshold override 0, `running` until their
+    // copies are diffed. `merge` is the rollup's (a baseline row exists for
+    // the run): none yet.
     const mainRuns = await h.db
       .select()
       .from(testRuns)
       .where(eq(testRuns.branchName, "main"));
     expect(mainRuns).toHaveLength(3);
-    expect(mainRuns.every((r) => r.merge === true)).toBe(true);
+    expect(mainRuns.every((r) => r.merge === false)).toBe(true);
     expect(mainRuns.every((r) => Number(r.diffThresholdOverride) === 0)).toBe(
       true,
     );
@@ -272,16 +285,143 @@ d("tRPC projects.mergeBranchBaselines", () => {
     // Each variation has 1 source shot + 1 synthetic shot, so 6 rows total.
     expect(mainKeys.length).toBe(6);
 
-    // Diff queue calls — one per synthetic run.
+    // Diff queue calls — one per copied step (one per synthetic run here),
+    // each queued by its insert at version 1, under its job id.
+    const copies = mainShots.filter((sh) =>
+      mainRuns.some((r) => r.id === sh.runId),
+    );
+    expect(copies).toHaveLength(3);
+    expect(copies.every((sh) => sh.diffGeneration === 1)).toBe(true);
+    expect(copies.every((sh) => sh.diffQueuedAt instanceof Date)).toBe(true);
     expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
-    expect(h.diffQueueAdd).toHaveBeenCalledWith(
-      "diff",
-      expect.objectContaining({ projectId: s.projectId }),
+    const byStep = (a: { screenshotId: string }, b: { screenshotId: string }) =>
+      a.screenshotId.localeCompare(b.screenshotId);
+    expect(
+      h.diffQueueAdd.mock.calls
+        .map(([, p, o]) => ({ ...p, jobId: o?.jobId }))
+        .sort(byStep),
+    ).toEqual(
+      copies
+        .map((sh) => ({
+          runId: sh.runId,
+          projectId: s.projectId,
+          screenshotId: sh.id,
+          generation: 1,
+          jobId: `${sh.id}-g1`,
+        }))
+        .sort(byStep),
     );
     // ...each counted under the branch_merge trigger.
     expect(
       await diffJobsEnqueued(h.app.telemetry.metrics, "branch_merge"),
     ).toBe(enqueuedBefore + 3);
+  });
+
+  test("branch merge queues every copied step and sets the synthetic run's count and status", async () => {
+    await seedVariationWithBaseline(h, s, "responsive", "hash-r", {
+      viewports: ["1280x720", "375x812"],
+    });
+    await seedVariationWithBaseline(h, s, "single", "hash-s");
+    vi.mocked(recomputeRunStatus).mockClear();
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.projects.mergeBranchBaselines.mutate({
+      projectId: s.projectId,
+      fromBranch: "feature/x",
+      toBranch: "main",
+    });
+
+    expect(res.runCount).toBe(2);
+    const mainRuns = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.branchName, "main"));
+    const copies = await h.db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.projectId, s.projectId));
+    const copiesOf = (runId: string) =>
+      copies.filter((sh) => sh.runId === runId);
+    expect(mainRuns.map((r) => copiesOf(r.id).length).sort()).toEqual([1, 2]);
+    for (const run of mainRuns) {
+      // The count is the run's copied steps; the status is the rollup's
+      // (`recomputeRunStatus`, in the merge's transaction): `running`, as
+      // no copy has a verdict until its diff lands.
+      expect(run.checkpointCount).toBe(copiesOf(run.id).length);
+      expect(run.status).toBe("running");
+      expect(recomputeRunStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        run.id,
+      );
+    }
+    expect(recomputeRunStatus).toHaveBeenCalledTimes(2);
+    // Every copied step, at version 1, under its job id; nothing else.
+    const queued = mainRuns.flatMap((r) => copiesOf(r.id));
+    expect(
+      h.diffQueueAdd.mock.calls.map(([, p, o]) => [p.screenshotId, o.jobId]),
+    ).toEqual(
+      expect.arrayContaining(queued.map((sh) => [sh.id, `${sh.id}-g1`])),
+    );
+    expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
+  });
+
+  test("the merged run's status is the rollup of its copied steps, not the one it is inserted with", async () => {
+    // A merged run is inserted `running`, and a copy that has no verdict
+    // yet rolls up to `running` as well, so a normal merge can't tell a
+    // recompute from the insert. A trigger gives the steps inserted under a
+    // marker name no other test uses (the variation's source step was inserted
+    // before it existed, so only the copy) a verdict as they are inserted: the
+    // rollup is then `passed`, which only a recompute over the steps can
+    // write. The trigger is dropped afterwards, and does nothing to any other
+    // step even if a crash leaves it behind.
+    const marker = `rollup-marker-${randomUUID()}`;
+    await seedVariationWithBaseline(h, s, marker, "hash-rollup");
+    // Named with a random suffix, so two local runs on one database never
+    // drop each other's trigger. Everything that creates it is inside the
+    // `try`, so the `finally` drops whatever got created.
+    const fn = sql.raw(`merge_test_copy_verdict_${randomUUID().slice(0, 8)}`);
+    vi.mocked(recomputeRunStatus).mockClear();
+
+    try {
+      await h.db.execute(sql`
+        create or replace function ${fn}() returns trigger language plpgsql as $body$
+        begin
+          if new.name = '${sql.raw(marker)}' then
+            new.verdict := 'passed';
+            new.verdict_at := clock_timestamp();
+          end if;
+          return new;
+        end
+        $body$`);
+      await h.db.execute(sql`drop trigger if exists ${fn} on screenshots`);
+      await h.db.execute(
+        sql`create trigger ${fn} before insert on screenshots for each row execute function ${fn}()`,
+      );
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+      expect(res.runCount).toBe(1);
+
+      const [run] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.branchName, "main"));
+      // Not the `running` the insert wrote; no baseline row exists for it, so
+      // the rollup's `merge` is false as well.
+      expect(run!.status).toBe("passed");
+      expect(run!.merge).toBe(false);
+      expect(recomputeRunStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        run!.id,
+      );
+    } finally {
+      await h.db.execute(sql`drop trigger if exists ${fn} on screenshots`);
+      await h.db.execute(sql`drop function if exists ${fn}()`);
+    }
   });
 
   test("an enqueue failure stays best-effort and is counted as a branch_merge failure", async () => {

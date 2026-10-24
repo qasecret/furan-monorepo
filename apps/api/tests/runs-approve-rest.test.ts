@@ -9,6 +9,8 @@
  * `pnpm --filter @furan/api typecheck` and `pnpm --filter @furan/api lint`.
  */
 
+import { randomUUID } from "node:crypto";
+
 import {
   baselines,
   builds,
@@ -289,10 +291,115 @@ d("POST /runs/:id/approve", () => {
       url: `/runs/${run!.id}/approve`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
-    // The core refuses (PRECONDITION_FAILED run_overridden): 409, as before.
+    // The core refuses (PRECONDITION_FAILED run_overridden): 409, as before,
+    // with no `reason` (only a failed diff carries one).
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ code: "approve_failed" });
+    expect(res.json()).toEqual({
+      code: "approve_failed",
+      message: "Approve failed",
+      statusCode: 409,
+    });
     expect(await decisionsOf(h, run!.id)).toHaveLength(0);
+  });
+
+  test("a run with a failed step is refused → 409 approve_failed, nothing decided", async () => {
+    const s = await seedBase(h);
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId: s.buildId,
+        projectId: s.projectId,
+        name: "approve-failed-step",
+        branchName: "main",
+        status: "unresolved",
+      })
+      .returning();
+    await addCheckpoint(h, s, run!.id, "healthy-step", "unresolved");
+    const broken = await addCheckpoint(
+      h,
+      s,
+      run!.id,
+      "broken-step",
+      "unresolved",
+    );
+    await h.db
+      .update(screenshots)
+      .set({ diffFailedAt: new Date(), diffError: "engine_error" })
+      .where(eq(screenshots.id, broken.shot.id));
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${run!.id}/approve`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+
+    // The failed step can't be approved until its diff is retried, so the
+    // run-level approve is refused whole (the core's `diff_failed`), not
+    // applied to the steps that could be. The 409 says so (`reason`), so the
+    // SDK can tell "retry the diff" from a run that is not reviewable.
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      code: "approve_failed",
+      message: "Approve failed",
+      statusCode: 409,
+      reason: "diff_failed",
+    });
+    expect(await decisionsOf(h, run!.id)).toHaveLength(0);
+  });
+
+  test("a failed step that already has a decision doesn't block the approve", async () => {
+    const s = await seedBase(h);
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId: s.buildId,
+        projectId: s.projectId,
+        name: "approve-decided-failed",
+        branchName: "main",
+        status: "unresolved",
+      })
+      .returning();
+    const healthy = await addCheckpoint(
+      h,
+      s,
+      run!.id,
+      "healthy-step",
+      "unresolved",
+    );
+    const broken = await addCheckpoint(
+      h,
+      s,
+      run!.id,
+      "broken-step",
+      "unresolved",
+    );
+    await h.db
+      .update(screenshots)
+      .set({ diffFailedAt: new Date(), diffError: "timeout" })
+      .where(eq(screenshots.id, broken.shot.id));
+    // Decided before the re-diff failed: decisions survive re-diffs.
+    await h.db.insert(checkpointDecisions).values({
+      projectId: s.projectId,
+      runId: run!.id,
+      screenshotId: broken.shot.id,
+      actionId: randomUUID(),
+      decision: "rejected",
+      actorId: s.memberId,
+      source: "viewer",
+      before: { baseline: null, variation: null },
+    });
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${run!.id}/approve`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const approved = (await decisionsOf(h, run!.id))
+      .filter((x) => x.decision === "approved")
+      .map((x) => x.screenshotId);
+    expect(approved).toEqual([healthy.shot.id]);
   });
 
   test("approve without auth → 401", async () => {
@@ -359,5 +466,6 @@ d("POST /runs/:id/approve", () => {
     // The core refuses (PRECONDITION_FAILED not_reviewable) → 409 Conflict
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: "approve_failed" });
+    expect(res.json()).not.toHaveProperty("reason");
   });
 });

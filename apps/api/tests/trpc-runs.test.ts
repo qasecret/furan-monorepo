@@ -1156,15 +1156,18 @@ d("tRPC runs router", () => {
       // ADR-038: test_runs no longer has ignore_areas column. Run-scope ignore
       // areas are written to the first checkpoint's variation's ignore_regions.
       // Seed a screenshot to link the run to the variation.
-      await h.db.insert(screenshots).values({
-        runId: s.runId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        name: "home",
-        imageKey: "seed-img",
-        viewport: VP,
-        browser: "chromium",
-      });
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          name: "home",
+          imageKey: "seed-img",
+          viewport: VP,
+          browser: "chromium",
+        })
+        .returning({ id: screenshots.id });
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
@@ -1188,11 +1191,18 @@ d("tRPC runs router", () => {
         .limit(1);
       expect(vRow.ignoreRegions).toEqual([validRegion]);
 
+      // The run's step, at its next version, under its job id.
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-        runId: s.runId,
-        projectId: s.projectId,
-      });
+      expect(h.diffQueueAdd).toHaveBeenCalledWith(
+        "diff",
+        {
+          runId: s.runId,
+          projectId: s.projectId,
+          screenshotId: shot!.id,
+          generation: 1,
+        },
+        { jobId: `${shot!.id}-g1` },
+      );
       expect(
         await diffJobsEnqueued(h.app.telemetry.metrics, "ignore_areas"),
       ).toBe(enqueuedBefore + 1);
@@ -1201,15 +1211,18 @@ d("tRPC runs router", () => {
     test("scope=variation writes to test_variations.ignore_regions and enqueues a diff job (ADR-038)", async () => {
       // ADR-038: ignore_areas on test_variations renamed to ignore_regions (jsonb).
       // Seed a screenshot to link the run to the variation.
-      await h.db.insert(screenshots).values({
-        runId: s.runId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        name: "home",
-        imageKey: "seed-img",
-        viewport: VP,
-        browser: "chromium",
-      });
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          name: "home",
+          imageKey: "seed-img",
+          viewport: VP,
+          browser: "chromium",
+        })
+        .returning({ id: screenshots.id });
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
@@ -1233,10 +1246,16 @@ d("tRPC runs router", () => {
       expect(vRow.ignoreRegions).toEqual([validRegion]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-        runId: s.runId,
-        projectId: s.projectId,
-      });
+      expect(h.diffQueueAdd).toHaveBeenCalledWith(
+        "diff",
+        {
+          runId: s.runId,
+          projectId: s.projectId,
+          screenshotId: shot!.id,
+          generation: 1,
+        },
+        { jobId: `${shot!.id}-g1` },
+      );
     });
 
     test("ignoreAreas: null clears the target variation column (scope=run, ADR-038)", async () => {
@@ -3516,16 +3535,200 @@ d("tRPC runs router", () => {
             threshold: 0.05,
           });
         }
+        const step = rs.shots.home!.id;
         expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-          runId: rs.runId,
-          projectId: rs.projectId,
-          parentPrBaseBranch: "main",
-        });
+        expect(h.diffQueueAdd).toHaveBeenCalledWith(
+          "diff",
+          {
+            runId: rs.runId,
+            projectId: rs.projectId,
+            screenshotId: step,
+            generation: 1,
+            parentPrBaseBranch: "main",
+          },
+          { jobId: `${step}-g1` },
+        );
         expect(await diffJobsEnqueued(h.app.telemetry.metrics, trigger)).toBe(
           enqueuedBefore + 1,
         );
       },
     );
+
+    // Spec 2026-10-23 §7: each re-diff queues the steps it affects, each at
+    // its next version, and nothing else.
+    describe("each re-diff queues only the steps it affects", () => {
+      const region = (viewport: string) => ({
+        x: 1,
+        y: 1,
+        width: 5,
+        height: 5,
+        viewport,
+        paddingPx: 0,
+        kind: "ignore" as const,
+      });
+
+      /**
+       * A run the per-step pipeline already diffed (every step at version
+       * 1), so no legacy fan-out (Ruling R6) widens what a re-diff queues.
+       */
+      async function perStepSeed(spec: ReviewRunSpec): Promise<ReviewSeed> {
+        const rs = await reviewSeed(spec);
+        await h.db
+          .update(screenshots)
+          .set({ diffGeneration: 1 })
+          .where(eq(screenshots.runId, rs.runId));
+        h.diffQueueAdd.mockClear();
+        return rs;
+      }
+
+      /** The jobs added since the last clear: `[screenshotId, generation]`. */
+      const queued = () =>
+        h.diffQueueAdd.mock.calls.map(([, p]) => [
+          p.screenshotId,
+          p.generation,
+        ]);
+
+      async function generationOf(id: string) {
+        const [row] = await h.db
+          .select({ generation: screenshots.diffGeneration })
+          .from(screenshots)
+          .where(eq(screenshots.id, id));
+        return row!.generation;
+      }
+
+      test.each(["setIgnoreAreas", "addIgnoreAreas"] as const)(
+        "%s queues only the step of that variation",
+        async (procedure) => {
+          const rs = await perStepSeed({
+            checkpoints: [
+              { name: "home", verdict: "unresolved" },
+              { name: "cart", verdict: "unresolved" },
+              { name: "login", verdict: "passed" },
+            ],
+          });
+          const input = {
+            runId: rs.runId,
+            scope: "variation" as const,
+            checkpointId: rs.shots.cart!.id,
+            ignoreAreas: [region("1280x720")],
+          };
+          const c = as(rs.editor);
+          await (procedure === "setIgnoreAreas"
+            ? c.runs.setIgnoreAreas.mutate(input)
+            : c.runs.addIgnoreAreas.mutate(input));
+
+          expect(queued()).toEqual([[rs.shots.cart!.id, 2]]);
+          expect(await generationOf(rs.shots.home!.id)).toBe(1);
+          expect(await generationOf(rs.shots.login!.id)).toBe(1);
+        },
+      );
+
+      test("setTempIgnoreAreas with tags 1280x720 → 375x812 queues only steps on those viewports", async () => {
+        const rs = await perStepSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", viewport: "1280x720" },
+            { name: "home", verdict: "unresolved", viewport: "375x812" },
+            { name: "home", verdict: "unresolved", viewport: "768x1024" },
+          ],
+        });
+        const [desktop, phone, tablet] = rs.shotsInOrder.map((x) => x.id) as [
+          string,
+          string,
+          string,
+        ];
+        // The run's temp regions before the edit: tagged 1280x720.
+        await h.db
+          .update(testRuns)
+          .set({ tempIgnoreAreas: JSON.stringify([region("1280x720")]) })
+          .where(eq(testRuns.id, rs.runId));
+
+        await as(rs.editor).runs.setTempIgnoreAreas.mutate({
+          runId: rs.runId,
+          tempIgnoreAreas: [region("375x812")],
+        });
+
+        // The old tag's step loses its mask, the new tag's step gains one.
+        expect(queued()).toEqual([
+          [desktop, 2],
+          [phone, 2],
+        ]);
+        expect(await generationOf(tablet)).toBe(1);
+      });
+
+      test("setTempIgnoreAreas with an untagged region queues every step", async () => {
+        const rs = await perStepSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", viewport: "1280x720" },
+            { name: "home", verdict: "passed", viewport: "375x812" },
+            { name: "home", verdict: "unresolved", viewport: "768x1024" },
+          ],
+        });
+        // A stored region without a viewport tag (written before tags were
+        // required) applies to every step (ADR-031), so replacing it
+        // changes every step's mask.
+        const { viewport: _untagged, ...untagged } = region("1280x720");
+        await h.db
+          .update(testRuns)
+          .set({ tempIgnoreAreas: JSON.stringify([untagged]) })
+          .where(eq(testRuns.id, rs.runId));
+
+        await as(rs.editor).runs.setTempIgnoreAreas.mutate({
+          runId: rs.runId,
+          tempIgnoreAreas: [region("375x812")],
+        });
+
+        expect(queued()).toEqual(rs.shotsInOrder.map((x) => [x.id, 2]));
+      });
+
+      test("setTempIgnoreAreas from no regions to none queues nothing", async () => {
+        const rs = await perStepSeed({
+          checkpoints: [{ name: "home", verdict: "unresolved" }],
+        });
+        const c = as(rs.editor);
+
+        await c.runs.setTempIgnoreAreas.mutate({
+          runId: rs.runId,
+          tempIgnoreAreas: [],
+        });
+        await c.runs.setTempIgnoreAreas.mutate({
+          runId: rs.runId,
+          tempIgnoreAreas: null,
+        });
+
+        expect(h.diffQueueAdd).not.toHaveBeenCalled();
+        expect(await generationOf(rs.shots.home!.id)).toBe(1);
+      });
+
+      test("setDiffThresholdOverride queues every step except new ones", async () => {
+        const rs = await perStepSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved" },
+            { name: "fresh", verdict: "new" },
+            { name: "cart", verdict: "passed" },
+            { name: "waiting", verdict: null },
+            { name: "broken", verdict: "unresolved" },
+          ],
+        });
+        // A failed step: its verdict is `unresolved`, with the failure set.
+        await h.db
+          .update(screenshots)
+          .set({ diffFailedAt: new Date(), diffError: "engine_error" })
+          .where(eq(screenshots.id, rs.shots.broken!.id));
+
+        await as(rs.editor).runs.setDiffThresholdOverride.mutate({
+          runId: rs.runId,
+          threshold: 0.05,
+        });
+
+        // No baseline, no threshold: a `new` step's result can't change.
+        expect(queued()).toEqual(
+          ["home", "cart", "waiting", "broken"].map((n) => [
+            rs.shots[n]!.id,
+            2,
+          ]),
+        );
+        expect(await generationOf(rs.shots.fresh!.id)).toBe(1);
+      });
+    });
   });
 });

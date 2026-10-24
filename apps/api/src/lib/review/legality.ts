@@ -23,6 +23,11 @@ export interface TargetFacts {
   verdict: CheckpointVerdict | null;
   /** This checkpoint's active decision (`reverted_at IS NULL`), if any. */
   active: CheckpointDecisionKind | null;
+  /**
+   * This checkpoint's diff failed for good (`diff_failed_at IS NOT NULL`): it
+   * has no result to decide on until it is retried (`runs.retryDiff`).
+   */
+  diffFailed: boolean;
 }
 
 /** Lifecycles in which nothing may be decided: a diff is still out, or the run never finished. */
@@ -63,8 +68,14 @@ export function assessRun(
  * | approve | reviewable, verdict ∈ {new, unresolved}, no active decision | not_reviewable / already_decided / nothing_to_approve |
  * | reject  | reviewable, verdict ∈ {new, unresolved, passed}, no active  | not_reviewable / already_decided                       |
  *
+ * Either action on a checkpoint whose diff failed (`diffFailed`) is
+ * `diff_failed`, checked last (spec 2026-10-23 §7): after the run's state, the
+ * verdict and the decision checks, which each name a more specific way out.
+ *
  * A decision is never changed directly (undo it first), so an active one is
- * `already_decided` whatever its kind and whatever the verdict.
+ * `already_decided` whatever its kind and whatever the verdict, a failed
+ * checkpoint included: a decision made before the diff failed stands (decisions
+ * survive re-diffs), and undoing it, not retrying, is what changes it.
  */
 export function assessDecision(
   f: TargetFacts,
@@ -79,5 +90,6 @@ export function assessDecision(
   if (decision === "approved" && f.verdict === "passed") {
     return "nothing_to_approve";
   }
+  if (f.diffFailed) return "diff_failed";
   return null;
 }

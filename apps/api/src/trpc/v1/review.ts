@@ -28,7 +28,7 @@ import {
   type Selection,
 } from "../../lib/review/actions.js";
 import { selectPendingTargets } from "../../lib/review/decide.js";
-import { enqueueRunDiff } from "../../lib/review/enqueue.js";
+import { queueStepDiffs } from "../../lib/review/enqueue.js";
 import { reviewError } from "../../lib/review/errors.js";
 import { recordReviewNext } from "../../lib/review/metrics.js";
 import {
@@ -51,7 +51,7 @@ import { ignoreRegionElementSchema, MAX_IGNORE_REGIONS } from "./runs.js";
 export type { ReviewResult };
 
 /** What `review.revert` returns: the core's result without the re-diffs it queued. */
-export type RevertOutput = Omit<RevertResult, "rediffRunIds">;
+export type RevertOutput = Omit<RevertResult, "rediffSteps">;
 
 /**
  * The `review` router (spec §5.2): the per-checkpoint approve / reject, the
@@ -492,11 +492,12 @@ export const reviewRouter = t.router({
    * not fatal. The gate's project is the one of the action's oldest decision,
    * and the core acts in that project only (an action id may exist in two).
    *
-   * After commit: the project is told which runs changed, then a re-diff is
-   * queued for every run in `rediffRunIds` (with the run's parent branch like
-   * the upload that first diffed it). A retry announces again, and queues
-   * again a run that still waits for its diff (R30); the events are
-   * idempotent refresh hints.
+   * The steps in `rediffSteps` are queued for a re-diff in the same
+   * transaction, run by run in ascending run id (`queueStepDiffs`, with the
+   * run's parent branch like the upload that first diffed it). After commit:
+   * the project is told which runs changed, then the re-diff jobs are added. A
+   * retry announces again, and queues again the steps of a run that still
+   * wait for their diff (R30); the events are idempotent refresh hints.
    */
   revert: publicProcedure
     .input(revertInput)
@@ -512,7 +513,7 @@ export const reviewRouter = t.router({
     .mutation(async ({ ctx, input }): Promise<RevertOutput> => {
       const actx = trpcActionCtx(ctx);
       const projectId = await requireActionProject(actx.tx, input.actionId);
-      const { rediffRunIds, ...result } = await revertAction(
+      const { rediffSteps, ...result } = await revertAction(
         actx.tx,
         { actor: actx.actor, actionId: input.actionId, projectId },
         actx.deps,
@@ -526,7 +527,13 @@ export const reviewRouter = t.router({
         projectId,
         result.runs.map((r) => r.runId),
       );
-      if (rediffRunIds.length > 0) {
+      if (rediffSteps.length > 0) {
+        const stepsByRun = new Map<string, string[]>();
+        for (const { runId, screenshotId } of rediffSteps) {
+          const ids = stepsByRun.get(runId);
+          if (ids) ids.push(screenshotId);
+          else stepsByRun.set(runId, [screenshotId]);
+        }
         const rediffs = await actx.tx
           .select({
             id: testRuns.id,
@@ -534,9 +541,13 @@ export const reviewRouter = t.router({
             parentBranchName: testRuns.parentBranchName,
           })
           .from(testRuns)
-          .where(inArray(testRuns.id, rediffRunIds))
+          .where(inArray(testRuns.id, [...stepsByRun.keys()]))
           .orderBy(asc(testRuns.id));
-        for (const run of rediffs) enqueueRunDiff(ctx, run, "undo");
+        // `revertAction` locked these runs (ascending), then the variations:
+        // each bump re-takes its run's lock and adds its steps' under it.
+        for (const run of rediffs) {
+          await queueStepDiffs(ctx, run, stepsByRun.get(run.id)!, "undo");
+        }
       }
       return result;
     }),
