@@ -1816,7 +1816,7 @@
             }
           ],
           "isUnique": false,
-          "where": "\"screenshots\".\"verdict\" IS NULL AND \"screenshots\".\"diff_failed_at\" IS NULL",
+          "where": "(\"screenshots\".\"diff_failed_at\" IS NULL AND (\"screenshots\".\"verdict\" IS NULL OR \"screenshots\".\"verdict_at\" < \"screenshots\".\"diff_queued_at\"))",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -13,6 +13,7 @@ import {
   projects,
   screenshots,
   sql,
+  stepAwaitingDiff,
   testRuns,
   testVariations,
   type DB,
@@ -234,6 +235,55 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect((await b).map((x) => x.generation)).toEqual([1, 1]);
     });
 
+    it("stamps the queue time after the run lock: a result that committed while it waited is older", async () => {
+      const { runId, steps } = await seedRun(1);
+      const stepId = steps[0]!;
+
+      // Transaction B is the previous version's diff commit: it holds the run.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: (pid: number) => void;
+      const pidOfB = new Promise<number>((resolve) => (started = resolve));
+      const b = db.transaction(async (tx) => {
+        const rows = await tx.execute<{ pid: number }>(
+          sql`SELECT pg_backend_pid() AS pid`,
+        );
+        await tx.execute(
+          sql`SELECT id FROM test_runs WHERE id = ${runId} FOR NO KEY UPDATE`,
+        );
+        started(rows[0]!.pid);
+        await gate;
+        // Its result, stamped as `commitStep` does, AFTER transaction A began.
+        await tx
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, stepId));
+      });
+
+      // Transaction A queues the step again. It begins now and waits for the
+      // run, so its own start time is older than B's result.
+      const blockerPid = await pidOfB;
+      const a = db.transaction((tx) => bumpStepGenerations(tx, runId, steps));
+      try {
+        expect(await waitForLockWaiter(blockerPid)).toBe(true);
+      } finally {
+        release();
+        await b;
+      }
+      expect(await a).toEqual([{ id: stepId, generation: 1 }]);
+
+      // The new version has no result yet: the step must still await one, or a
+      // lost job of it would never be found.
+      const [row] = await db
+        .select({
+          awaiting: sql<boolean>`${stepAwaitingDiff(screenshots)} IS TRUE`,
+          queuedAfterResult: sql<boolean>`${screenshots.diffQueuedAt} > ${screenshots.verdictAt}`,
+        })
+        .from(screenshots)
+        .where(eq(screenshots.id, stepId));
+      expect(row).toEqual({ awaiting: true, queuedAfterResult: true });
+    });
+
     it("works inside a transaction that already holds the run", async () => {
       const { runId, steps } = await seedRun(1);
       const bumped = await db.transaction(async (tx) => {
@@ -304,6 +354,94 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
         .from(testRuns)
         .where(eq(testRuns.id, runId));
       expect(run!.status).toBe("unresolved");
+    });
+
+    describe("an abort the old whole-run pipeline wrote", () => {
+      async function runRow(runId: string) {
+        const [run] = await db
+          .select({
+            status: testRuns.status,
+            abortedByDiff: testRuns.abortedByDiff,
+          })
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        return run!;
+      }
+
+      /**
+       * A run of `n` passed steps whose `awaiting` last steps were queued
+       * again (version 1, no verdict), with its status set as an old worker
+       * or the SDK left it.
+       */
+      async function abortedRun(
+        n: number,
+        awaiting: number,
+        abortedByDiff: boolean,
+      ) {
+        const { runId, steps } = await seedRun(n, { verdict: "passed" });
+        await db
+          .update(screenshots)
+          .set({ verdict: null, diffGeneration: 1 })
+          .where(inArray(screenshots.id, steps.slice(n - awaiting)));
+        await db
+          .update(testRuns)
+          .set({ status: "aborted", abortedByDiff })
+          .where(eq(testRuns.id, runId));
+        return { runId, steps };
+      }
+
+      const fail = (runId: string, stepId: string) =>
+        db.transaction((tx) =>
+          markStepDiffFailed(tx, {
+            runId,
+            stepId,
+            generation: 1,
+            code: "engine_error",
+          }),
+        );
+
+      it("heals when the run's last step without a verdict fails: the run takes its rollup", async () => {
+        const { runId, steps } = await abortedRun(3, 1, true);
+
+        const result = await fail(runId, steps[2]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(true);
+        expect(result.rollup).toEqual({
+          before: "running",
+          after: "unresolved",
+        });
+        expect(await runRow(runId)).toEqual({
+          status: "unresolved",
+          abortedByDiff: false,
+        });
+      });
+
+      it("does not heal while another step still has no verdict", async () => {
+        const { runId, steps } = await abortedRun(3, 2, true);
+
+        const result = await fail(runId, steps[2]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(false);
+        expect(await runRow(runId)).toEqual({
+          status: "aborted",
+          abortedByDiff: true,
+        });
+      });
+
+      it("never heals an SDK or capture abort (the flag is false)", async () => {
+        const { runId, steps } = await abortedRun(2, 1, false);
+
+        const result = await fail(runId, steps[1]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(false);
+        expect(await runRow(runId)).toEqual({
+          status: "aborted",
+          abortedByDiff: false,
+        });
+      });
     });
 
     it("refreshes the run totals in the same commit", async () => {
@@ -533,13 +671,26 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect(run!.status).toBe("unresolved");
     });
 
-    it("with onlyIfUndiffed, is a no-op on a step that already has a verdict", async () => {
+    // Ruling R23: a step awaits a diff until a result NEWER than its queue
+    // time lands. A re-diff keeps the old result meanwhile, so an old verdict
+    // alone does not mean the current version was diffed.
+    const QUEUED = new Date("2026-10-23T12:00:00Z");
+    const BEFORE = new Date("2026-10-23T11:59:00Z");
+    const AFTER = new Date("2026-10-23T12:00:01Z");
+
+    it("with onlyIfAwaitingDiff, is a no-op on a step whose result landed after it was queued", async () => {
       const { runId, steps } = await seedRun(2, { verdict: "passed" });
       const stepId = steps[0]!;
       // A commit landed at the same version between the caller's scan and now.
       await db
         .update(screenshots)
-        .set({ diffGeneration: 1, diffPercent: 1.5, diffImageKey: "k-done" })
+        .set({
+          diffGeneration: 1,
+          diffQueuedAt: QUEUED,
+          verdictAt: AFTER,
+          diffPercent: 1.5,
+          diffImageKey: "k-done",
+        })
         .where(eq(screenshots.id, stepId));
       await addRegion(runId, stepId);
       const before = await stepRow(stepId);
@@ -548,7 +699,7 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
         markStepDiffFailed(
           tx,
           { runId, stepId, generation: 1, code: "timeout" },
-          { onlyIfUndiffed: true },
+          { onlyIfAwaitingDiff: true },
         ),
       );
 
@@ -557,19 +708,19 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect(await regionCount(stepId)).toBe(1);
     });
 
-    it("with onlyIfUndiffed, still fails a step that has no verdict", async () => {
+    it("with onlyIfAwaitingDiff, still fails a step that has no verdict", async () => {
       const { runId, steps } = await seedRun(1);
       const stepId = steps[0]!;
       await db
         .update(screenshots)
-        .set({ diffGeneration: 1 })
+        .set({ diffGeneration: 1, diffQueuedAt: QUEUED })
         .where(eq(screenshots.id, stepId));
 
       const result = await db.transaction((tx) =>
         markStepDiffFailed(
           tx,
           { runId, stepId, generation: 1, code: "timeout" },
-          { onlyIfUndiffed: true },
+          { onlyIfAwaitingDiff: true },
         ),
       );
 
@@ -577,6 +728,118 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       const row = await stepRow(stepId);
       expect(row.verdict).toBe("unresolved");
       expect(row.diffError).toBe("timeout");
+    });
+
+    it("with onlyIfAwaitingDiff, fails a re-diffed step whose only result predates its queue time", async () => {
+      const { runId, steps } = await seedRun(1, { verdict: "passed" });
+      const stepId = steps[0]!;
+      // Re-queued at version 2 (an ignore-area change, say) after its version-1
+      // result: it keeps that result until the new one lands, and none did.
+      await db
+        .update(screenshots)
+        .set({
+          diffGeneration: 2,
+          diffQueuedAt: QUEUED,
+          verdictAt: BEFORE,
+          diffPercent: 3,
+          diffImageKey: "k-old",
+        })
+        .where(eq(screenshots.id, stepId));
+      await addRegion(runId, stepId);
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(
+          tx,
+          { runId, stepId, generation: 2, code: "timeout" },
+          { onlyIfAwaitingDiff: true },
+        ),
+      );
+
+      expect(result.applied).toBe(true);
+      const row = await stepRow(stepId);
+      expect(row.verdict).toBe("unresolved");
+      expect(row.diffError).toBe("timeout");
+      expect(row.diffPercent).toBeNull();
+      expect(row.diffImageKey).toBeNull();
+      expect(await regionCount(stepId)).toBe(0);
+    });
+
+    it("with onlyIfAwaitingDiff, is a no-op on a step that already failed", async () => {
+      const { runId, steps } = await seedRun(1, { verdict: "unresolved" });
+      const stepId = steps[0]!;
+      await db
+        .update(screenshots)
+        .set({
+          diffGeneration: 1,
+          diffQueuedAt: QUEUED,
+          verdictAt: AFTER,
+          diffFailedAt: AFTER,
+          diffError: "engine_error",
+        })
+        .where(eq(screenshots.id, stepId));
+      const before = await stepRow(stepId);
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(
+          tx,
+          { runId, stepId, generation: 1, code: "timeout" },
+          { onlyIfAwaitingDiff: true },
+        ),
+      );
+
+      expect(result).toEqual({ applied: false });
+      expect(await stepRow(stepId)).toEqual(before);
+    });
+
+    it("with onlyIfAwaitingDiff, is a no-op when a result commits while it waits for the step", async () => {
+      const { runId, steps } = await seedRun(1);
+      const stepId = steps[0]!;
+      // Queued on the database's clock, as `bumpStepGenerations` does, so the
+      // result below is stamped after it.
+      await db
+        .update(screenshots)
+        .set({ diffGeneration: 1, diffQueuedAt: sql`now()` })
+        .where(eq(screenshots.id, stepId));
+
+      // Transaction A is the version-1 job's commit: it holds the step and
+      // writes its result, stamped with the clock, as `commitStep` does.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: (pid: number) => void;
+      const pidOfA = new Promise<number>((resolve) => (started = resolve));
+      const a = db.transaction(async (tx) => {
+        const rows = await tx.execute<{ pid: number }>(
+          sql`SELECT pg_backend_pid() AS pid`,
+        );
+        await tx
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, stepId));
+        started(rows[0]!.pid);
+        await gate;
+      });
+
+      // Transaction B gives up on the step from an earlier scan. It must wait
+      // for A, then judge the step as A left it: diffed, so nothing to fail.
+      const blockerPid = await pidOfA;
+      const b = db.transaction((tx) =>
+        markStepDiffFailed(
+          tx,
+          { runId, stepId, generation: 1, code: "timeout" },
+          { onlyIfAwaitingDiff: true },
+        ),
+      );
+      try {
+        expect(await waitForLockWaiter(blockerPid)).toBe(true);
+      } finally {
+        release();
+        await a;
+      }
+
+      expect(await b).toEqual({ applied: false });
+      const row = await stepRow(stepId);
+      expect(row.verdict).toBe("passed");
+      expect(row.diffFailedAt).toBeNull();
     });
 
     it("without the option, fails a step even when it has a verdict", async () => {

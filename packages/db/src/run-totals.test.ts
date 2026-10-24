@@ -344,6 +344,34 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunTotals", () => {
       expect((await totals(runId)).diffName).toBe("k-new");
     });
 
+    // The old in-memory fold ranked EVERY step by its diff % (a step that was
+    // not compared counting as 0, ties to the first captured), so when no
+    // compared step differs the first step names the image, a `new` one too.
+    it("with no compared step above 0%, the first step with a verdict names it (new: NULL)", async () => {
+      const runId = await seedRun([
+        // Not diffed yet: no verdict, so it takes no part.
+        { verdict: null, at: 0 },
+        { verdict: "new", key: null, at: 10 },
+        { diffPercent: 0, pixels: 0, key: "k-zero-overlay", at: 20 },
+      ]);
+      await recompute(runId);
+
+      const t = await totals(runId);
+      expect(t.diffName).toBeNull();
+      expect(t.diffPercent).toBe(0);
+    });
+
+    it("with no compared step above 0%, a first compared step names its own image", async () => {
+      const runId = await seedRun([
+        { diffPercent: 0, pixels: 0, key: "k-first", at: 10 },
+        { verdict: "new", key: null, at: 20 },
+        { diffPercent: 0, pixels: 0, key: "k-later", at: 30 },
+      ]);
+      await recompute(runId);
+
+      expect((await totals(runId)).diffName).toBe("k-first");
+    });
+
     it("a legacy step next to a re-diffed one: the computed value wins", async () => {
       const runId = await seedRun(
         [

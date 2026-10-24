@@ -1,6 +1,7 @@
 import { severityRank, type Severity } from "@furan/shared-types";
 import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 
+import type { DB } from "./client.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import type { Tx } from "./review-status.js";
 import { diffRegions, screenshots, testRuns } from "./schema/index.js";
@@ -81,14 +82,22 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
 
   const worst = worstOf(compared);
 
-  // `baseline_source` ranks every step that resolved a baseline, new or not,
-  // exactly as the old fold did; a step that was not compared ranks as 0.
+  // `diff_name` and `baseline_source` rank steps exactly as the old fold did:
+  // a step that was not compared ranks as 0, ties to the step captured first.
+  // `diff_name` ranks every step with a verdict, so when no compared step
+  // differs (max 0%) the first such step names the image, and a `new` one
+  // names none. `baseline_source` ranks every step that resolved a baseline,
+  // new or not.
   const rank = (s: StepRow): number =>
     isCompared(s) ? (s.diffPercent ?? 0) : 0;
-  const withSource = steps.filter((s) => s.baselineSource !== null);
-  const worstWithSource = withSource.reduce<StepRow | null>(
-    (acc, s) => (acc === null || rank(s) > rank(acc) ? s : acc),
-    null,
+  const worstRanked = (candidates: readonly StepRow[]): StepRow | null =>
+    candidates.reduce<StepRow | null>(
+      (acc, s) => (acc === null || rank(s) > rank(acc) ? s : acc),
+      null,
+    );
+  const named = worstRanked(steps.filter((s) => s.verdict !== null));
+  const worstWithSource = worstRanked(
+    steps.filter((s) => s.baselineSource !== null),
   );
 
   // A legacy run, never diffed by the per-step pipeline, has no per-step
@@ -108,7 +117,12 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
       compared.length > 0
         ? compared.reduce((sum, s) => sum + (s.pixelMismatchCount ?? 0), 0)
         : null,
-    diffName: legacy ? undefined : (worst?.diffImageKey ?? null),
+    // Only a compared step's image counts, whatever a `new` step stores.
+    diffName: legacy
+      ? undefined
+      : named !== null && isCompared(named)
+        ? named.diffImageKey
+        : null,
     baselineSource: worstWithSource?.baselineSource ?? null,
     vlmDescription:
       steps.find((s) => s.vlmDescription !== null && s.vlmDescription !== "")
@@ -136,8 +150,10 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
  * | ---------------------- | --------------------------------------------------- |
  * | `diff_percent`         | max over compared steps; NULL if none               |
  * | `pixel_mis_match_count`| sum over the same steps; NULL if none               |
- * | `diff_name`            | `diff_image_key` of the max step (ties: first); NULL|
- * |                        | if it has none. Kept as stored on a legacy run: one |
+ * | `diff_name`            | `diff_image_key` of the max step among steps with a |
+ * |                        | verdict, a step not compared ranking 0 (ties:       |
+ * |                        | first); NULL if it has none or was not compared.    |
+ * |                        | Kept as stored on a legacy run: one                 |
  * |                        | where every step with a verdict is still at version |
  * |                        | 0 (never diffed by the per-step pipeline).          |
  * | `baseline_source`      | source of the max step among steps with a source    |
@@ -156,9 +172,17 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
  * Writes nothing when every total is already right, so a burst of per-step
  * commits does not rewrite the hot run row for no reason.
  *
+ * `tx` is the caller's transaction: a Drizzle transaction, or the scoped
+ * handle `withProjectScope` passes (typed `DB`), as `recomputeRunStatus`
+ * accepts. Called on a bare pool connection it would lock nothing past its
+ * first statement.
+ *
  * @throws `run_not_found:<runId>` when the run does not exist.
  */
-export async function recomputeRunTotals(tx: Tx, runId: string): Promise<void> {
+export async function recomputeRunTotals(
+  tx: DB | Tx,
+  runId: string,
+): Promise<void> {
   const [run] = await tx
     .select({
       diffPercent: testRuns.diffPercent,
