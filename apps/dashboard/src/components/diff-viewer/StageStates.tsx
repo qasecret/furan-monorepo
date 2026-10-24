@@ -51,6 +51,12 @@ export interface StageStatesInput {
   legacyMissing: boolean;
   /** R4: the step has a pixel-diff region, or a diff percent above 0. */
   stepHasDiff: boolean;
+  /**
+   * R52: the step has no verdict yet (new mid-run, or just retried): it has
+   * not been compared, so Diff claims nothing about its changes or its diff
+   * image.
+   */
+  awaitingDiff?: boolean;
   /** The loaded images' sizes. */
   sizes: { baseline?: Size; current?: Size; diff?: Size };
   /** The GPU's largest texture side, in px (`readMaxTextureSize`). */
@@ -85,7 +91,8 @@ export interface StageStatesInput {
  *   screenshots in at the same size and no diff image asked for (the step's
  *   key is null), R4: a step with no diff has no changes, and a step with a
  *   diff on a legacy run lost its image to history. A step with a diff on a
- *   run of one step says nothing.
+ *   run of one step says nothing, and neither does a step with no verdict
+ *   yet (R52).
  */
 export function stageStates(input: StageStatesInput): StageState[] {
   const { set, hasBaseline, sizes, maxTextureSize: max } = input;
@@ -133,11 +140,13 @@ export function stageStates(input: StageStatesInput): StageState[] {
       (baseline.w !== current.w || baseline.h !== current.h)
     ) {
       states.push({ kind: "diff-size-mismatch", baseline, current });
-    } else if (noDiffImage && !input.stepHasDiff) {
-      // Only with both screenshots in can it say they are the same (M4).
-      if (baseline && current) states.push({ kind: "diff-no-changes" });
-    } else if (noDiffImage && input.legacyMissing) {
-      states.push({ kind: "diff-legacy-missing" });
+    } else if (noDiffImage && !input.awaitingDiff) {
+      if (!input.stepHasDiff) {
+        // Only with both screenshots in can it say they are the same (M4).
+        if (baseline && current) states.push({ kind: "diff-no-changes" });
+      } else if (input.legacyMissing) {
+        states.push({ kind: "diff-legacy-missing" });
+      }
     }
   }
   return states;

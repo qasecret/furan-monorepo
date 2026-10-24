@@ -147,6 +147,11 @@ interface Props {
    */
   stepHasDiff?: boolean;
   /**
+   * R52: the step has no verdict yet, so Diff says nothing about its changes
+   * or its diff image.
+   */
+  awaitingDiff?: boolean;
+  /**
    * The active step's checkpoint id. Once the step's images are on the stage
    * and a frame has gone by, the stage root carries it as `data-stage-drawn`
    * (a test hook, see the effect below). Absent while the step is not known.
@@ -277,6 +282,7 @@ export function ViewerStage({
   elementMap,
   legacyMissing = false,
   stepHasDiff = regions.some(isPixelDiffRegion),
+  awaitingDiff = false,
   checkpointId,
   diffFailed = null,
   onRetryDiff,
@@ -433,6 +439,7 @@ export function ViewerStage({
     hasBaseline,
     legacyMissing,
     stepHasDiff,
+    awaitingDiff,
     sizes: {
       baseline: images.baseline?.size,
       current: images.current?.size,

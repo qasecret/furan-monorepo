@@ -1602,6 +1602,125 @@ describe("DiffViewer", () => {
       );
     });
 
+    // R52: a step with no verdict yet (new mid-run, or just retried) has not
+    // been compared, so Diff claims nothing about it: not "no changes", and
+    // not that its diff image was lost.
+    describe("Diff on a step with no verdict yet (R52)", () => {
+      const NO_DIFF_IMAGE = /No diff image was kept/;
+      const noClaim = (r: ReturnType<typeof render>) => {
+        expect(r.queryByText(/No pixel changes/)).toBeNull();
+        expect(r.queryByText(NO_DIFF_IMAGE)).toBeNull();
+      };
+      const undiffed = {
+        state: null,
+        verdict: null,
+        diffPercent: null,
+        diffGeneration: 1,
+      };
+
+      test("a new step with no state and no numbers says nothing about changes", async () => {
+        const r = await openDiffStep("c1", 3, [
+          { id: "c1", name: "Home", ...undiffed },
+          { id: "c2", name: "Search", diffPercent: 3 },
+        ]);
+        noClaim(r);
+      });
+
+      test("nor that its diff image was lost, with a region from before still on it", async () => {
+        loadingStorage();
+        inDiff();
+        legacyRun([region("c2")]);
+        mockCheckpoints = {
+          items: [
+            { id: "c1", name: "Home", state: "unresolved" },
+            { id: "c2", name: "Search", ...undiffed },
+          ],
+        };
+        const r = openStep("c2");
+        await vi.waitFor(() =>
+          expect(
+            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+          ).toBe(false),
+        );
+        await act(async () => {});
+        noClaim(r);
+      });
+
+      test("a step diffed at 0% still says no pixel changes", async () => {
+        const r = await openDiffStep("c1", 3, [
+          { id: "c1", name: "Home", state: "passed", diffPercent: 0 },
+          { id: "c2", name: "Search", diffPercent: 3 },
+        ]);
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+
+      test("a failed step, once retried, claims nothing until its result lands", async () => {
+        retryDiffSpy.mockClear();
+        retryDiffSpy.mockResolvedValue({ status: "running" });
+        const c2 = { id: "c2", name: "Search", diffPercent: 3 };
+        const r = await openDiffStep("c1", 3, [
+          {
+            id: "c1",
+            name: "Home",
+            diffPercent: null,
+            diffFailedAt: "2026-10-24T08:00:00.000Z",
+            diffError: "timeout",
+          },
+          c2,
+        ]);
+        const card = r.getByTestId("stage-diff-failed");
+        noClaim(r);
+
+        fireEvent.click(
+          within(card).getByRole("button", { name: "Retry diff" }),
+        );
+        expect(retryDiffSpy).toHaveBeenCalledWith({
+          runId: "00000000-0000-0000-0000-000000000000",
+          checkpointId: "c1",
+        });
+        // A new element each time: the same one would not render again.
+        const viewer = () => (
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c1"
+          />
+        );
+        const listed = (c1: Record<string, unknown>) => {
+          mockCheckpoints = {
+            items: [
+              {
+                name: "Home",
+                diffGeneration: 1,
+                diffFailedAt: null,
+                diffError: null,
+                ...c1,
+              },
+              { state: "unresolved", diffGeneration: 1, ...c2 },
+            ],
+          };
+          r.rerender(viewer());
+        };
+
+        // The refetch: the failure and the verdict are cleared. The failed
+        // card is gone, and the stage claims nothing yet.
+        listed({ id: "c1", ...undiffed });
+        await act(async () => {});
+        expect(r.queryByTestId("stage-diff-failed")).toBeNull();
+        noClaim(r);
+
+        // The worker settles the step at 0%: now it can say so.
+        listed({
+          id: "c1",
+          state: "passed",
+          verdict: "passed",
+          diffPercent: 0,
+        });
+        await act(async () => {});
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+    });
+
     test("the stage root names the step it opened on once its images are drawn (data-stage-drawn)", async () => {
       loadingStorage();
       legacyRun([]);
@@ -1676,11 +1795,14 @@ describe("DiffViewer", () => {
     });
 
     test("the sidebar follows the step on screen", () => {
-      const items = [
-        item(),
-        item({ id: "c2", name: "Search", diffPercent: 3.5 }),
-      ];
-      expect(pixelDiff(openStep(items, "c2"))).toBe("3.50%");
+      const r = openStep(
+        [item(), item({ id: "c2", name: "Search", diffPercent: 3.5 })],
+        "c1",
+      );
+      expect(pixelDiff(r)).toBe("1.25%");
+      // →: the viewer shows c2 at once, with its own number.
+      fireEvent.click(r.getByTestId("contextual-header-next"));
+      expect(pixelDiff(r)).toBe("3.50%");
     });
 
     test("falls back to the run's when the step has none and predates per-step diffs", () => {

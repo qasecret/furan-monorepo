@@ -815,13 +815,19 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
+  // The step on screen's own diff % (R50): the run's is its worst step's,
+  // another step's, and stands in only for a legacy step. The sidebar shows
+  // it and `stepHasDiff` decides from it, so the two cannot disagree.
+  const stepDiffPercent = stepNumber(stepItem, "diffPercent", runDiffPercent);
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
-  // percent above 0. That percent is the step's own (R50): the run's is its
-  // worst step's, another step's, and stands in only for a legacy step.
+  // percent above 0.
   const stepHasDiff =
-    regions.some(isPixelDiffRegion) ||
-    (stepNumber(stepItem, "diffPercent", runDiffPercent) ?? 0) > 0;
+    regions.some(isPixelDiffRegion) || (stepDiffPercent ?? 0) > 0;
+  // R52: a step with no verdict yet (new mid-run, or just retried) has not
+  // been compared, so Diff says nothing about it. Unknown while the step
+  // list loads.
+  const awaitingDiff = stepItem !== undefined && stepItem.state === null;
 
   const viewer = (
     <div
@@ -1002,6 +1008,7 @@ export function DiffViewer({
                     elementMap={elementMap ?? null}
                     legacyMissing={diffImageLegacyMissing}
                     stepHasDiff={stepHasDiff}
+                    awaitingDiff={awaitingDiff}
                     checkpointId={candidateScreenshot?.id}
                     diffFailed={failedDiff}
                     onRetryDiff={retryFailedDiff}
@@ -1064,11 +1071,7 @@ export function DiffViewer({
                     durationMs != null ? formatDuration(durationMs) : null
                   }
                   runBy={runByName}
-                  pixelDiffPercent={stepNumber(
-                    stepItem,
-                    "diffPercent",
-                    runDiffPercent,
-                  )}
+                  pixelDiffPercent={stepDiffPercent}
                   regions={regions}
                   vlmDescription={stepNumber(
                     stepItem,
