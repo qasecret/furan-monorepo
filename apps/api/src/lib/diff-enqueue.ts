@@ -1,4 +1,4 @@
-import type { DiffJob } from "@furan/queue";
+import { DIFF_JOBS_ENQUEUED_METRIC, type DiffJob } from "@furan/queue";
 import { Counter, type Registry } from "@furan/telemetry";
 
 import type { DiffQueueProducer } from "../trpc/context.js";
@@ -36,9 +36,7 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
   if (existing) return existing;
 
   const enqueued = new Counter({
-    name: "furan_diff_jobs_enqueued_total",
-    help: "Diff jobs handed to the diff queue, by what triggered them",
-    labelNames: ["trigger"] as const,
+    ...DIFF_JOBS_ENQUEUED_METRIC,
     registers: [registry],
   });
   const failures = new Counter({

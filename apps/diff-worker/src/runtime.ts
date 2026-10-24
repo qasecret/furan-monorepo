@@ -18,12 +18,15 @@ import {
   type DiffJobAttemptOutcome,
 } from "./job-metrics.js";
 import { registerQueueDepthGauge } from "./queue-depth.js";
-import { sweepStaleRuns } from "./sweeper.js";
+import {
+  reconcileStuckSteps,
+  registerReconcilerMetrics,
+} from "./reconciler.js";
 
 type Logger = Telemetry["logger"];
 
-/** How often the sweeper looks for stale `running` runs. */
-const SWEEP_INTERVAL_MS = 30_000;
+/** How often the reconciler looks for stuck steps and step-less runs. */
+const RECONCILE_INTERVAL_MS = 30_000;
 
 export interface DiffWorkerRuntimeOptions {
   db: DB;
@@ -47,17 +50,21 @@ export interface DiffWorkerRuntimeOptions {
   /** Override the job handler. For tests only. */
   handler?: typeof handleDiffJob;
   /**
-   * Run the 30 s stale-run sweeper. Default true. The harness turns it off:
-   * it would finalize the runs a measurement is still waiting on.
+   * Run the 30 s reconciler (`reconcileStuckSteps`). Default true. The harness
+   * turns it off: it would re-queue or fail the seed's steps and empty its
+   * runs while a measurement still depends on them.
    */
-  sweeper?: boolean;
+  reconciler?: boolean;
 }
 
 export interface DiffWorkerRuntime {
   worker: Worker<DiffJob>;
   /**
-   * Stop the sweeper, then close the worker (waits for in-flight jobs) and the
-   * queue the depth gauge reads, and release the connections both were given.
+   * Stop the reconciler and wait for its pass in flight, if any (at most one,
+   * as passes never overlap): it re-adds jobs to the queue closed next. Then
+   * close the worker (waits for in-flight jobs) and its queue (the one the
+   * depth gauge reads and split and re-queued jobs are added to), and release
+   * the connections both were given.
    * It does not touch `db`, `storage` or `redis`: the caller owns those. Safe
    * to call more than once, and it never waits on a connection that has not
    * become ready.
@@ -120,7 +127,7 @@ function trackClient(owner: {
 /**
  * Start the diff worker: the BullMQ consumer of the `diff` queue, its
  * job metrics, its dead-letter signal, the queue-depth gauge and (unless
- * turned off) the stale-run sweeper. `server.ts` runs it as the service; the
+ * turned off) the reconciler. `server.ts` runs it as the service; the
  * scale harness runs it in-process.
  */
 export function startDiffWorker(
@@ -133,15 +140,32 @@ export function startDiffWorker(
 
   const prefix = opts.queuePrefix ? { prefix: opts.queuePrefix } : {};
 
+  // The queue the worker consumes: same name, same prefix. The handler adds
+  // the per-step jobs of an old whole-run job to it, the reconciler re-adds
+  // lost jobs to it, and the depth gauge reads it. It gets its own connection,
+  // so a slow or hung read never queues behind the worker's blocking commands.
+  const queue = createQueue("diff", prefix);
+  // A connection error on this queue surfaces elsewhere: through the gauge, as
+  // a rate-limited `diff_queue_depth_unavailable`, and through a job that
+  // needed the queue, which fails. Without a listener BullMQ would print
+  // every one to stderr.
+  queue.on("error", () => undefined);
+
   const worker = createWorker(
     "diff",
     async (job) => {
       logger.info(
-        { jobId: job.id, projectId: job.data.projectId },
+        {
+          jobId: job.id,
+          projectId: job.data.projectId,
+          screenshotId: job.data.screenshotId,
+          generation: job.data.generation,
+        },
         "diff_job_received",
       );
-      // Only the final attempt may mark the run `aborted` (ruling R9); an
-      // earlier failure is retried by BullMQ and the retry derives the status.
+      // Only the final attempt writes a failure: it fails the step, or marks
+      // the run `aborted` for an old whole-run job. An earlier failure is
+      // retried by BullMQ and the retry derives the state.
       const finalAttempt = isFinalAttempt(job);
       const started = performance.now();
       const seconds = (): number => (performance.now() - started) / 1000;
@@ -162,7 +186,7 @@ export function startDiffWorker(
         result = await handler(
           job.data,
           logger,
-          { db, storage, redis, metrics: metrics.diff },
+          { db, storage, redis, metrics: metrics.diff, queue },
           { finalAttempt },
         );
       } catch (err) {
@@ -170,7 +194,7 @@ export function startDiffWorker(
         throw err;
       }
       // Outside the try: only the handler's failure is the job's failure.
-      observe("completed", result.checkpoints);
+      observe(result.stale ? "stale" : "completed", result.checkpoints);
     },
     {
       ...(opts.concurrency !== undefined
@@ -203,25 +227,29 @@ export function startDiffWorker(
     }
   });
 
-  // Every 30 s, finalize any "running" run whose updatedAt is older than
-  // 5 minutes. Covers SDK 1.0.x callers that never send POST /runs/:id/complete.
-  const sweeperInterval =
-    opts.sweeper === false
+  // Every 30 s, re-queue the steps whose diff job was lost (or fail one that
+  // was re-queued 3 times with `timeout`) and empty the `running` runs no step
+  // was uploaded to. A step without a result is never passed by time, and a
+  // backlog is never touched. A pass that outlives the interval (a slow
+  // database or Redis) is not doubled up: the next tick is skipped. `pass` is
+  // the one in flight, which `close()` waits for; it never rejects.
+  let pass: Promise<void> | undefined;
+  if (opts.reconciler !== false) registerReconcilerMetrics(registry);
+  const reconcilerInterval =
+    opts.reconciler === false
       ? undefined
       : setInterval(() => {
-          sweepStaleRuns({ db, logger }).catch((e) =>
-            logger.warn({ err: e }, "sweeper_failed"),
-          );
-        }, SWEEP_INTERVAL_MS);
+          if (pass) return;
+          pass = reconcileStuckSteps({ db, queue, redis, logger, registry })
+            .then(
+              () => undefined,
+              (e: unknown) => logger.warn({ err: e }, "reconciler_failed"),
+            )
+            .finally(() => {
+              pass = undefined;
+            });
+        }, RECONCILE_INTERVAL_MS);
 
-  // The depth gauge reads the queue the worker consumes: same name, same
-  // prefix. It gets its own connection, so a slow or hung read never queues
-  // behind the worker's blocking commands.
-  const queue = createQueue("diff", prefix);
-  // A connection error on this queue surfaces through the gauge instead, as a
-  // rate-limited `diff_queue_depth_unavailable`. Without a listener BullMQ
-  // would print every one to stderr.
-  queue.on("error", () => undefined);
   registerQueueDepthGauge(
     registry,
     () => queue.getJobCounts("waiting", "active", "delayed", "failed"),
@@ -234,7 +262,10 @@ export function startDiffWorker(
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closing ??= (async () => {
-      if (sweeperInterval) clearInterval(sweeperInterval);
+      if (reconcilerInterval) clearInterval(reconcilerInterval);
+      // The pass re-adds jobs through the queue, and reads Redis and the
+      // database the caller closes after this: let it finish first.
+      await pass;
       try {
         // The worker first, so the gauge still answers while it drains.
         await worker.close();

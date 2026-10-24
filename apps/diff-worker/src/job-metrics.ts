@@ -7,11 +7,17 @@ const DURATION_BUCKETS = [
 ];
 /** `furan_diff_job_queue_wait_seconds`: enqueue to first pick-up. */
 const QUEUE_WAIT_BUCKETS = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900];
-/** `furan_diff_job_checkpoints`: screenshots one job diffed. */
+/**
+ * `furan_diff_job_checkpoints`: screenshots one job diffed (1 for a step job,
+ * 0 for a stale one or a split whole-run job).
+ */
 const CHECKPOINT_BUCKETS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
 
-/** How one attempt of a diff job ended. */
-export type DiffJobAttemptOutcome = "completed" | "retry" | "failed";
+/**
+ * How one attempt of a diff job ended. `stale`: its version was no longer the
+ * step's, so it wrote nothing (a newer job owns the step).
+ */
+export type DiffJobAttemptOutcome = "completed" | "retry" | "failed" | "stale";
 
 /** The bits of a BullMQ job the metrics read. */
 export type DiffJobTimes = Pick<
@@ -61,7 +67,7 @@ export function createDiffJobMetrics(registry: Registry): DiffJobMetrics {
 
   const duration = new Histogram({
     name: "furan_diff_job_duration_seconds",
-    help: "Time one attempt of a diff job took, by how it ended (completed, retry or failed)",
+    help: "Time one attempt of a diff job took, by how it ended (completed, stale, retry or failed)",
     labelNames: ["outcome"] as const,
     buckets: DURATION_BUCKETS,
     registers: [registry],

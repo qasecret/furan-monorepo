@@ -29,6 +29,8 @@ import {
 import { createDiffMetrics, type DiffMetrics } from "../src/diff-metrics.js";
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 const skip =
   !process.env.DATABASE_URL ||
   !process.env.REDIS_URL ||
@@ -259,7 +261,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
     const reg = new Registry();
     const metrics: DiffMetrics = createDiffMetrics(reg);
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: candidateRunId, projectId } as DiffJob,
       mockLogger,
       {
@@ -286,7 +288,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       candidateMap: { "div.box": BOX_B },
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: candidateRunId, projectId } as DiffJob,
       mockLogger,
       {
@@ -310,7 +312,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       candidateMap: null,
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: candidateRunId, projectId } as DiffJob,
       mockLogger,
       {
@@ -338,7 +340,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       candidateMap: { "div.box": BOX_A },
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: candidateRunId, projectId } as DiffJob,
       mockLogger,
       {

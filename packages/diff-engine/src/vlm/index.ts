@@ -1,3 +1,4 @@
+import { DiffEngineError } from "../errors.js";
 import { runL1Pixelmatch } from "../l1-pixelmatch.js";
 import type { EngineConfig } from "../types.js";
 
@@ -76,12 +77,20 @@ export async function runVlm(
   candidate: Buffer,
   options: RunVlmOptions,
 ): Promise<VlmDiffResult> {
-  const l1 = await runL1Pixelmatch(
-    baseline,
-    candidate,
-    options.ignoreAreas,
-    options.engineConfig,
-  );
+  // The only failure that leaves this function: a provider failure is folded
+  // into the L1 fallback below. Tagged like `runL1`'s, since it is the same
+  // pixel engine failing.
+  let l1: Awaited<ReturnType<typeof runL1Pixelmatch>>;
+  try {
+    l1 = await runL1Pixelmatch(
+      baseline,
+      candidate,
+      options.ignoreAreas,
+      options.engineConfig,
+    );
+  } catch (err) {
+    throw new DiffEngineError("engine", err);
+  }
 
   if (l1.diffPercent === 0) {
     return {

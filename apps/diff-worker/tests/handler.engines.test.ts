@@ -23,6 +23,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string): Buffer =>
   readFileSync(join(__dirname, "fixtures", n));
@@ -253,7 +255,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         projectId,
       };
 
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const updatedRun = await db.query.testRuns.findFirst({
         where: eq(testRuns.id, candidateRun.id),
@@ -313,7 +315,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       projectId,
     };
 
-    await handleDiffJob(job, mockLogger, { db, storage, redis });
+    await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
     const updatedRun = await db.query.testRuns.findFirst({
       where: eq(testRuns.id, candidateRun.id),
@@ -490,17 +492,12 @@ descLayout(
         matchLevel: "Layout",
       });
 
-      const events: string[] = [];
-      const sub = new Redis(process.env.REDIS_URL!);
-      await sub.subscribe(`run:${candidateRun.id}:events`);
-      sub.on("message", (_ch, msg) => events.push(msg));
-      await new Promise((r) => setTimeout(r, 100));
-
       const job: DiffJob = {
         runId: candidateRun.id,
         projectId,
       };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      vi.mocked(mockLogger.info).mockClear();
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       // Image diff must have fired — pixel mismatch detected even at Layout level.
       const updatedRun = await db.query.testRuns.findFirst({
@@ -517,15 +514,19 @@ descLayout(
       const l2Sources = l2Rows.filter((r) => r.source === "l2");
       expect(l2Sources.length).toBe(0);
 
-      // ranTiers in the diff.completed event must be ["l1"], not ["l2"].
-      await new Promise((r) => setTimeout(r, 200));
-      const completed = events
-        .map((e) => JSON.parse(e))
-        .find((e) => e.type === "diff.completed");
+      // The tiers the step ran (logged on its `diff_completed` line) must be
+      // ["l1"], not ["l2"].
+      const completed = vi
+        .mocked(mockLogger.info)
+        .mock.calls.find(
+          (c) =>
+            c[1] === "diff_completed" &&
+            (c[0] as { runId: string }).runId === candidateRun.id,
+        );
       expect(completed).toBeDefined();
-      expect(completed.ranTiers).toEqual(["l1"]);
-
-      sub.disconnect();
+      expect((completed![0] as { ranTiers: string[] }).ranTiers).toEqual([
+        "l1",
+      ]);
     }, 60_000);
   },
 );

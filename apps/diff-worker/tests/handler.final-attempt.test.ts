@@ -17,7 +17,10 @@ import { Redis } from "ioredis";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { persistRuleApplications } from "../src/commit-step.js";
 import { handleDiffJob } from "../src/handler.js";
+
+import { stepJobsFor } from "./helpers/step-jobs.js";
 
 // Wraps the real `recomputeRunStatus` in a spy so one test can make it fail
 // INSIDE the core transaction; every other call runs the real thing.
@@ -29,15 +32,31 @@ vi.mock("@furan/db", async (importOriginal) => {
   };
 });
 
+// Wraps the real `persistRuleApplications` (the first thing a step job does
+// after its commit) so one test can make it fail AFTER the commit; every other
+// call runs the real thing.
+vi.mock("../src/commit-step.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/commit-step.js")>();
+  return {
+    ...actual,
+    persistRuleApplications: vi.fn(actual.persistRuleApplications),
+  };
+});
+
 /**
- * Ruling R9: a failed diff attempt writes `aborted` only when it is the job's
- * FINAL attempt. `recomputeRunStatus` keeps `aborted` (a lifecycle state), so
- * writing it on an attempt BullMQ is about to retry would stick even after the
+ * Ruling R9: a failed diff attempt writes its failure only when it is the job's
+ * FINAL attempt. A step job's failure marks that step `unresolved` with a
+ * reason code (`markStepDiffFailed`); an old whole-run job's marks the run
+ * `aborted`, which `recomputeRunStatus` keeps (a lifecycle state), so writing
+ * either on an attempt BullMQ is about to retry would stick even after the
  * retry succeeds.
  *
- * Ruling R11: a failure AFTER the core transaction committed never writes
- * `aborted` (the committed rollup is valid and `aborted` would stick), and the
+ * Ruling R11: a failure AFTER the core transaction committed never fails the
+ * step or aborts the run (the committed result and rollup are valid), and the
  * `diff_job_failed` log is a warning while a retry is still coming.
+ *
+ * Ruling R22: a step job NEVER aborts its run. The abort survives only for an
+ * old whole-run payload (no `screenshotId`), the zero-step tests below.
  */
 
 const skip =
@@ -82,7 +101,7 @@ async function square(color: "red" | "blue"): Promise<Buffer> {
     .toBuffer();
 }
 
-desc("handleDiffJob — aborted only on the final attempt (integration)", () => {
+desc("handleDiffJob — failures land on the final attempt (integration)", () => {
   let db: DB;
   let closeDb: () => Promise<void>;
   let storage: Storage;
@@ -222,6 +241,12 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     return { candidateKey, candidateImg };
   }
 
+  /** The run's one step job, at a newly queued version (spec 2026-10-23). */
+  async function stepJob(s: { runId: string; projectId: string }) {
+    const [job] = await stepJobsFor(db, s);
+    return job!;
+  }
+
   async function runStatus(runId: string): Promise<string> {
     const [row] = await db
       .select({ status: testRuns.status })
@@ -230,14 +255,36 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     return row!.status;
   }
 
-  /** Collects the run channel's event types published while `fn` runs. */
+  /** The failure columns of the run's only step. */
+  async function stepFailure(runId: string) {
+    const [row] = await db
+      .select({
+        verdict: screenshots.verdict,
+        diffPercent: screenshots.diffPercent,
+        diffFailedAt: screenshots.diffFailedAt,
+        diffError: screenshots.diffError,
+      })
+      .from(screenshots)
+      .where(eq(screenshots.runId, runId));
+    return row!;
+  }
+
+  /**
+   * Collects the frames published on the run's channel and its project's
+   * while `fn` runs. Run-channel frames carry a `type`, project-channel
+   * frames an `event`.
+   */
   async function eventsDuring(
-    runId: string,
+    s: { runId: string; projectId: string },
     fn: () => Promise<void>,
-  ): Promise<Array<{ type: string; status?: string }>> {
-    const events: Array<{ type: string; status?: string }> = [];
+  ): Promise<Array<{ type?: string; event?: string; status?: string }>> {
+    const events: Array<{ type?: string; event?: string; status?: string }> =
+      [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${runId}:events`);
+    await sub.subscribe(
+      `run:${s.runId}:events`,
+      `project:${s.projectId}:events:raw`,
+    );
     sub.on("message", (_ch, msg) => events.push(JSON.parse(msg)));
     await new Promise((r) => setTimeout(r, 100));
     try {
@@ -256,13 +303,16 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       .mock.calls.filter((c) => c[1] === "diff_job_failed");
   }
 
+  // The two tests below send an old whole-run payload (no `screenshotId`): the
+  // only job that still aborts its run (R22). A run with no steps is split into
+  // nothing, so the handler throws `run_has_no_screenshots`.
   it("a non-final failed attempt leaves the status alone and rethrows", async () => {
     // No screenshots → the handler throws run_has_no_screenshots.
     const s = await seedRun();
     vi.mocked(mockLogger.warn).mockClear();
     vi.mocked(mockLogger.error).mockClear();
 
-    const events = await eventsDuring(s.runId, async () => {
+    const events = await eventsDuring(s, async () => {
       await expect(
         handleDiffJob(
           { runId: s.runId, projectId: s.projectId } as DiffJob,
@@ -285,7 +335,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     vi.mocked(mockLogger.warn).mockClear();
     vi.mocked(mockLogger.error).mockClear();
 
-    const events = await eventsDuring(s.runId, async () => {
+    const events = await eventsDuring(s, async () => {
       await expect(
         handleDiffJob(
           { runId: s.runId, projectId: s.projectId } as DiffJob,
@@ -300,15 +350,83 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     expect(events.find((e) => e.type === "run.completed")?.status).toBe(
       "aborted",
     );
+    // And the project channel's mirror, so the dashboard lists refresh.
+    expect(events.filter((e) => e.event === "testRun_updated")).toHaveLength(1);
     expect(failedLogs("error")).toHaveLength(1);
     expect(failedLogs("warn")).toHaveLength(0);
+  }, 60_000);
+
+  it("the final failure of an already aborted run publishes nothing", async () => {
+    // An SDK or capture abort got there first: the guarded write changes
+    // nothing (R50), so there is no status change to announce.
+    const s = await seedRun();
+    await db
+      .update(testRuns)
+      .set({ status: "aborted" })
+      .where(eq(testRuns.id, s.runId));
+
+    const events = await eventsDuring(s, async () => {
+      await expect(
+        handleDiffJob(
+          { runId: s.runId, projectId: s.projectId } as DiffJob,
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow(/run_has_no_screenshots/);
+    });
+
+    expect(events).toEqual([]);
+    const [run] = await db
+      .select({
+        status: testRuns.status,
+        abortedByDiff: testRuns.abortedByDiff,
+      })
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId));
+    expect(run).toEqual({ status: "aborted", abortedByDiff: false });
+  }, 60_000);
+
+  it("a failing project publish on the whole-run abort is logged under its own key", async () => {
+    const s = await seedRun();
+    const down = new Proxy(redis, {
+      get(target, prop) {
+        if (prop === "publish") {
+          return async () => {
+            throw new Error("redis_down");
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    vi.mocked(mockLogger.warn).mockClear();
+
+    // The job's own error is what rejects, not the publish's.
+    await expect(
+      handleDiffJob(
+        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        mockLogger,
+        { db, storage, redis: down },
+        { finalAttempt: true },
+      ),
+    ).rejects.toThrow(/run_has_no_screenshots/);
+
+    expect(await runStatus(s.runId)).toBe("aborted");
+    expect(
+      vi
+        .mocked(mockLogger.warn)
+        .mock.calls.filter(
+          (c) => c[1] === "diff_worker_project_publish_failed",
+        ),
+    ).toHaveLength(1);
   }, 60_000);
 
   it("a failed attempt followed by a successful retry ends with the rollup status", async () => {
     const s = await seedRun();
     // The candidate's image is not in storage yet: attempt 1 fails reading it.
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-    const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+    const job = await stepJob(s);
 
     await expect(
       handleDiffJob(
@@ -331,50 +449,51 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     );
 
     expect(await runStatus(s.runId)).toBe("unresolved");
-    const [shot] = await db
-      .select({ verdict: screenshots.verdict })
-      .from(screenshots)
-      .where(eq(screenshots.runId, s.runId));
-    expect(shot!.verdict).toBe("unresolved");
+    // The retry's own result: a diff found, no failure.
+    expect(await stepFailure(s.runId)).toMatchObject({
+      verdict: "unresolved",
+      diffFailedAt: null,
+      diffError: null,
+    });
   }, 60_000);
 
   it("a final-attempt failure after the core transaction committed keeps the derived status", async () => {
     const s = await seedRun();
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
     await storage.put(candidateKey, candidateImg, "image/png");
-    // Redis is down for everything after the commit: the core transaction
-    // (verdicts + recomputed status) has already landed when this throws.
-    const flakyRedis = new Proxy(redis, {
-      get(target, prop) {
-        if (prop === "publish") {
-          return async (channel: string, message: string) => {
-            if (JSON.parse(message).type === "diff.completed") {
-              throw new Error("redis_down_after_commit");
-            }
-            return target.publish(channel, message);
-          };
-        }
-        const value = Reflect.get(target, prop, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+    // Something fails right after the commit: the core transaction (verdicts +
+    // recomputed status) has already landed when this throws. (The events are
+    // best-effort and no longer throw, and the rule audit trail is fail-open,
+    // so the fault is injected.)
+    vi.mocked(persistRuleApplications).mockRejectedValueOnce(
+      new Error("failed_after_commit"),
+    );
     vi.mocked(mockLogger.error).mockClear();
 
-    const events = await eventsDuring(s.runId, async () => {
-      await expect(
-        handleDiffJob(
-          { runId: s.runId, projectId: s.projectId } as DiffJob,
-          mockLogger,
-          { db, storage, redis: flakyRedis },
-          { finalAttempt: true },
-        ),
-      ).rejects.toThrow(/redis_down_after_commit/);
-    });
+    const job = await stepJob(s);
+
+    await expect(
+      handleDiffJob(
+        job,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      ),
+    ).rejects.toThrow(/failed_after_commit/);
 
     // The committed rollup stands: `aborted` would be permanent, since
     // recomputeRunStatus keeps it.
     expect(await runStatus(s.runId)).toBe("unresolved");
-    expect(events.find((e) => e.status === "aborted")).toBeUndefined();
+    // And the committed step is not failed over `persistRuleApplications`
+    // throwing after the commit: it keeps the diff it found (numbers, no
+    // failure).
+    const committed = await stepFailure(s.runId);
+    expect(committed).toMatchObject({
+      verdict: "unresolved",
+      diffFailedAt: null,
+      diffError: null,
+    });
+    expect(committed.diffPercent).not.toBeNull();
     // It is still logged, at error (final attempt), and flagged as post-commit.
     const logged = failedLogs("error");
     expect(logged).toHaveLength(1);
@@ -384,36 +503,49 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     });
   }, 60_000);
 
-  it("a final-attempt failure inside the core transaction still aborts the run", async () => {
+  it("a final-attempt failure inside the core transaction fails the step, not the run", async () => {
     // The commit flag must only be set once the transaction has committed: a
-    // failure that rolls it back leaves no derived status to protect.
+    // failure that rolls it back leaves no result to protect, so the step
+    // fails. The run is never aborted for it (R22).
     const s = await seedRun();
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
     await storage.put(candidateKey, candidateImg, "image/png");
+    const job = await stepJob(s);
     vi.mocked(recomputeRunStatus).mockRejectedValueOnce(
       new Error("recompute_failed_in_tx"),
     );
+    vi.mocked(mockLogger.error).mockClear();
 
     await expect(
       handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        job,
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
       ),
     ).rejects.toThrow(/recompute_failed_in_tx/);
 
-    expect(await runStatus(s.runId)).toBe("aborted");
-    // The rolled-back transaction wrote no verdict.
-    const [shot] = await db
-      .select({ verdict: screenshots.verdict })
-      .from(screenshots)
-      .where(eq(screenshots.runId, s.runId));
-    expect(shot!.verdict).toBeNull();
+    // The failed step makes the run unresolved; `aborted` would be permanent.
+    expect(await runStatus(s.runId)).toBe("unresolved");
+    // The rolled-back transaction wrote none of the diff's result: the step
+    // carries the failure and a reason code, nothing else.
+    expect(await stepFailure(s.runId)).toMatchObject({
+      verdict: "unresolved",
+      diffPercent: null,
+      diffError: "internal",
+    });
+    expect((await stepFailure(s.runId)).diffFailedAt).not.toBeNull();
+    expect(failedLogs("error")[0]![0]).toMatchObject({
+      runId: s.runId,
+      code: "internal",
+      coreCommitted: false,
+    });
   }, 60_000);
-  // Ruling R46: each upload enqueues a whole-run diff, so a pipeline abort
-  // (job k's final attempt) must not outlive a later job k+1 that diffs every
-  // checkpoint. Only an abort the diff pipeline wrote heals.
+
+  // Ruling R46: an abort the OLD whole-run pipeline wrote must not outlive a
+  // later step job that leaves every checkpoint with a verdict. Only an abort
+  // the diff pipeline wrote heals. A step job no longer writes one itself
+  // (R22), so the tests seed what an older worker left behind.
   describe("a later successful diff heals a pipeline abort", () => {
     async function runRow(runId: string) {
       const [row] = await db
@@ -426,11 +558,11 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       return row!;
     }
 
-    it("job k aborts, then job k+1 succeeds: the run takes its real rollup", async () => {
+    it("job k fails its step alone, then job k+1 succeeds: the failure is cleared", async () => {
       const s = await seedRun();
       // Job k: the candidate image is missing, and it is the final attempt.
       const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      const job = await stepJob(s);
       await expect(
         handleDiffJob(
           job,
@@ -439,15 +571,49 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
           { finalAttempt: true },
         ),
       ).rejects.toThrow();
+      // The step carries the failure; the run is unresolved because of it, not
+      // aborted.
+      expect(await stepFailure(s.runId)).toMatchObject({
+        verdict: "unresolved",
+        diffError: "object_missing",
+      });
       expect(await runRow(s.runId)).toEqual({
-        status: "aborted",
-        abortedByDiff: true,
+        status: "unresolved",
+        abortedByDiff: false,
       });
 
-      // Job k+1 (another upload's whole-run diff) diffs every checkpoint.
+      // Job k+1 (the step queued again, at a new version) diffs it.
       await storage.put(candidateKey, candidateImg, "image/png");
       await handleDiffJob(
-        job,
+        await stepJob(s),
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      );
+
+      expect(await stepFailure(s.runId)).toMatchObject({
+        verdict: "unresolved",
+        diffFailedAt: null,
+        diffError: null,
+      });
+      expect(await runRow(s.runId)).toEqual({
+        status: "unresolved",
+        abortedByDiff: false,
+      });
+    }, 60_000);
+
+    it("an abort an older worker wrote heals once a step job succeeds: the run takes its real rollup", async () => {
+      const s = await seedRun();
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      await storage.put(candidateKey, candidateImg, "image/png");
+      // What a whole-run job's final failure used to write.
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: true })
+        .where(eq(testRuns.id, s.runId));
+
+      await handleDiffJob(
+        await stepJob(s),
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
@@ -457,6 +623,41 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
         status: "unresolved",
         abortedByDiff: false,
       });
+    }, 60_000);
+
+    it("an abort an older worker wrote heals when the run's last step fails for good: the run takes its rollup", async () => {
+      const s = await seedRun();
+      // The candidate image is missing: the step's job fails its last attempt.
+      await seedChangedCheckpoint(s);
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: true })
+        .where(eq(testRuns.id, s.runId));
+      vi.mocked(mockLogger.info).mockClear();
+
+      await expect(
+        handleDiffJob(
+          await stepJob(s),
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow();
+
+      // The failed step is the run's last without a verdict, so the abort no
+      // longer stands: the run needs attention because of that step.
+      expect(await stepFailure(s.runId)).toMatchObject({
+        verdict: "unresolved",
+        diffError: "object_missing",
+      });
+      expect(await runRow(s.runId)).toEqual({
+        status: "unresolved",
+        abortedByDiff: false,
+      });
+      expect(vi.mocked(mockLogger.info)).toHaveBeenCalledWith(
+        { runId: s.runId },
+        "diff_pipeline_abort_healed",
+      );
     }, 60_000);
 
     it("an SDK abort followed by a successful diff stays aborted", async () => {
@@ -470,7 +671,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
         .where(eq(testRuns.id, s.runId));
 
       await handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        await stepJob(s),
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
@@ -484,12 +685,13 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
 
     // R50: an SDK (or capture) abort is final. A diff job in flight that then
     // fails its final attempt must not re-flag it as the pipeline's, or the
-    // next successful diff would heal it: a CI false pass.
+    // next successful diff would heal it: a CI false pass. The failed step is
+    // recorded, and the run's `aborted` stands.
     it("an SDK abort, then a final-attempt failure, then a successful diff stays aborted", async () => {
       const s = await seedRun();
       // The candidate image is missing: the in-flight job will fail.
       const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      const job = await stepJob(s);
       await db
         .update(testRuns)
         .set({ status: "aborted", abortedByDiff: false })
@@ -503,6 +705,10 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
           { finalAttempt: true },
         ),
       ).rejects.toThrow();
+      expect(await stepFailure(s.runId)).toMatchObject({
+        verdict: "unresolved",
+        diffError: "object_missing",
+      });
       expect(await runRow(s.runId)).toEqual({
         status: "aborted",
         abortedByDiff: false,
@@ -568,7 +774,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       });
 
       await handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        await stepJob(s),
         mockLogger,
         { db, storage: lateUpload, redis },
         { finalAttempt: true },

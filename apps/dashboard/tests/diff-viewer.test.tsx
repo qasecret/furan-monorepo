@@ -439,19 +439,27 @@ vi.mock("../src/lib/trpc", () => {
 });
 
 // T11: DiffViewer mounts useRunEvents which opens an EventSource. jsdom
-// has no EventSource — stub it so the hook is a no-op for these tests.
+// has no EventSource — stub it. It keeps its listeners, so a test can deliver
+// a frame; without one it is a no-op for the other tests.
 class StubEventSource {
+  static instances: StubEventSource[] = [];
   url: string;
   withCredentials: boolean;
+  listeners: Array<(m: { data: string }) => void> = [];
   constructor(url: string, init?: EventSourceInit) {
     this.url = url;
     this.withCredentials = init?.withCredentials ?? false;
+    StubEventSource.instances.push(this);
   }
-  addEventListener(): void {
-    /* noop */
+  addEventListener(_type: string, fn: (m: { data: string }) => void): void {
+    this.listeners.push(fn);
   }
-  removeEventListener(): void {
-    /* noop */
+  removeEventListener(_type: string, fn: (m: { data: string }) => void): void {
+    this.listeners = this.listeners.filter((l) => l !== fn);
+  }
+  /** Delivers a `progress` frame to the hook. */
+  emit(event: unknown): void {
+    for (const fn of this.listeners) fn({ data: JSON.stringify(event) });
   }
   close(): void {
     /* noop */
@@ -604,6 +612,7 @@ function resetLoop() {
 describe("DiffViewer", () => {
   beforeEach(() => {
     pixiInitCount = 0;
+    StubEventSource.instances = [];
     mockGetByIdData = { ...defaultMockData };
     mockCheckpoints = { items: [] };
     resetLoop();
@@ -643,6 +652,31 @@ describe("DiffViewer", () => {
         .getAllByRole("radio")
         .map((radio) => radio.textContent),
     ).toEqual(["Side by side", "Swipe", "Flicker", "Overlay", "Diff"]);
+  });
+
+  test("the run is refetched on the worker's run.checkpoint_diffed and run.completed, not on every event", () => {
+    const runId = "00000000-0000-0000-0000-000000000000";
+    render(<DiffViewer runId={runId} diffId="d1" />);
+    const es = StubEventSource.instances.at(-1)!;
+    const getById = utilsMock.runs.getById.invalidate;
+
+    act(() => es.emit({ type: "capture.started", runId }));
+    expect(getById).not.toHaveBeenCalled();
+
+    act(() =>
+      es.emit({
+        type: "run.checkpoint_diffed",
+        runId,
+        screenshotId: "s1",
+        verdict: "passed",
+        failed: false,
+      }),
+    );
+    expect(getById).toHaveBeenCalledTimes(1);
+    expect(getById).toHaveBeenLastCalledWith({ runId });
+
+    act(() => es.emit({ type: "run.completed", runId }));
+    expect(getById).toHaveBeenCalledTimes(2);
   });
 
   test("clicking a tab sets the mode preference", () => {
