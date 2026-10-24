@@ -181,7 +181,7 @@ desc("reconcileStuckSteps", () => {
   async function seedRun(
     opts: {
       steps?: number;
-      status?: "running" | "passed";
+      status?: "running" | "passed" | "aborted";
       parentBranchName?: string | null;
       updatedAt?: Date;
       checkpointCount?: number;
@@ -684,7 +684,7 @@ desc("reconcileStuckSteps", () => {
 
   it("a pre-per-step step (diff_queued_at NULL, old created_at) is found", async () => {
     // Uploaded by an API that queued whole-run jobs: version 0, no queue
-    // time. Its upload time is its clock.
+    // time. Its upload time is its clock, and its run is still `running`.
     const old = await seedRun({ createdAt: new Date(Date.now() - 60 * MIN) });
     const fresh = await seedRun({ createdAt: new Date(Date.now() - MIN) });
     const [oldStep] = old.steps as [string];
@@ -714,6 +714,49 @@ desc("reconcileStuckSteps", () => {
     expect(row.diffRequeues).toBe(1);
     expect(row.diffGeneration).toBe(0);
     expect(await stepRow(freshStep)).toEqual(freshBefore);
+  });
+
+  it.each(["aborted", "passed"] as const)(
+    "a pre-per-step step of a run that is %s is NOT re-queued",
+    async (status) => {
+      // Ruling R35: a run that is no longer `running` is left as it ended. A
+      // re-diff of its old, never-diffed step would heal it and announce a
+      // months-old run.
+      const { steps } = await seedRun({
+        status,
+        createdAt: new Date(Date.now() - 60 * MIN),
+      });
+      const [step] = steps as [string];
+      const jobId = diffJobId(step, 0);
+      const queue = fakeQueue({ [jobId]: undefined });
+      const before = await stepRow(step);
+
+      const result = await pass(queue, { now: () => new Date() });
+
+      expect(result).toMatchObject({ requeued: 0, failed: 0, errors: 0 });
+      expect(queue.getJob).not.toHaveBeenCalledWith(jobId);
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(await stepRow(step)).toEqual(before);
+    },
+  );
+
+  it("a stuck step of an aborted run WITH a queue time is re-queued", async () => {
+    // Queued after the upgrade (an old whole-run job split, say), then its
+    // run was aborted: the re-diff still lands, and may heal the run.
+    const { runId, steps } = await seedRun({ status: "aborted" });
+    const [step] = steps as [string];
+    const [generation] = (await queueSteps(runId, steps)) as [number];
+    const queue = fakeQueue({ [diffJobId(step, generation)]: undefined });
+
+    const result = await pass(queue);
+
+    expect(result).toMatchObject({ requeued: 1, failed: 0, errors: 0 });
+    expect(queue.add).toHaveBeenCalledWith(
+      "diff",
+      expect.objectContaining({ runId, screenshotId: step, generation }),
+      { jobId: diffJobId(step, generation) },
+    );
+    expect((await stepRow(step)).diffRequeues).toBe(1);
   });
 
   it("one step's error doesn't stop the pass", async () => {

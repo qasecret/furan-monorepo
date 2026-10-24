@@ -10,9 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { handleDiffJob } from "../src/handler.js";
 import { createDiffJobMetrics } from "../src/job-metrics.js";
+import { reconcileStuckSteps } from "../src/reconciler.js";
 import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
 
 import { histogramSeries, type Sample } from "./helpers/metrics.js";
+
+// The reconciler's pass is a fake each test controls; the tests that start a
+// runtime with the reconciler off never call it.
+vi.mock("../src/reconciler.js", () => ({ reconcileStuckSteps: vi.fn() }));
 
 const PROJECT = "00000000-0000-0000-0000-000000000002";
 const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
@@ -357,6 +362,72 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     // BullMQ flips `isRunning` once its main loop has unwound, a tick after
     // `close()` resolves.
     await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
+  });
+
+  it("close waits for a reconciler pass in flight, which still sees open clients", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const inPass = new Promise<void>((resolve) => (entered = resolve));
+    const seen: { queue?: string; workerRunning?: boolean | undefined } = {};
+    vi.mocked(reconcileStuckSteps).mockImplementationOnce(async (args) => {
+      entered();
+      await gate;
+      // What the pass uses is still open once it is let go: the queue it
+      // re-adds jobs to answers a read, and the worker has not been closed.
+      await args.queue.getJob("probe");
+      seen.queue = (await (args.queue as Queue<DiffJob>).client).status;
+      seen.workerRunning = runtime?.worker.isRunning();
+      return { requeued: 0, failed: 0, emptied: 0, errors: 0 };
+    });
+
+    // Take the reconciler's 30 s tick as `startDiffWorker` installs it, to
+    // fire it by hand.
+    const realSetInterval = globalThis.setInterval;
+    let tick: (() => void) | undefined;
+    const spy = vi.spyOn(globalThis, "setInterval").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+    ) => {
+      if (ms === 30_000 && !tick) {
+        tick = fn;
+        return realSetInterval(() => undefined, 2 ** 30);
+      }
+      return realSetInterval(fn, ms);
+    }) as never);
+    try {
+      runtime = startDiffWorker({
+        db: {} as DB,
+        storage: {} as Storage,
+        redis: {} as Redis,
+        logger: noop as never,
+        registry,
+        queuePrefix: prefix,
+        concurrency: 1,
+        handler: stub,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    await runtime.worker.waitUntilReady();
+    expect(tick).toBeDefined();
+
+    tick!();
+    await inPass;
+    let closed = false;
+    const closing = runtime.close().then(() => {
+      closed = true;
+    });
+    // Give `close()` every chance to run ahead of the pass.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(closed).toBe(false);
+
+    release();
+    await closing;
+
+    expect(closed).toBe(true);
+    expect(seen).toEqual({ queue: "ready", workerRunning: true });
+    expect(vi.mocked(reconcileStuckSteps)).toHaveBeenCalledTimes(1);
   });
 
   it("closes promptly when the worker's connection never became ready", async () => {

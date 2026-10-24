@@ -57,11 +57,11 @@ export interface DiffWorkerRuntimeOptions {
 export interface DiffWorkerRuntime {
   worker: Worker<DiffJob>;
   /**
-   * Stop the reconciler, then close the worker (waits for in-flight jobs) and
-   * its queue (the one the depth gauge reads and split and re-queued jobs are
-   * added to), and release the connections both were given. A reconciler pass
-   * still running is not waited for: its steps are left as they were, or
-   * claimed and found again next window.
+   * Stop the reconciler and wait for its pass in flight, if any (at most one,
+   * as passes never overlap): it re-adds jobs to the queue closed next. Then
+   * close the worker (waits for in-flight jobs) and its queue (the one the
+   * depth gauge reads and split and re-queued jobs are added to), and release
+   * the connections both were given.
    * It does not touch `db`, `storage` or `redis`: the caller owns those. Safe
    * to call more than once, and it never waits on a connection that has not
    * become ready.
@@ -228,18 +228,21 @@ export function startDiffWorker(
   // was re-queued 3 times with `timeout`) and empty the `running` runs no step
   // was uploaded to. A step without a result is never passed by time, and a
   // backlog is never touched. A pass that outlives the interval (a slow
-  // database or Redis) is not doubled up: the next tick is skipped.
-  let reconciling = false;
+  // database or Redis) is not doubled up: the next tick is skipped. `pass` is
+  // the one in flight, which `close()` waits for; it never rejects.
+  let pass: Promise<void> | undefined;
   const reconcilerInterval =
     opts.reconciler === false
       ? undefined
       : setInterval(() => {
-          if (reconciling) return;
-          reconciling = true;
-          reconcileStuckSteps({ db, queue, redis, logger, registry })
-            .catch((e) => logger.warn({ err: e }, "reconciler_failed"))
+          if (pass) return;
+          pass = reconcileStuckSteps({ db, queue, redis, logger, registry })
+            .then(
+              () => undefined,
+              (e: unknown) => logger.warn({ err: e }, "reconciler_failed"),
+            )
             .finally(() => {
-              reconciling = false;
+              pass = undefined;
             });
         }, RECONCILE_INTERVAL_MS);
 
@@ -256,6 +259,9 @@ export function startDiffWorker(
   const close = (): Promise<void> => {
     closing ??= (async () => {
       if (reconcilerInterval) clearInterval(reconcilerInterval);
+      // The pass re-adds jobs through the queue, and reads Redis and the
+      // database the caller closes after this: let it finish first.
+      await pass;
       try {
         // The worker first, so the gauge still answers while it drains.
         await worker.close();

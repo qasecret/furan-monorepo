@@ -131,13 +131,14 @@ interface PassContext {
  * 1. **Stuck steps.** Up to `batch` steps still awaiting a diff
  *    (`stepAwaitingDiff`: not failed, no result newer than their queue time, so
  *    a lost re-diff counts too) and queued more than `stuckAfterMs` ago, oldest
- *    first. A step uploaded before the per-step pipeline has no queue time and
- *    is timed from its upload. For each, the job of its current version:
+ *    first. A step uploaded before the per-step pipeline has no queue time: it
+ *    is timed from its upload, and taken only while its run is still
+ *    `running`. For each, the job of its current version:
  *    - is still `waiting`, `active`, `delayed`, `prioritized` or
  *      `waiting-children`: a backlog, left alone;
  *    - is missing, or finished (`completed`, `failed`): lost. A step already
  *      re-queued `maxRequeues` times fails with `timeout` (`failStuckStep`);
- *      any other is re-queued (`requeueStep`).
+ *      any other is re-queued (`claimStep`, then the add).
  * 2. **Empty runs.** A `running` run with no step whose `updated_at` is more
  *    than 5 minutes old becomes `empty` (`emptyStaleRuns`).
  *
@@ -218,7 +219,15 @@ export async function reconcileStuckSteps(
  * The steps awaiting a diff whose clock is older than `cutoff`, oldest first.
  * The clock is `diff_queued_at`, or `created_at` for a step uploaded before
  * the per-step pipeline (Ruling R10). Both arms keep the awaiting predicate,
- * so the scan can read `screenshots_stuck_idx` alone.
+ * so the scan reads `screenshots_stuck_idx`, and only the in-flight steps it
+ * holds are joined to their run.
+ *
+ * A step with a queue time is taken whatever its run's status: this pipeline
+ * queued it, and its diff may still heal the run (an old whole-run job split,
+ * then aborted). A step without one is taken only while its run is `running`
+ * (Ruling R35): a never-diffed step of a run that ended before the upgrade
+ * (aborted, or otherwise terminal) is left as it is. Re-diffing it would heal
+ * months-old runs and announce them (`run.completed`, webhooks).
  */
 async function findStuckSteps(
   db: DB,
@@ -245,6 +254,7 @@ async function findStuckSteps(
           and(
             isNull(screenshots.diffQueuedAt),
             lt(screenshots.createdAt, cutoff),
+            eq(testRuns.status, "running"),
           ),
         ),
       ),
