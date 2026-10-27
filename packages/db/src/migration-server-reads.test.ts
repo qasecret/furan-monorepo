@@ -54,6 +54,24 @@ const STATEMENTS = MIGRATION_SQL.split("--> statement-breakpoint")
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
 
+/**
+ * Migration 0044 replaces five of 0043's indexes (the storage proxy's key
+ * indexes, now led by the key and followed by `project_id`) and adds a sixth.
+ * A database that has run 0043 has then run 0044, so this suite applies the two
+ * in order and leaves the test database at that state, which is the one every
+ * other suite and the schema agree on. 0044's own tests are in
+ * `migration-key-indexes.test.ts`.
+ */
+const NEXT_MIGRATION_STATEMENTS = readFileSync(
+  fileURLToPath(
+    new URL("../migrations/0044_key_indexes_with_project.sql", import.meta.url),
+  ),
+  "utf8",
+)
+  .split("--> statement-breakpoint")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
+
 /** A statement without the `--` comment lines that lead it. */
 function withoutLeadingComments(statement: string): string {
   const lines = statement.split("\n");
@@ -61,7 +79,12 @@ function withoutLeadingComments(statement: string): string {
   return lines.join("\n");
 }
 
-/** The ten slice-3 indexes, exactly as Postgres prints them. */
+/**
+ * The slice-3 indexes 0043 builds and nothing later changes, exactly as
+ * Postgres prints them. (The five storage-proxy key indexes 0043 builds on the
+ * key alone are replaced by 0044; `migration-key-indexes.test.ts` holds their
+ * definitions.)
+ */
 const SLICE3_INDEXES: Record<string, string> = {
   test_runs_pending_idx:
     "CREATE INDEX test_runs_pending_idx ON public.test_runs USING btree (project_id, build_id) WHERE (pending_steps > 0)",
@@ -73,16 +96,6 @@ const SLICE3_INDEXES: Record<string, string> = {
     "CREATE INDEX screenshots_variation_created_idx ON public.screenshots USING btree (test_variation_id, created_at DESC, id DESC)",
   baselines_variation_branch_created_idx:
     "CREATE INDEX baselines_variation_branch_created_idx ON public.baselines USING btree (test_variation_id, branch_name, created_at DESC, id DESC)",
-  screenshots_image_key_idx:
-    "CREATE INDEX screenshots_image_key_idx ON public.screenshots USING btree (image_key)",
-  screenshots_dom_key_idx:
-    "CREATE INDEX screenshots_dom_key_idx ON public.screenshots USING btree (dom_key) WHERE (dom_key IS NOT NULL)",
-  screenshots_element_map_key_idx:
-    "CREATE INDEX screenshots_element_map_key_idx ON public.screenshots USING btree (element_map_key) WHERE (element_map_key IS NOT NULL)",
-  screenshots_diff_image_key_idx:
-    "CREATE INDEX screenshots_diff_image_key_idx ON public.screenshots USING btree (diff_image_key) WHERE (diff_image_key IS NOT NULL)",
-  test_runs_diff_name_idx:
-    "CREATE INDEX test_runs_diff_name_idx ON public.test_runs USING btree (diff_name) WHERE (diff_name IS NOT NULL)",
 };
 
 /** The diff-worker reconciler's empty-run scan (beyond spec §2). */
@@ -133,12 +146,14 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
 
   /**
    * The migration file, split and executed as drizzle's migrator does (in one
-   * transaction), without the "already exists, skipping" notices of a re-run.
+   * transaction), without the "already exists, skipping" notices of a re-run,
+   * followed by 0044 (see `NEXT_MIGRATION_STATEMENTS`), so the database ends
+   * as a real one that ran both.
    */
   async function runMigration(): Promise<void> {
     await db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL client_min_messages = warning`);
-      for (const stmt of STATEMENTS) {
+      for (const stmt of [...STATEMENTS, ...NEXT_MIGRATION_STATEMENTS]) {
         await tx.execute(sql.raw(stmt));
       }
     });
@@ -608,7 +623,7 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
     expect(await Promise.all(tables.map((t) => indexDefs(t)))).toEqual(defs);
   });
 
-  it("creates every slice-3 index with its exact definition", async () => {
+  it("creates every slice-3 index 0044 leaves alone with its exact definition", async () => {
     expect(await slice3Defs()).toEqual(SLICE3_INDEXES);
   });
 
