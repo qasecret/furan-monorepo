@@ -4,6 +4,7 @@ import {
   autoRuleApplications,
   autoRules,
   baselines,
+  computePrimarySignature,
   desc,
   diffRegions,
   eq,
@@ -75,7 +76,6 @@ import {
 } from "./element-map-resolver.js";
 import { parseEngineConfig, redactSecret } from "./engine-config.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
-import { computePrimarySignature } from "./primary-signature.js";
 import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
 import {
   aggregateRuleStatus,

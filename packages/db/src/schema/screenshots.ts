@@ -1,19 +1,56 @@
-import { sql } from "drizzle-orm";
+import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import {
   boolean,
+  doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
-import { checkpointVerdictEnum } from "./enums.js";
+import { baselineSourceEnum, checkpointVerdictEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testRuns } from "./test_runs.js";
 import { testVariations } from "./test_variations.js";
+
+/**
+ * The steps still awaiting a diff result (ruling R23): not failed for good,
+ * and with no result newer than their queue time. That is either no verdict
+ * at all or one from before the step was last queued: a re-diff keeps the
+ * step's old result until the new one replaces it, so an old verdict alone
+ * does not mean the current version was diffed.
+ *
+ * Both times are stamped with `clock_timestamp()` while the writer holds the
+ * run's row lock (`FOR NO KEY UPDATE`): the queueing (`bumpStepGenerations`,
+ * the reconciler's re-queue) sets `diff_queued_at`, a diff commit sets
+ * `verdict_at`. The lock orders them, so both directions hold:
+ *  - a result committed after the step was (re-)queued is newer than its
+ *    queue time, and takes the step out of the set;
+ *  - a result committed before it, even while the queueing transaction was
+ *    already open and waiting for the run, is older, so the step still awaits
+ *    its new version's result. (A transaction-start `now()` would not be.)
+ * A comparison with NULL is unknown, so a step with a verdict but no
+ * `verdict_at` or no `diff_queued_at` (rows from before the per-step
+ * pipeline) does not await one.
+ *
+ * `screenshots_stuck_idx` is partial on exactly this predicate: a query that
+ * includes it (pass `screenshots`) can read that index. Parenthesised, so it
+ * composes inside `and()` and `or()` alike.
+ */
+export function stepAwaitingDiff(t: {
+  diffFailedAt: AnyColumn;
+  verdict: AnyColumn;
+  verdictAt: AnyColumn;
+  diffQueuedAt: AnyColumn;
+}): SQL {
+  return sql`(${t.diffFailedAt} IS NULL AND (${t.verdict} IS NULL OR ${t.verdictAt} < ${t.diffQueuedAt}))`;
+}
 
 export const screenshots = pgTable(
   "screenshots",
@@ -87,6 +124,37 @@ export const screenshots = pgTable(
     // (`verdict`, `has_active_decision`), which keeps the planner's estimate of
     // the open steps right. They live only in migration 0040's SQL.
     hasActiveDecision: boolean("has_active_decision").notNull().default(false),
+    // Migration 0042: the per-step diff pipeline (spec 2026-10-23 §2). A diff
+    // job is one step at one version; the version guard in the diff commit
+    // turns a stale job into a no-op. None of these columns holds a storage
+    // key.
+    //
+    // The step's version: bumped each time the step needs a new diff
+    // (`bumpStepGenerations`); the reconciler re-adds a lost job at the same
+    // version, except a step queued before per-step jobs, which its first
+    // claim versions. A job whose generation no longer matches is stale and
+    // writes nothing.
+    diffGeneration: integer("diff_generation").notNull().default(0),
+    // When the current version was queued; the reconciler's stuck clock.
+    diffQueuedAt: timestamp("diff_queued_at", { withTimezone: true }),
+    // How many times the reconciler re-queued the current version. Reset to 0
+    // by `bumpStepGenerations`; the reconciler's versioning claim of a step
+    // queued before per-step jobs counts as its first re-queue (1).
+    diffRequeues: smallint("diff_requeues").notNull().default(0),
+    // The step's own result, written with its verdict. NULL = the step had no
+    // baseline pair (or predates 0042). `recomputeRunTotals` folds them into
+    // the run's totals.
+    diffPercent: doublePrecision("diff_percent"),
+    pixelMismatchCount: integer("pixel_mismatch_count"),
+    baselineSource: baselineSourceEnum("baseline_source"),
+    vlmDescription: text("vlm_description"),
+    // At least one of the step's regions was auto-approved by a rule.
+    ruleResolved: boolean("rule_resolved").notNull().default(false),
+    // Set when the step's diff failed permanently (its verdict is then
+    // `unresolved`). `diff_error` is one of the fixed `DiffErrorCode`s, never a
+    // message or a stack trace.
+    diffFailedAt: timestamp("diff_failed_at", { withTimezone: true }),
+    diffError: varchar("diff_error", { length: 64 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -122,5 +190,12 @@ export const screenshots = pgTable(
     undiffedIdx: index("screenshots_undiffed_idx")
       .on(t.runId)
       .where(sql`${t.verdict} IS NULL`),
+    // Migration 0042: the steps still awaiting a diff result
+    // (`stepAwaitingDiff`, a lost re-diff included), oldest queue time first.
+    // The reconciler's scan reads only this index, so it stays proportional to
+    // the work in flight, not to the project's history.
+    stuckIdx: index("screenshots_stuck_idx")
+      .on(t.diffQueuedAt)
+      .where(stepAwaitingDiff(t)),
   }),
 );

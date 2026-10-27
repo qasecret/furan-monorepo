@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computePrimarySignature } from "../src/primary-signature.js";
+import { computePrimarySignature } from "./primary-signature.js";
 
 describe("computePrimarySignature", () => {
   it("returns null when there are no unresolved-with-signature checkpoints", () => {
