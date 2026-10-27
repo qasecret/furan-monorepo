@@ -32,6 +32,7 @@ import {
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
@@ -484,6 +485,8 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
       revertedAt: opts.reverted ? new Date() : null,
       revertedBy: opts.reverted ? s.editor.id : null,
     });
+    // The decide core recomputes the run; a direct insert must too.
+    await syncRunCounters(h.db, [runId]);
   }
 
   const idsOf = (page: { items: Array<{ id: string }> }) =>

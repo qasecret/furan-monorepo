@@ -34,6 +34,7 @@ import {
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
@@ -154,6 +155,8 @@ d("review queue: findNext", () => {
       revertedAt: opts.reverted ? new Date() : null,
       revertedBy: opts.reverted ? s.editor.id : null,
     });
+    // The decide core recomputes the run; a direct insert must too.
+    await syncRunCounters(h.db, [runId]);
   }
 
   /** Sets the builds' `created_at`, oldest first, 1 s apart. */

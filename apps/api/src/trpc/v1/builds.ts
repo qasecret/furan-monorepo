@@ -15,6 +15,7 @@ import {
 } from "../../lib/keyset-cursor.js";
 import {
   buildHasPendingStep,
+  pendingBatchCount,
   pendingCountsByBuild,
 } from "../../lib/review/pending.js";
 import { countPendingCheckpoints } from "../../lib/review/reads.js";
@@ -239,7 +240,9 @@ export const buildsRouter = t.router({
 
   /**
    * How many of the project's builds need review (have at least one pending
-   * step): the Batches badge. Counts builds, not steps.
+   * step): the Batches badge. Counts builds, not steps, from the runs' stored
+   * counters (`pendingBatchCount`, an index-only read of
+   * `test_runs_pending_idx`).
    */
   pendingCount: publicProcedure
     .input(projectIdInput)
@@ -250,12 +253,9 @@ export const buildsRouter = t.router({
       }),
     )
     .query(async ({ input, ctx }) => {
-      const rows = await ctx.db.execute<{ total: number }>(sql`
-        SELECT count(*)::int AS total
-        FROM builds b
-        WHERE b.project_id = ${input.projectId}
-          AND ${hasPendingStep(input.projectId)}
-      `);
+      const rows = await ctx.db.execute<{ total: number }>(
+        sql`SELECT ${pendingBatchCount(input.projectId)}::int AS total`,
+      );
       return { total: Number(rows[0]?.total ?? 0) };
     }),
 
