@@ -96,7 +96,7 @@ describe("notRepairedLine (the CLI's --repair-counters output)", () => {
         status: { stored: "running", rollup: "unresolved" },
       }),
     ).toBe(
-      `${runId}, not repaired: stored running, rollup unresolved (runbook §5)`,
+      `${runId}, not repaired: stored running, rollup unresolved (review-model-upgrade.md §5)`,
     );
   });
 
@@ -369,7 +369,7 @@ d("findRollupMismatches", () => {
       checkpoints: [{ name: "a", verdict: "unresolved" }],
     });
     // Both wrong: a hand-corrupted status and stale counters. Recomputing it
-    // would rewrite the status, so the repair leaves it to runbook §5.
+    // would rewrite the status, so the repair leaves it to review-model-upgrade.md §5.
     const both = await addReviewRun(h, two, {
       checkpoints: [{ name: "b", verdict: "new" }],
     });
@@ -464,7 +464,7 @@ d("findRollupMismatches", () => {
       },
     ]);
     expect(outcomes.map(notRepairedLine)).toEqual([
-      `${s.runId}, not repaired: stored running, rollup unresolved (runbook §5)`,
+      `${s.runId}, not repaired: stored running, rollup unresolved (review-model-upgrade.md §5)`,
     ]);
     // Untouched.
     expect(await storedRun(s.runId)).toEqual({ status: "running", ...c(2) });

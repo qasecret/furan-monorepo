@@ -154,7 +154,7 @@ export type CounterRepairOutcome =
   | "already_right"
   /**
    * Left alone: its stored status is not its rollup, so recomputing would
-   * change the status too. Settle the status first (runbook §5).
+   * change the status too. Settle the status first (review-model-upgrade.md §5).
    */
   | "status_differs"
   /** Gone since the scan (retention). */
@@ -238,7 +238,7 @@ export function notRepairedLine(repair: CounterRepair): string | null {
     return null;
   }
   const { stored, rollup } = repair.status;
-  return `${repair.runId}, not repaired: stored ${stored}, rollup ${rollup} (runbook §5)`;
+  return `${repair.runId}, not repaired: stored ${stored}, rollup ${rollup} (review-model-upgrade.md §5)`;
 }
 
 /** One `baseline.repair` audit row written by migration `0036` (spec §4.4). */

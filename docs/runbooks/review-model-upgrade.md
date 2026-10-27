@@ -154,7 +154,7 @@ run_id, stored, computed, stored_counters, computed_counters
 `--repair-counters` then recomputes each listed run whose counters differ, one
 run at a time under that run's lock, so it is safe while the app is running. It
 never changes a status: a run whose stored status is not its rollup is listed
-as `<run_id>, not repaired: stored <status>, rollup <status> (runbook §5)` and
+as `<run_id>, not repaired: stored <status>, rollup <status> (review-model-upgrade.md §5)` and
 is settled through §5 first. A run stored `running` can show this too: the
 check lists it for its counters alone, with `running` on both sides, and the
 line gives the status its steps now roll up to. The check then runs again
