@@ -52,9 +52,14 @@ export function useStep(runId: string, checkpointId: string | undefined) {
  * A neighbour of the step on screen, which `usePrefetchSteps` fetches ahead:
  * watched like the step on screen, so an event that makes it stale (the run's
  * events, a decision, an ignore-region or sensitivity save) reads it again at
- * once, and a move to it never shows what it was before the event. Watching
- * it asks for nothing beyond the read fetched ahead (`refetchOnMount: false`:
- * one already in the cache is not asked for again until an event says).
+ * once, and a move to it never shows what it was before the event.
+ *
+ * Watching it adds no read when it mounts: it reads a neighbour that is
+ * missing or stale, but so does the prefetch beside it (same steps, same
+ * `staleTime`), and react-query sends one read per step at a time, so the two
+ * share it; a fresh one is read by neither. Like any watched query, a stale
+ * neighbour is also read again when the window regains focus or the network
+ * comes back.
  */
 export function useNeighbourStep(
   runId: string,
@@ -62,11 +67,7 @@ export function useNeighbourStep(
 ): StepView | undefined {
   return trpc.runs.getStep.useQuery(
     { runId, checkpointId: checkpointId ?? "" },
-    {
-      ...stepOptions,
-      enabled: checkpointId !== undefined,
-      refetchOnMount: false,
-    },
+    { ...stepOptions, enabled: checkpointId !== undefined },
   ).data;
 }
 
@@ -163,6 +164,18 @@ const leaving = new Map<string, ReturnType<typeof setTimeout>>();
  * just after: a remount on another step of the run is no leaving.
  */
 const LEAVE_GRACE_MS = 1_000;
+
+/**
+ * For tests only: forgets every viewer and cancels every pending leave, so a
+ * leave timer a test started (by unmounting a viewer) never fires into the
+ * next test, or into a mocked client that test has torn down. Call it after
+ * the test's viewers are unmounted.
+ */
+export function resetStepsLeftForTests(): void {
+  for (const timer of leaving.values()) clearTimeout(timer);
+  leaving.clear();
+  viewersOf.clear();
+}
 
 /**
  * Marks the run's step reads stale once no viewer shows the run any more.
