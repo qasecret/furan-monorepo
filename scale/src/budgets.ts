@@ -34,17 +34,18 @@ export interface Row extends Budget {
 }
 
 /**
- * Every budget the harness judges, in report order. Slice 1 enforces only what
- * passes today (spec §2.1), so every budget starts tracked: R1, R2 and their
- * solo variants too (Ruling R49, owner slice 3), until the reference run on
- * the CI runner decides which of them become enforced.
+ * Every budget the harness judges, in report order. A budget starts tracked and
+ * becomes enforced once a reference run on the CI runner passes it: with at
+ * least 20% headroom for a timing (slice 1 Ruling R51), or exactly for a count
+ * that has no noise to absorb. The owning slice flips it; `scale/README.md`
+ * lists what is enforced and why.
  */
 export const BUDGETS: readonly Budget[] = [
   {
     id: "P1",
     suite: "pipeline",
     owner: 2,
-    status: "tracked",
+    status: "enforced",
     unit: "ratio",
     compare: "<=",
     threshold: 1.0,
@@ -55,7 +56,7 @@ export const BUDGETS: readonly Budget[] = [
     id: "P2",
     suite: "pipeline",
     owner: 2,
-    status: "tracked",
+    status: "enforced",
     unit: "ms",
     compare: "<=",
     threshold: 5000,
@@ -66,7 +67,7 @@ export const BUDGETS: readonly Budget[] = [
     id: "P3",
     suite: "pipeline",
     owner: 2,
-    status: "tracked",
+    status: "enforced",
     unit: "ms",
     compare: "<=",
     threshold: 10000,
@@ -98,7 +99,7 @@ export const BUDGETS: readonly Budget[] = [
     id: "P6",
     suite: "pipeline",
     owner: 2,
-    status: "tracked",
+    status: "enforced",
     unit: "count",
     compare: "<=",
     threshold: 0,

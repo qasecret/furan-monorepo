@@ -133,8 +133,8 @@ whatever order `--suite` names them in. Each suite changes the seeded project
    that it removes the jobs still queued (the harness's own queue only, under
    the `furan-scale` prefix: they are harness data) and waits up to 2 more
    minutes for the running ones. A backlog would otherwise run through the
-   next suite's measurements: D4's 500-step upload diffs quadratically today,
-   for longer than D4 itself records. The CLI prints
+   next suite's measurements: D4's 500-step upload queues 500 diff jobs,
+   which run for longer than D4 itself records. The CLI prints
    `quiesce after <suite>: drained in Xs` or
    `quiesce after <suite>: N jobs dropped`.
 6. Writes the report, tears everything down and exits.
@@ -311,9 +311,9 @@ Verdicts:
 - `skipped`: the budget's suite did not run.
 
 **Tracked vs enforced.** A `tracked` budget is reported and never fails the run.
-An `enforced` budget fails a `large` run when it misses its threshold. Today
-every budget is tracked (see [Budgets and enforcement](#budgets-and-enforcement)),
-so only a `missing` or `error` row fails a run's budget outcome.
+An `enforced` budget fails a `large` run when it misses its threshold. Nine
+budgets are enforced today and the rest are tracked (see
+[Budgets and enforcement](#budgets-and-enforcement)).
 
 **A run's budget outcome exits 1 only when** an enforced budget fails on a
 `large` run, or a budget in a suite that ran is `missing` or `error`, which holds
@@ -339,10 +339,26 @@ runner, and local runs use the same thresholds.
 
 Three budgets passed but stay `tracked`:
 
-- `P5` read 0 only because the race it detects didn't fire on that run.
+- `P5` read 0 only because the race it detects didn't fire on that run (slice 2's section below has the later run).
 - `R2-solo.pendingCount` (41 ms) and `D2.firstRow` (1,332 ms) have too little headroom to enforce from a single run.
 
 The other solo cases (`R1-solo.*`, `R2-solo.buildsListNeedsReview`, `R2-solo.worst`) stay tracked under slice 3. The old script's own worst case already took more than 50 ms.
+
+**Slice 2 enforces the pipeline budgets that pass.** Slice 2 moved the diff pipeline to one diff per uploaded step. Its reference run on the CI runner (Actions run 40444450071, 2026-10-27, `ubuntu-latest`, `shape=large`, commit `6dc3f477`) measured the pipeline budgets below. All six stay owned by slice 2.
+
+| Budget | Slice 1 reference run | Slice 2 reference run    | Status         |
+| ------ | --------------------- | ------------------------ | -------------- |
+| `P1`   | 65.56                 | 1 (limit 1)              | enforced       |
+| `P2`   | 120,000 ms (capped)   | 789.89 ms (limit 5,000)  | enforced       |
+| `P3`   | 131,280.28 ms         | 204.47 ms (limit 10,000) | enforced       |
+| `P4`   | 0.09                  | 0.41 (floor 0.8)         | tracked, fails |
+| `P5`   | 0                     | 0 (limit 0)              | tracked        |
+| `P6`   | 47                    | 0 (limit 0)              | enforced       |
+
+- `P2` and `P3` are enforced because they pass with at least 20% headroom (84% and 98%).
+- `P1` and `P6` are enforced although they sit exactly on their thresholds. They are exact counts, not timings. P1 is one diff per step by construction (50 of 50 steps, 500 of 500), and P6 counts `testRun_updated` events above an allowance, so a correct run reads 0 by construction. The 20% headroom rule exists to absorb timing noise, and these have none.
+- `P4` stays tracked and fails: 0.41 against 0.8, or 11.69 results a second against an ideal 28.4. The commits of one run serialize on the run lock, and each one re-aggregates the run. This is a named follow-up.
+- `P5` stays tracked. It is a race detector, so one run reading 0 can't show the race is gone. This run is the first of the three consecutive Large runs that must read 0 before it is enforced.
 
 **An owning slice enforces a budget with a one-line status change** in
 `budgets.ts`, in that slice's PR:

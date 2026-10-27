@@ -5,6 +5,19 @@ verdict, or the diff queue stops draining. The diff worker (`apps/diff-worker`)
 consumes the Redis-backed `diff` queue. This page says which of its metrics to
 read, what they mean, and what to do about each cause.
 
+**One job diffs one step.** Each checkpoint (step) a run uploads queues one
+job for that step alone, and a re-diff (an ignore-region or threshold edit, an
+undo, a branch merge, a retry) queues one job per step it affects. A job
+carries the step's version, which is bumped each time the step needs a new
+diff (an upload, an edit, an undo, a merge or a retry), and its id is
+`<step id>-g<version>`. The reconciler (below) re-adds a lost job at the same
+version, under the same id (a step uploaded before per-step diffs, which has
+no version yet, gets its first one). When the job commits, it re-checks the
+version under the run's and the step's locks: if the step has a newer version
+by then, the job is **stale** and writes nothing (`diff_step_stale`), and the
+newer version's job sets the result. A run of N steps is N jobs, and it stays
+`running` until each of its steps has a result.
+
 > The worker serves `/livez`, `/readyz` and `/metrics` on port 3200 (`PORT`).
 > Neither compose file maps it to the host and the image is distroless, so
 > probe from a sidecar that shares its network namespace. `head -n1` picks one
@@ -44,23 +57,30 @@ stale-run sweeper that turned such steps into `passed` after 5 minutes, a CI
 false pass under a backlog; it is gone. A `running` run that no step was
 uploaded to still becomes `empty` after 5 minutes.
 
+The reconciler never looks at a step whose diff failed for good, even after a
+re-diff (an ignore-region or threshold edit, an undo) queues it again: the
+step keeps its failure (`diff_failed_at`) until that new job commits a result.
+If that job is lost, the step is not re-queued. It stays visible as "Diff
+failed" in the dashboard, and **Retry diff** queues it again.
+
 Right after an upgrade from a release that queued one diff job per run, such
 an old whole-run job may still wait in the queue. A step of its run that has
 no result 10 minutes after its upload (and whose run is still `running`) gets
-a job of its own from the reconciler, `<step id>-g0`, as if that job were lost.
-This is harmless: when the old job is processed it re-queues every step of
-the run at a new version, and the `-g0` job finds its version superseded and
-writes nothing (or has already written the step's result, which the new
-version then replaces).
+a job of its own from the reconciler, as if that job were lost: the step is
+given its first per-step version and the job is `<step id>-g1`. This is
+harmless: when the old job is processed it re-queues every step of the run at
+a new version, and the `-g1` job finds its version superseded and writes
+nothing (or has already written the step's result, which the new version then
+replaces).
 
 ## The four metrics
 
-| Metric                              | What it measures                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `furan_diff_queue_jobs{state}`      | Jobs in the queue by state, read from Redis on each scrape (see below).              |
-| `furan_diff_job_queue_wait_seconds` | Enqueue to first pick-up, first attempts only. The delay a backlog costs a user.     |
-| `furan_diff_job_duration_seconds`   | One attempt, start to finish, labelled `outcome` = `completed`, `retry` or `failed`. |
-| `furan_diff_job_checkpoints`        | Checkpoints (screenshots) one completed job diffed.                                  |
+| Metric                              | What it measures                                                                                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `furan_diff_queue_jobs{state}`      | Jobs in the queue by state, read from Redis on each scrape (see below).                                                                                     |
+| `furan_diff_job_queue_wait_seconds` | Enqueue to first pick-up, first attempts only. The delay a backlog costs a user.                                                                            |
+| `furan_diff_job_duration_seconds`   | One attempt, start to finish, labelled `outcome` = `completed`, `stale` (superseded by a newer version of its step; wrote nothing), `retry` or `failed`.    |
+| `furan_diff_job_checkpoints`        | Checkpoints (screenshots) one job diffed: 1 for a job that committed its step's result; 0 for a stale job, and for an old whole-run job, which only splits. |
 
 **`furan_diff_queue_jobs` is queue-wide, the other three are per replica.**
 Every replica reads the same Redis queue, so with N replicas each `/metrics`
@@ -95,11 +115,19 @@ rather than 0.
 - Duration p95 rising while queue wait is flat so far: jobs are getting
   slower. See the slow VLM provider and big run causes.
 - `delayed` or `failed` rising: attempts are failing. Read the logs.
-- **Checkpoints per job well above 1 means whole-run re-diffs.** A job names a
-  run, not a checkpoint, and each upload enqueues one, so a run of N
-  checkpoints enqueues N jobs and each diffs all of the run's checkpoints,
-  not only the one that triggered it. This is fixed in a later release; until
-  then it multiplies the cost of big runs.
+- **Checkpoints per job is 1.** Each job diffs one step, so the mean of
+  `furan_diff_job_checkpoints`
+  (`rate(furan_diff_job_checkpoints_sum[5m]) / rate(furan_diff_job_checkpoints_count[5m])`)
+  is 1, or a little under it: a stale job counts 0. Well under 1 means many
+  stale jobs: steps given a newer version while their job was still waiting
+  (the same run edited over and over, or a reviewer undoing and redoing). A
+  reconciler re-queue only replaces a lost job, so it never makes one stale.
+  Compare `furan_diff_job_duration_seconds_count{outcome="stale"}` with
+  `{outcome="completed"}`. A stale job writes nothing, so it costs time, not
+  results: one found stale before its diff ends at once, one found stale at
+  its commit has diffed for nothing. Above 1 never comes from a per-step job: a
+  diff worker of an older release (one job per run, which diffs every step of
+  the run) is still consuming the queue. Upgrade it.
 
 ## Causes
 
@@ -108,9 +136,10 @@ rather than 0.
   failure, so a degraded provider stretches every such job by up to a minute.
   Look for duration p95 near 60 s and a rising `furan_diff_vlm_failures_total`.
   Check the provider's status and quota, or the load on a self-hosted model.
-- **A big run.** A few jobs with a high checkpoint count dominate duration
-  and hold the queue behind them. They drain by themselves; scale to drain
-  them faster.
+- **A big run.** A run of N steps queues N short jobs, one per upload, and
+  they drain at the worker's concurrency (4 per replica), so a few big runs
+  uploading at once raise everyone's queue wait while duration stays flat.
+  They drain by themselves; scale to drain them faster.
 - **A stuck worker.** `/readyz` returns 503, or `active` stays above 0 with no
   new `diff_job_received` log lines. BullMQ hands the jobs of a worker that
   stopped renewing its locks back to `waiting` once the lock expires (30 s by
@@ -132,7 +161,10 @@ rather than 0.
    `diff_job_failed_will_retry` is a failing attempt that will retry. A job
    that exhausted its attempts logs `diff_job_dead_lettered`, and its step
    fails with a reason code (`unresolved`). If even that write failed, the
-   reconciler re-queues the step once it has waited 10 minutes.
+   reconciler re-queues the step once it has waited 10 minutes. A failed step
+   shows "Diff failed" with its reason in the dashboard; once the cause is
+   fixed, an editor queues it again with **Retry diff** on the step's card or
+   in the viewer. Only that step fails: the rest of its run stays reviewable.
 
 3. **Look at the dead letters.** The newest failed jobs and why:
 
@@ -141,9 +173,11 @@ rather than 0.
    docker compose -f infra/docker/compose.yml exec redis redis-cli HGET bull:diff:<job-id> failedReason
    ```
 
-   One reason repeated across jobs (a provider error, a missing screenshot)
-   points at a shared cause. The same commands on `bull:diff:wait` and
-   `bull:diff:active` (`LLEN` or `LRANGE`) show the queue itself.
+   A job id is `<step id>-g<version>`: the part before `-g` is the step's
+   `screenshots.id`. One reason repeated across jobs (a provider error, a
+   missing screenshot) points at a shared cause. The same commands on
+   `bull:diff:wait` and `bull:diff:active` (`LLEN` or `LRANGE`) show the queue
+   itself.
 
 4. **Scale the diff worker.** A worker runs 4 jobs at once and there is no
    setting for that, so add replicas and give each enough CPU and memory
