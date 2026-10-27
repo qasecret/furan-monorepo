@@ -572,6 +572,7 @@ class StubEventSource {
 
 import type { ViewerMode } from "../src/components/diff-viewer/comparison-modes";
 import { DiffViewer as ViewerUnderTest } from "../src/components/diff-viewer/DiffViewer";
+import { resetStepsLeftForTests } from "../src/components/diff-viewer/use-viewer-step";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { useViewState } from "../src/components/diff-viewer/view-state";
 import { readEffectiveMode } from "../src/components/diff-viewer/viewer-mode";
@@ -662,6 +663,10 @@ beforeEach(() => {
     });
 });
 afterEach(() => historyWrite.mockRestore());
+// A viewer a test unmounted starts its run's leave timer (1 s): cancel it,
+// so it never fires into a later test's mocked client. Top level, so it runs
+// after the nested suites' own cleanups.
+afterEach(() => resetStepsLeftForTests());
 
 beforeEach(() => {
   mockGroup = undefined;

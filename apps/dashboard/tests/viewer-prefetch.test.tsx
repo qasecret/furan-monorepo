@@ -131,6 +131,7 @@ class StubEventSource {
   StubEventSource;
 
 import { DiffViewer } from "@/components/diff-viewer/DiffViewer";
+import { resetStepsLeftForTests } from "@/components/diff-viewer/use-viewer-step";
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
@@ -444,6 +445,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  // The unmount just above may have started a run's leave timer.
+  resetStepsLeftForTests();
   vi.unstubAllGlobals();
   utils = undefined;
   queryClient = undefined;
@@ -712,14 +715,16 @@ describe("the step reads of a run", () => {
     expect(["c2", "c3"].map(invalidated)).toEqual([false, false]);
 
     // The reviewer leaves the run.
+    const beforeLeaving = stepReads(server.backend).length;
     r.rerender(viewer(server.backend, null));
     await waitFor(
       () =>
         expect(["c2", "c3", "c4"].map(invalidated)).toEqual([true, true, true]),
       { timeout: 3_000 },
     );
-    // Nothing was read for it meanwhile.
+    // Nothing was read for it meanwhile: marking the reads stale reads none.
     const reads = stepReads(server.backend).length;
+    expect(reads).toBe(beforeLeaving);
 
     // Coming back reads the step again.
     r.rerender(viewer(server.backend, "c3"));
@@ -727,6 +732,20 @@ describe("the step reads of a run", () => {
       expect(stepReads(server.backend).length).toBeGreaterThan(reads),
     );
     expect(stepReads(server.backend).slice(reads)).toContain("c3");
+  });
+
+  test("a leave never outlives its test: the reset cancels its timer", async () => {
+    const server = runServer();
+    const r = await openStep(server, "c2", ["c1", "c3"]);
+    const invalidated = (id: string) =>
+      queryClient!.getQueryState(stepKey(RUN, id))?.isInvalidated;
+
+    // Leaving the run starts its grace timer; the reset (as afterEach runs
+    // it) cancels it, so the timer never fires, here or in a later test.
+    r.rerender(viewer(server.backend, null));
+    resetStepsLeftForTests();
+    await new Promise((res) => setTimeout(res, 1_200));
+    expect(["c1", "c2", "c3"].map(invalidated)).toEqual([false, false, false]);
   });
 });
 
