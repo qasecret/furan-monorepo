@@ -12,6 +12,7 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
+import { buildProjectQuery } from "../../lib/review/actions.js";
 import {
   buildHasStoredPending,
   pendingBatchCount,
@@ -371,14 +372,7 @@ export const buildsRouter = t.router({
     .use(
       projectMember<GetByIdInput>("read", {
         from: {
-          resolver: async ({ input, ctx }) => {
-            const [b] = await ctx.db
-              .select({ projectId: builds.projectId })
-              .from(builds)
-              .where(eq(builds.id, input.buildId))
-              .limit(1);
-            return b?.projectId ?? null;
-          },
+          query: ({ input }) => buildProjectQuery(input.buildId),
         },
       }),
     )

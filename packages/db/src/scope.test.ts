@@ -2,10 +2,12 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { createDb, type DB } from "./client.js";
+import { projectMembers, projects, users } from "./schema/index.js";
 import {
   currentProjectId,
   currentUserId,
   currentUserRole,
+  gateProjectMember,
   withProjectScope,
   withUserScope,
 } from "./scope.js";
@@ -148,5 +150,180 @@ describe.runIf(RUN_INTEGRATION)("withUserScope (integration)", () => {
   test("currentUserId / currentUserRole return null with no identity set", async () => {
     expect(await currentUserId(db)).toBeNull();
     expect(await currentUserRole(db)).toBeNull();
+  });
+});
+
+describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
+  let db: DB;
+  let close: () => Promise<void>;
+
+  beforeAll(() => {
+    const created = createDb();
+    db = created.db;
+    close = created.close;
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  /** Rolls back whatever `fn` wrote: the rows below never outlive a test. */
+  class Rollback extends Error {}
+  async function inRolledBackTx<T>(fn: (tx: DB) => Promise<T>): Promise<T> {
+    let out: T | undefined;
+    await db
+      .transaction(async (tx) => {
+        out = await fn(tx as DB);
+        throw new Rollback();
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof Rollback)) throw err;
+      });
+    return out as T;
+  }
+
+  /** A project with one member, in `tx`, scoped as that member (an editor). */
+  async function seeded(tx: DB) {
+    const tag = crypto.randomUUID();
+    const [user] = await tx
+      .insert(users)
+      .values({
+        email: `gate-${tag}@scope.example`,
+        hashedPassword: "x",
+        firstName: "Gate",
+        lastName: "Scope",
+        role: "editor",
+      })
+      .returning({ id: users.id });
+    const [member] = await tx
+      .insert(projects)
+      .values({ name: `gate-member-${tag}` })
+      .returning({ id: projects.id });
+    const [other] = await tx
+      .insert(projects)
+      .values({ name: `gate-other-${tag}` })
+      .returning({ id: projects.id });
+    await tx
+      .insert(projectMembers)
+      .values({ userId: user!.id, projectId: member!.id });
+    await tx.execute(
+      sql`SELECT set_config('app.user_id', ${user!.id}, true),
+                 set_config('app.user_role', 'editor', true)`,
+    );
+    return { userId: user!.id, member: member!.id, other: other!.id };
+  }
+
+  const projectById = (id: string) =>
+    sql`SELECT ${projects.id} FROM ${projects} WHERE ${projects.id} = ${id}`;
+
+  test("member, non-member and missing, by query and by resolve; the role restored", async () => {
+    const seen = await inRolledBackTx(async (tx) => {
+      const s = await seeded(tx);
+      const missing = crypto.randomUUID();
+      const out: Array<[string, string | null]> = [];
+      for (const id of [s.member, s.other, missing]) {
+        out.push([
+          await gateProjectMember(tx, s.userId, { query: projectById(id) }),
+          await currentUserRole(tx),
+        ]);
+        out.push([
+          await gateProjectMember(tx, s.userId, {
+            resolve: async () => (id === missing ? null : id),
+          }),
+          await currentUserRole(tx),
+        ]);
+      }
+      out.push([
+        await gateProjectMember(tx, s.userId, { resolve: async () => "" }),
+        await currentUserRole(tx),
+      ]);
+      return out;
+    });
+    expect(seen).toEqual([
+      ["ok", "editor"],
+      ["ok", "editor"],
+      ["forbidden", "editor"],
+      ["forbidden", "editor"],
+      ["not_found", "editor"],
+      ["not_found", "editor"],
+      ["not_found", "editor"],
+    ]);
+  });
+
+  test("the lookup and a resolver's reads run as owner", async () => {
+    const seen = await inRolledBackTx(async (tx) => {
+      const s = await seeded(tx);
+      const viaQuery = await gateProjectMember(tx, s.userId, {
+        query: sql`SELECT ${projects.id} FROM ${projects}
+          WHERE ${projects.id} = ${s.member}
+            AND current_setting('app.user_role', true) = 'owner'`,
+      });
+      let roleInResolver: string | null = null;
+      const viaResolve = await gateProjectMember(tx, s.userId, {
+        resolve: async () => {
+          roleInResolver = await currentUserRole(tx);
+          return s.member;
+        },
+      });
+      return { viaQuery, viaResolve, roleInResolver };
+    });
+    expect(seen).toEqual({
+      viaQuery: "ok",
+      viaResolve: "ok",
+      roleInResolver: "owner",
+    });
+  });
+
+  test("a resolver that throws: the role is restored, the error rethrown", async () => {
+    const seen = await inRolledBackTx(async (tx) => {
+      const s = await seeded(tx);
+      const boom = new Error("resolver failed");
+      const thrown = await gateProjectMember(tx, s.userId, {
+        resolve: () => Promise.reject(boom),
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      return { same: thrown === boom, role: await currentUserRole(tx) };
+    });
+    expect(seen).toEqual({ same: true, role: "editor" });
+  });
+
+  test("two statements, every setting transaction-local", async () => {
+    const statements: string[] = [];
+    const counted = createDb();
+    const client = (
+      counted.db as unknown as { $client: { options: { debug: unknown } } }
+    ).$client;
+    try {
+      const outcome = await counted.db.transaction(async (tx) => {
+        const s = await seeded(tx as DB);
+        client.options.debug = (_conn: number, query: string) => {
+          statements.push(query);
+        };
+        try {
+          return await gateProjectMember(tx as DB, s.userId, {
+            query: projectById(s.member),
+          });
+        } finally {
+          client.options.debug = false;
+          // Undo the seed: the outcome is all this test keeps.
+          await tx
+            .delete(projects)
+            .where(sql`${projects.id} IN (${s.member}, ${s.other})`);
+          await tx.delete(users).where(sql`${users.id} = ${s.userId}`);
+        }
+      });
+      expect(outcome).toBe("ok");
+      expect(statements).toHaveLength(2);
+      for (const q of statements) {
+        expect(q.match(/set_config\([^)]*\)/g)).toEqual([
+          expect.stringMatching(/, true\)$/),
+        ]);
+      }
+      expect(await currentUserRole(counted.db)).toBeNull();
+    } finally {
+      await counted.close();
+    }
   });
 });

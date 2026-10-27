@@ -4,8 +4,10 @@ import {
   checkpointDecisions,
   eq,
   inArray,
+  sql,
   testRuns,
   type DB,
+  type SQL,
   type Tx,
 } from "@furan/db";
 import type {
@@ -119,6 +121,34 @@ export async function resolveActionProject(
     .orderBy(asc(checkpointDecisions.createdAt), asc(checkpointDecisions.id))
     .limit(1);
   return rows[0]?.projectId ?? null;
+}
+
+/**
+ * The membership gate's lookups (`projectMember`'s `query`, spec 2026-10-27
+ * §7): the selects of `resolveRunProject`, `resolveBuildProject` and
+ * `resolveActionProject`, which the gate runs inside its own statement
+ * instead of as a statement of their own.
+ */
+export function runProjectQuery(runId: string): SQL {
+  return sql`SELECT ${testRuns.projectId} FROM ${testRuns}
+    WHERE ${testRuns.id} = ${runId} LIMIT 1`;
+}
+
+/** {@link runProjectQuery} for a build. */
+export function buildProjectQuery(buildId: string): SQL {
+  return sql`SELECT ${builds.projectId} FROM ${builds}
+    WHERE ${builds.id} = ${buildId} LIMIT 1`;
+}
+
+/**
+ * {@link runProjectQuery} for a review action: the project of its oldest
+ * decision, as `resolveActionProject` picks it.
+ */
+export function actionProjectQuery(actionId: string): SQL {
+  return sql`SELECT ${checkpointDecisions.projectId} FROM ${checkpointDecisions}
+    WHERE ${checkpointDecisions.actionId} = ${actionId}
+    ORDER BY ${checkpointDecisions.createdAt} ASC, ${checkpointDecisions.id} ASC
+    LIMIT 1`;
 }
 
 /**

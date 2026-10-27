@@ -1,4 +1,4 @@
-import { and, eq, projectMembers, withElevatedRole } from "@furan/db";
+import { gateProjectMember, type SQL } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
 import { isAtLeastAdmin } from "../../lib/roles.js";
@@ -8,9 +8,27 @@ import { t } from "../trpc.js";
 export type Action = "read" | "write";
 
 export interface ProjectMemberOpts<TInput> {
-  from: {
-    resolver: (args: { input: TInput; ctx: Context }) => Promise<string | null>;
-  };
+  from:
+    | {
+        /**
+         * The project, from a select the gate runs inside its own statement
+         * (one column, at most one row; none when the resource does not
+         * exist). Use it for a lookup of the resource's row: the gate then
+         * costs 2 statements, the lookup included.
+         */
+        query: (args: { input: TInput }) => SQL;
+      }
+    | {
+        /**
+         * The project, resolved in code. Reads made through `ctx.db` run as
+         * the RLS-bypass role, each its own statement on top of the gate's 2:
+         * prefer `query` for a row lookup.
+         */
+        resolver: (args: {
+          input: TInput;
+          ctx: Context;
+        }) => Promise<string | null>;
+      };
 }
 
 /**
@@ -30,35 +48,23 @@ export function projectMember<TInput>(
     if (ctx.user.role === "guest") {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
-    const user = ctx.user;
 
     // The projectId lookup + membership check are the authorization boundary —
-    // they must read rows RLS would hide, so run them with the role ELEVATED to
-    // owner (RLS bypass) IN PLACE on the procedure's own scoped transaction
-    // (ctx.db). Elevating in place — rather than a second privileged connection
-    // — avoids each gated request holding two pooled connections at once
-    // (ADR-058). The elevation is restored before the procedure body runs, so
-    // resolvers reading `ctx.db` here are privileged; business queries are not.
-    const outcome = await withElevatedRole(
+    // they must read rows RLS would hide, so `gateProjectMember` runs them with
+    // the role ELEVATED to owner (RLS bypass) IN PLACE on the procedure's own
+    // scoped transaction (ctx.db). Elevating in place — rather than a second
+    // privileged connection — avoids each gated request holding two pooled
+    // connections at once (ADR-058). The elevation is restored before the
+    // procedure body runs, so resolvers reading `ctx.db` here are privileged;
+    // business queries are not.
+    const from = opts.from;
+    const args = { input: input as TInput, ctx };
+    const outcome = await gateProjectMember(
       ctx.db,
-      async (): Promise<"ok" | "not_found" | "forbidden"> => {
-        const projectId = await opts.from.resolver({
-          input: input as TInput,
-          ctx,
-        });
-        if (!projectId) return "not_found";
-        const rows = await ctx.db
-          .select({ id: projectMembers.id })
-          .from(projectMembers)
-          .where(
-            and(
-              eq(projectMembers.userId, user.id),
-              eq(projectMembers.projectId, projectId),
-            ),
-          )
-          .limit(1);
-        return rows.length > 0 ? "ok" : "forbidden";
-      },
+      ctx.user.id,
+      "query" in from
+        ? { query: from.query(args) }
+        : { resolve: () => from.resolver(args) },
     );
 
     if (outcome === "not_found") throw new TRPCError({ code: "NOT_FOUND" });

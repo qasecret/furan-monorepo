@@ -1,4 +1,4 @@
-import { baselines, desc, eq, testVariations, users } from "@furan/db";
+import { baselines, desc, eq, sql, testVariations, users } from "@furan/db";
 import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
@@ -15,20 +15,15 @@ export const baselinesRouter = t.router({
     .input(listInput)
     .use(authed)
     // Resolve the projectId via the variation so we can reuse the
-    // existing projectMember(read) middleware. One extra round-trip
-    // but cheap (PK lookup) and avoids inventing a variation-member
+    // existing projectMember(read) middleware: a PK lookup the gate runs
+    // inside its own statement, which avoids inventing a variation-member
     // middleware just for this.
     .use(
       projectMember<{ testVariationId: string; limit: number }>("read", {
         from: {
-          resolver: async ({ input, ctx }) => {
-            const rows = await ctx.db
-              .select({ projectId: testVariations.projectId })
-              .from(testVariations)
-              .where(eq(testVariations.id, input.testVariationId))
-              .limit(1);
-            return rows[0]?.projectId ?? null;
-          },
+          query: ({ input }) =>
+            sql`SELECT ${testVariations.projectId} FROM ${testVariations}
+              WHERE ${testVariations.id} = ${input.testVariationId} LIMIT 1`,
         },
       }),
     )

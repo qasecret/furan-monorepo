@@ -13,16 +13,16 @@ import type { ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
 import {
+  actionProjectQuery,
   announceRuns,
   auditBuildAction,
+  buildProjectQuery,
   decideGroup,
   decideSelection,
   requireActionProject,
   requireBuildProject,
   requireRunProject,
-  resolveActionProject,
-  resolveBuildProject,
-  resolveRunProject,
+  runProjectQuery,
   trpcActionCtx,
   type ReviewResult,
   type Selection,
@@ -247,7 +247,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -301,7 +301,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -355,7 +355,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -370,7 +370,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -385,8 +385,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          query: ({ input }) => buildProjectQuery(input.buildId),
         },
       }),
     )
@@ -416,8 +415,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          query: ({ input }) => buildProjectQuery(input.buildId),
         },
       }),
     )
@@ -505,8 +503,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ actionId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveActionProject(ctx.db, input.actionId),
+          query: ({ input }) => actionProjectQuery(input.actionId),
         },
       }),
     )

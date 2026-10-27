@@ -37,8 +37,9 @@ import {
 } from "../../lib/keyset-cursor.js";
 import {
   announceRuns,
+  buildProjectQuery,
   requireBuildProject,
-  resolveBuildProject,
+  runProjectQuery,
   trpcActionCtx,
 } from "../../lib/review/actions.js";
 import { queueStepDiffs, runStepIds } from "../../lib/review/enqueue.js";
@@ -648,8 +649,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<FacetsInput>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          query: ({ input }) => buildProjectQuery(input.buildId),
         },
       }),
     )
@@ -672,7 +672,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("read", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -733,8 +733,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<StepInput>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -753,8 +752,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -799,8 +797,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -857,8 +854,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -934,8 +930,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1025,8 +1020,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1079,8 +1073,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1146,8 +1139,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1212,14 +1204,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string }>("read", {
         from: {
-          resolver: async ({ ctx, input }) => {
-            const row = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return row[0]?.projectId ?? "";
-          },
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1284,8 +1269,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string; checkpointId: string }>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
