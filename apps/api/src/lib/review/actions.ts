@@ -125,7 +125,7 @@ export function resolveRunProject(
 }
 
 /** The project a build belongs to, or null when there is no such build. */
-export function resolveBuildProject(
+function resolveBuildProject(
   db: DB | Tx,
   buildId: string,
 ): Promise<string | null> {
@@ -136,7 +136,7 @@ export function resolveBuildProject(
  * The project a review action belongs to (its oldest decision's, see
  * {@link actionProjectQuery}), or null when there is no such action.
  */
-export function resolveActionProject(
+function resolveActionProject(
   db: DB | Tx,
   actionId: string,
 ): Promise<string | null> {

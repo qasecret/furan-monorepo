@@ -142,9 +142,6 @@ export type GateResult =
   | { outcome: "not_found" }
   | { outcome: "forbidden" };
 
-/** The gate's verdict alone. */
-export type GateOutcome = GateResult["outcome"];
-
 /**
  * Reads the current role and switches to the RLS-bypass role, in that order:
  * the prior role is read from a MATERIALIZED CTE before the outer row, whose
