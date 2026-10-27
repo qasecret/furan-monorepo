@@ -853,6 +853,9 @@ d("GET /api/v1/storage/:key", () => {
 
           // A key nothing holds: every arm is planned, and none is skipped.
           seen.cold = await explainProbe(db, [A], unrelatedKey(), false);
+          // The same for a user who belongs to two projects: the lookup is
+          // `project_id = ANY(...)`, one index condition.
+          seen.coldBoth = await explainProbe(db, [A, B], unrelatedKey(), false);
           // A key one of A's steps holds alone: the first arm finds it, and
           // the rest never run.
           const [step] = await tx.execute<{ key: string }>(sql`
@@ -871,8 +874,10 @@ d("GET /api/v1/storage/:key", () => {
           if (err !== rollback) throw err;
         });
 
-      // Every key source is read through its own index, by key and project.
+      // Every key source is read through its own index, by key and project,
+      // for one project and for several.
       expectKeyAndProjectLookups(seen.cold!);
+      expectKeyAndProjectLookups(seen.coldBoth!);
 
       // A hit in the first arm stops there: no other table or index is read.
       const ran = scansOf(seen.hit!).filter(
@@ -898,7 +903,16 @@ d("GET /api/v1/storage/:key", () => {
         expect(n["Actual Rows"]).toBe(0);
       }
     } finally {
-      await h.close();
+      try {
+        // ANALYZE writes the tables' statistics (reltuples, column stats) in
+        // place, outside the rolled-back transaction: analyze again now that
+        // the seeded rows are gone, or the shared test database keeps planning
+        // for 20 000 rows that do not exist.
+        await h.db.execute(sql`ANALYZE screenshots`);
+        await h.db.execute(sql`ANALYZE test_runs`);
+      } finally {
+        await h.close();
+      }
     }
   });
 });

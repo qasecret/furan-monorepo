@@ -47,8 +47,9 @@
 --
 -- Additive and idempotent: no column, no data and no constraint changes, and
 -- every lookup the single-column indexes served is served by the new ones, so
--- the previous release keeps working against this schema. Re-applying this
--- file rebuilds the same six indexes and changes nothing else.
+-- the previous release works against the schema this file leaves (not
+-- necessarily while it runs: see the locks below). Re-applying this file
+-- rebuilds the same six indexes and changes nothing else.
 --
 -- Order: the four `screenshots` indexes first (the larger table), then the
 -- `test_runs` ones, the new one before the replaced one. That keeps the span
@@ -66,13 +67,21 @@
 --   capture-worker, diff-worker) before a `drizzle-kit migrate` run: a live
 --   reader that holds a lock the migration needs next can deadlock with it.
 -- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
---   statement its own transaction): each DROP INDEX takes ACCESS EXCLUSIVE on
---   its table for a moment; each CREATE INDEX holds SHARE on its table (writes
---   wait, reads do not) while it builds. Between an index's DROP and the end of
---   its build the table has no index for that key, and the storage proxy's
---   probe falls back to a scan for it: correct, but it can take hundreds of
---   milliseconds per image on a large install. The previous release can keep
---   serving while the file runs.
+--   statement its own transaction): each CREATE INDEX holds SHARE on its table
+--   (writes wait, reads do not) while it builds. Each DROP INDEX is not
+--   momentary: it has to wait for every transaction already open on the table
+--   (an api request, the orphan reconcile's full read of `screenshots`, any
+--   long query) before it can take ACCESS EXCLUSIVE, and while it waits every
+--   new read and write of that table queues behind it. Nothing here sets a
+--   `lock_timeout`, so with such a transaction open all traffic to
+--   `screenshots` (or `test_runs`) stalls for as long as the longest open
+--   query lasts. Between an index's DROP and the end of its build the table
+--   also has no index for that key, and the storage proxy's probe falls back
+--   to a scan for it: correct, but it can take hundreds of milliseconds per
+--   image on a large install. So the previous release cannot be relied on to
+--   keep serving while the file runs: stop the app services (api,
+--   capture-worker, diff-worker) before `migrate`, as for 0043, and start
+--   them again after it.
 --
 -- One-off cost on a large install: each build reads its table once and sorts
 -- it. The four `screenshots` builds dominate; the `test_runs` ones read a table
