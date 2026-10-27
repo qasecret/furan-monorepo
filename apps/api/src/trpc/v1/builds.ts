@@ -67,27 +67,16 @@ const getByIdInput = z.object({ buildId: z.string().uuid() });
 type GetByIdInput = z.infer<typeof getByIdInput>;
 
 /**
- * SQL CASE expression — keep this string in sync with spec §3.2 precedence:
- * running > unresolved > failed > aborted > passed > empty.
+ * A build's aggregate status (spec §3.2), in precedence order: running >
+ * unresolved > failed > aborted > passed > empty, each with the run statuses
+ * behind it. A build is the first status it has a run in, and `empty` when it
+ * has none of them (no runs, or only `empty` ones). The per-status counts
+ * (`RUN_STATUS_COUNTS`), the CASE that picks the status from them
+ * (`aggregateStatusExpr`) and the status filter (`aggregateStatusIs`) are all
+ * derived from this table, so they cannot disagree.
  */
-const aggregateStatusExpr = sql<string>`
-  CASE
-    WHEN coalesce(r.running_count, 0)    > 0 THEN 'running'
-    WHEN coalesce(r.unresolved_count, 0) > 0 THEN 'unresolved'
-    WHEN coalesce(r.failed_count, 0)     > 0 THEN 'failed'
-    WHEN coalesce(r.aborted_count, 0)    > 0 THEN 'aborted'
-    WHEN coalesce(r.passed_count, 0)     > 0 THEN 'passed'
-    ELSE 'empty'
-  END
-`;
-
-/**
- * The same precedence as `aggregateStatusExpr`, as the run statuses behind
- * each aggregate status: a build is the first status it has a run in, and
- * `empty` when it has none of them (no runs, or only `empty` ones).
- */
-const AGGREGATE_STATUS_RUNS: ReadonlyArray<
-  readonly [BuildAggregateStatus, readonly RunStatus[]]
+export const AGGREGATE_STATUS_RUNS: ReadonlyArray<
+  readonly [Exclude<BuildAggregateStatus, "empty">, readonly RunStatus[]]
 > = [
   ["running", ["running"]],
   ["unresolved", ["unresolved"]],
@@ -95,6 +84,45 @@ const AGGREGATE_STATUS_RUNS: ReadonlyArray<
   ["aborted", ["aborted"]],
   ["passed", ["passed", "new"]],
 ];
+
+/** `'a', 'b'`: run statuses as SQL literals (code constants, never input). */
+function statusList(statuses: readonly RunStatus[]): string {
+  return statuses.map((s) => `'${s}'`).join(", ");
+}
+
+/**
+ * Over the runs `r` of one build: `count(*) FILTER (...) AS <status>_count`
+ * for each aggregate status of `AGGREGATE_STATUS_RUNS`, its runs counted.
+ */
+const RUN_STATUS_COUNTS = sql.raw(
+  AGGREGATE_STATUS_RUNS.map(
+    ([status, runs]) =>
+      `count(*) FILTER (WHERE r.status IN (${statusList(runs)})) AS ${status}_count`,
+  ).join(",\n"),
+);
+
+/**
+ * The aggregate status from `RUN_STATUS_COUNTS` (as `r.<status>_count`): the
+ * first in precedence order with a run, else `empty`.
+ */
+const aggregateStatusExpr = sql.raw(
+  `CASE ${AGGREGATE_STATUS_RUNS.map(
+    ([status]) => `WHEN coalesce(r.${status}_count, 0) > 0 THEN '${status}'`,
+  ).join(" ")} ELSE 'empty' END`,
+);
+
+/** The aggregate over one build's runs `r` that `list` reports: one row. */
+const RUN_AGGREGATE = sql`
+  count(*)                                         AS run_count,
+  ${RUN_STATUS_COUNTS},
+  count(*) FILTER (WHERE r.status = 'empty')       AS empty_count,
+  -- The pending steps by the runs' stored counters (spec 2026-10-27 §3.1).
+  coalesce(sum(r.pending_steps), 0)                AS pending_checkpoints,
+  -- The build's single distinct test name (NULL when 0 or >1 tests), so the
+  -- Builds list can title a one-test build by its test rather than the
+  -- opaque build id. SDK runs are one-test-per-build (ADR-038).
+  CASE WHEN count(DISTINCT r.name) = 1 THEN min(r.name) ELSE NULL END AS test_name
+`;
 
 /**
  * The build (`b` in the enclosing raw query) has a run of the project in one
@@ -105,15 +133,11 @@ const AGGREGATE_STATUS_RUNS: ReadonlyArray<
  * plan still sees them.
  */
 function hasRunIn(projectId: string, statuses: readonly RunStatus[]): SQL {
-  const list = sql.join(
-    statuses.map((s) => sql.raw(`'${s}'`)),
-    sql`, `,
-  );
   return sql`EXISTS (
     SELECT 1 FROM test_runs sr
     WHERE sr.build_id = b.id
       AND sr.project_id = ${projectId}
-      AND sr.status IN (${list})
+      AND sr.status IN (${sql.raw(statusList(statuses))})
   )`;
 }
 
@@ -126,14 +150,24 @@ function aggregateStatusIs(
   projectId: string,
   status: BuildAggregateStatus,
 ): SQL {
+  if (status === "empty") {
+    return sql`NOT ${hasRunIn(
+      projectId,
+      AGGREGATE_STATUS_RUNS.flatMap(([, runs]) => runs),
+    )}`;
+  }
   const at = AGGREGATE_STATUS_RUNS.findIndex(([s]) => s === status);
-  const own = at === -1 ? [] : AGGREGATE_STATUS_RUNS[at]![1];
-  const outranking = AGGREGATE_STATUS_RUNS.slice(
-    0,
-    at === -1 ? undefined : at,
-  ).flatMap(([, runs]) => runs);
+  if (at === -1) {
+    // Only a status added to the schema and not to the table gets here: it
+    // must not silently filter as `empty`.
+    throw new Error(`aggregate status "${status}" has no precedence`);
+  }
+  const own = AGGREGATE_STATUS_RUNS[at]![1];
+  const outranking = AGGREGATE_STATUS_RUNS.slice(0, at).flatMap(
+    ([, runs]) => runs,
+  );
   return and(
-    own.length > 0 ? hasRunIn(projectId, own) : undefined,
+    hasRunIn(projectId, own),
     outranking.length > 0
       ? sql`NOT ${hasRunIn(projectId, outranking)}`
       : undefined,
@@ -251,21 +285,7 @@ export const buildsRouter = t.router({
           LIMIT ${input.limit + 1}
         ) b
         LEFT JOIN LATERAL (
-          SELECT
-            count(*)                                                AS run_count,
-            count(*) FILTER (WHERE r.status = 'running')            AS running_count,
-            count(*) FILTER (WHERE r.status = 'unresolved')         AS unresolved_count,
-            count(*) FILTER (WHERE r.status = 'failed')             AS failed_count,
-            count(*) FILTER (WHERE r.status = 'aborted')            AS aborted_count,
-            count(*) FILTER (WHERE r.status IN ('passed','new'))    AS passed_count,
-            count(*) FILTER (WHERE r.status = 'empty')              AS empty_count,
-            -- The pending steps by the runs' stored counters (spec 2026-10-27
-            -- §3.1), the number getById reports.
-            coalesce(sum(r.pending_steps), 0)                       AS pending_checkpoints,
-            -- The build's single distinct test name (NULL when 0 or >1 tests),
-            -- so the Builds list can title a one-test build by its test rather
-            -- than the opaque build id. SDK runs are one-test-per-build (ADR-038).
-            CASE WHEN count(DISTINCT r.name) = 1 THEN min(r.name) ELSE NULL END AS test_name
+          SELECT ${RUN_AGGREGATE}
           FROM test_runs r
           WHERE r.build_id = b.id
             AND r.project_id = ${input.projectId}
@@ -382,19 +402,15 @@ export const buildsRouter = t.router({
       }>(sql`
         WITH run_agg AS (
           SELECT
-            build_id,
+            r.build_id,
             count(*)                                                AS run_count,
-            count(*) FILTER (WHERE status = 'running')              AS running_count,
-            count(*) FILTER (WHERE status = 'unresolved')           AS unresolved_count,
-            count(*) FILTER (WHERE status = 'failed')               AS failed_count,
-            count(*) FILTER (WHERE status = 'aborted')              AS aborted_count,
-            count(*) FILTER (WHERE status IN ('passed','new'))      AS passed_count,
-            count(*) FILTER (WHERE status = 'new')                  AS new_count,
-            count(*) FILTER (WHERE status = 'empty')                AS empty_count,
-            CASE WHEN count(DISTINCT name) = 1 THEN min(name) ELSE NULL END AS test_name
-          FROM test_runs
-          WHERE build_id = ${input.buildId}
-          GROUP BY build_id
+            ${RUN_STATUS_COUNTS},
+            count(*) FILTER (WHERE r.status = 'new')                AS new_count,
+            count(*) FILTER (WHERE r.status = 'empty')              AS empty_count,
+            CASE WHEN count(DISTINCT r.name) = 1 THEN min(r.name) ELSE NULL END AS test_name
+          FROM test_runs r
+          WHERE r.build_id = ${input.buildId}
+          GROUP BY r.build_id
         )
         SELECT
           b.id, b.ci_build_id, b.number, b.branch_name, b.status, b.name,
