@@ -19,6 +19,8 @@ import {
 import { objectKey, type Storage } from "@furan/storage";
 import bcrypt from "bcryptjs";
 
+import { railNeighbours } from "../suites/viewer-calls.js";
+
 import { generateDiffPng, generatePng } from "./images.js";
 import {
   DIFF_POOL,
@@ -88,6 +90,11 @@ export interface Seeded {
   longRunBuildId: string;
   /** Step 1 of the long run (where the viewer is opened for R4 and D5). */
   longRunFirstStepId: string;
+  /**
+   * The steps the viewer fetches ahead when it opens step 1 (`railNeighbours`):
+   * step 2 alone, as step 1 is the rail's first.
+   */
+  longRunFirstStepNeighbours: string[];
   /** Each set's variations on `main`, in step order (see `pipelineStep`). */
   pipeline: Record<PipelineSet, { variationIds: string[]; branch: "main" }>;
   /** Where the solo review-queue timings start (old perf script's cases). */
@@ -440,6 +447,39 @@ export async function pendingSteps(db: DB, projectId: string) {
 }
 
 /**
+ * Each run's steps in the viewer's rail order: `runs.listCheckpoints` orders
+ * them by capture time (the id breaks a tie here, which the api leaves open).
+ */
+export async function railsOf(
+  db: DB,
+  projectId: string,
+  runIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const rails = new Map<string, string[]>();
+  if (runIds.length === 0) return rails;
+  const rows = await db
+    .select({ runId: screenshots.runId, id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, projectId),
+        inArray(screenshots.runId, [...new Set(runIds)]),
+      ),
+    )
+    .orderBy(
+      asc(screenshots.runId),
+      asc(screenshots.createdAt),
+      asc(screenshots.id),
+    );
+  for (const { runId, id } of rows) {
+    const rail = rails.get(runId);
+    if (rail === undefined) rails.set(runId, [id]);
+    else rail.push(id);
+  }
+  return rails;
+}
+
+/**
  * The old script's spots (`findSpots` / `findResolvedSpots`): the middle and
  * last pending steps of the review batch; the only pending step of a mid-aged
  * batch, from which `findNext` finds nothing in its batch, wraps, finds
@@ -563,6 +603,7 @@ async function loadSeeded(
       ),
     );
   if (!probe) throw new SeedError("the long run has no first step");
+  const longRail = (await railsOf(db, projectId, [longRun.id])).get(longRun.id);
 
   const soloSpots = await findSoloSpots(db, {
     projectId,
@@ -581,6 +622,7 @@ async function loadSeeded(
     longRunId: longRun.id,
     longRunBuildId,
     longRunFirstStepId: probe.id,
+    longRunFirstStepNeighbours: railNeighbours(longRail ?? [], probe.id),
     pipeline,
     soloSpots,
     uniqueKeyProbe: probe.key,

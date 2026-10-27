@@ -400,6 +400,14 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
         name: SEED_NAMES.longRunStep(1),
         key: seeded.uniqueKeyProbe,
       });
+      // Step 1 is the rail's first, so the viewer fetches step 2 alone ahead.
+      const neighbours = await db
+        .select({ name: screenshots.name, runId: screenshots.runId })
+        .from(screenshots)
+        .where(inArray(screenshots.id, seeded.longRunFirstStepNeighbours));
+      expect(neighbours).toEqual([
+        { name: SEED_NAMES.longRunStep(2), runId: seeded.longRunId },
+      ]);
 
       // Every step's image is in storage.
       const keys = await db

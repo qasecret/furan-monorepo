@@ -11,6 +11,7 @@ import {
   type Measurement,
   type Row,
 } from "../src/budgets.js";
+import type { SuiteLoad } from "../src/load.js";
 import { writeReport } from "../src/report.js";
 
 let dir: string;
@@ -178,6 +179,111 @@ describe("writeReport", () => {
     // No suite ran: no timeline.
     const none = await readFile(writeReport(sample(), meta, dir).md, "utf8");
     expect(none).not.toContain("Timeline");
+  });
+
+  describe("load", () => {
+    const run = (
+      suite: "browser" | "server" | "pipeline",
+      load?: SuiteLoad,
+    ) => ({
+      suite,
+      startedAt: "2026-10-22T01:05:00.000Z",
+      endedAt: "2026-10-22T01:06:00.000Z",
+      seconds: 60,
+      ...(load !== undefined && { load }),
+    });
+    const section = (md: string): string => {
+      const at = md.indexOf("## Load");
+      return at < 0 ? "" : md.slice(at);
+    };
+
+    it("writes each suite's pool wait p95 and event-loop lag p99, and what pool wait omits", async () => {
+      const timeline = [
+        run("browser", {
+          poolWait: { p95Ms: 0.875, beyondBuckets: false, transactions: 1520 },
+          loopLagP99Ms: 12.3456,
+        }),
+        run("server", {
+          poolWait: { p95Ms: 41.2, beyondBuckets: false, transactions: 51234 },
+          loopLagP99Ms: 48,
+        }),
+        run("pipeline", {
+          poolWait: { p95Ms: null, beyondBuckets: false, transactions: 0 },
+          loopLagP99Ms: 11.9,
+        }),
+      ];
+      const out = writeReport(sample(), { ...meta, timeline }, dir);
+      const load = section(await readFile(out.md, "utf8"));
+      expect(load).toContain(
+        [
+          "## Load",
+          "",
+          "| Suite | Pool wait p95 (ms) | Transactions | Event-loop lag p99 (ms) |",
+          "| --- | --- | --- | --- |",
+          "| browser | 0.88 | 1520 | 12.35 |",
+          "| server | 41.2 | 51234 | 48 |",
+          "| pipeline | — | 0 | 11.9 |",
+        ].join("\n"),
+      );
+      expect(load).toContain("`furan_db_pool_wait_seconds`");
+      expect(load).toContain("`nodejs_eventloop_lag_p99_seconds`");
+      // The one line on what the pool wait cannot see.
+      expect(load).toMatch(
+        /^- Pool wait omits transactions that never begin, such as a connect error\b.*$/m,
+      );
+      // After the table and its notes.
+      const md = await readFile(out.md, "utf8");
+      expect(md.indexOf("## Load")).toBeGreaterThan(md.indexOf("## Notes"));
+
+      const parsed = JSON.parse(await readFile(out.json, "utf8")) as {
+        meta: { timeline: unknown };
+      };
+      expect(parsed.meta.timeline).toEqual(timeline);
+    });
+
+    it("marks a p95 past the last bucket as a floor", async () => {
+      const timeline = [
+        run("server", {
+          poolWait: { p95Ms: 5000, beyondBuckets: true, transactions: 20 },
+          loopLagP99Ms: 900,
+        }),
+      ];
+      const load = section(
+        await readFile(
+          writeReport(sample(), { ...meta, timeline }, dir).md,
+          "utf8",
+        ),
+      );
+      expect(load).toContain("| server | ≥ 5000 | 20 | 900 |");
+    });
+
+    it("says when a suite's load could not be read", async () => {
+      const timeline = [
+        run("server", {
+          poolWait: { p95Ms: null, beyondBuckets: false, transactions: 0 },
+          loopLagP99Ms: null,
+          error: "metric furan_db_pool_wait_seconds is not registered",
+        }),
+      ];
+      const load = section(
+        await readFile(
+          writeReport(sample(), { ...meta, timeline }, dir).md,
+          "utf8",
+        ),
+      );
+      expect(load).toContain("| server | — | — | — |");
+      expect(load).toContain(
+        "- server: the load could not be read (metric furan_db_pool_wait_seconds is not registered)",
+      );
+    });
+
+    it("has no Load section when no suite carried its load", async () => {
+      const md = await readFile(
+        writeReport(sample(), { ...meta, timeline: [run("server")] }, dir).md,
+        "utf8",
+      );
+      expect(md).not.toContain("## Load");
+    });
   });
 
   it("renders the table columns", async () => {

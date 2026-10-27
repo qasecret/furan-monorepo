@@ -4,6 +4,11 @@ import { cpus, totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { Row, Suite } from "./budgets.js";
+import {
+  LOOP_LAG_P99_METRIC,
+  POOL_WAIT_METRIC,
+  type SuiteLoad,
+} from "./load.js";
 
 /** One suite's run, and the quiesce after it (Ruling R48), as the CLI saw them. */
 export interface SuiteRun {
@@ -14,6 +19,8 @@ export interface SuiteRun {
   seconds: number;
   /** The quiesce's line (`describeQuiesce`). */
   quiesce?: string;
+  /** The pool wait and event-loop lag while the suite ran (spec §8). */
+  load?: SuiteLoad;
 }
 
 export interface ReportMeta {
@@ -94,6 +101,54 @@ const formatVerdict = (row: Row): string =>
 
 const cell = (text: string): string => text.replace(/\|/g, "\\|");
 
+/**
+ * The load notes (spec 2026-10-27 §8): each suite's pool wait p95 and
+ * event-loop lag p99, and how to read them. Empty when no suite carried its
+ * load.
+ */
+function renderLoad(timeline: readonly SuiteRun[]): string[] {
+  const loaded = timeline.filter(
+    (run): run is SuiteRun & { load: SuiteLoad } => run.load !== undefined,
+  );
+  if (loaded.length === 0) return [];
+  const lines = [
+    "",
+    "## Load",
+    "",
+    "| Suite | Pool wait p95 (ms) | Transactions | Event-loop lag p99 (ms) |",
+    "| --- | --- | --- | --- |",
+  ];
+  for (const { suite, load } of loaded) {
+    const { p95Ms, beyondBuckets, transactions } = load.poolWait;
+    const p95 =
+      load.error !== undefined
+        ? "—"
+        : `${beyondBuckets ? "≥ " : ""}${formatValue(p95Ms)}`;
+    lines.push(
+      `| ${[
+        suite,
+        p95,
+        load.error !== undefined ? "—" : String(transactions),
+        formatValue(load.loopLagP99Ms),
+      ].join(" | ")} |`,
+    );
+  }
+  lines.push(
+    "",
+    `- Pool wait is \`${POOL_WAIT_METRIC}\`: how long each tRPC procedure that opened a request transaction waited for it (a pooled connection, then its BEGIN) while the suite ran. The p95 is estimated from the histogram's buckets, linearly within the bucket it falls in; "≥" marks one past the last bucket, a floor.`,
+    "- Pool wait omits transactions that never begin, such as a connect error: a pool that cannot connect shows as fewer transactions, not as a longer wait.",
+    `- Event-loop lag is \`${LOOP_LAG_P99_METRIC}\` over the suite. prom-client samples the loop every 10 ms, so an idle loop reads about 10 to 12 ms. The API, the diff worker and the harness's clients share one process, so this is the harness's loop, not the API's alone.`,
+  );
+  for (const { suite, load } of loaded) {
+    if (load.error !== undefined) {
+      lines.push(
+        `- ${suite}: the load could not be read (${cell(load.error)})`,
+      );
+    }
+  }
+  return lines;
+}
+
 function renderMarkdown(
   rows: readonly Row[],
   meta: {
@@ -147,6 +202,7 @@ function renderMarkdown(
       lines.push(`- ${cell(row.id)} (${row.verdict}): ${cell(row.note ?? "")}`);
     }
   }
+  lines.push(...renderLoad(meta.timeline));
   return `${lines.join("\n")}\n`;
 }
 

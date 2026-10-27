@@ -8,7 +8,7 @@ import { BUDGETS, type Measurement } from "../budgets.js";
 import { mintJwt, trpc, type TrpcResult } from "../clients/http.js";
 import { readHistogram } from "../clients/metrics.js";
 import { InterruptedError, describeError } from "../errors.js";
-import { pendingSteps, type Seeded } from "../seed/index.js";
+import { pendingSteps, railsOf, type Seeded } from "../seed/index.js";
 import type { Stack } from "../stack/api.js";
 
 import {
@@ -21,7 +21,11 @@ import {
   type CallSample,
 } from "./server-math.js";
 import { runSolo } from "./solo.js";
-import type { ViewerCall, ViewerTarget } from "./viewer-calls.js";
+import {
+  railNeighbours,
+  type ViewerCall,
+  type ViewerTarget,
+} from "./viewer-calls.js";
 
 export {
   FALLBACK_VIEWER_PATHS,
@@ -118,7 +122,8 @@ const LOOP_BUDGETS: Readonly<Record<(typeof LOOP_IDS)[number], string[]>> = {
   "R3.buildsList": ["builds.list"],
   "R3.buildsListNeedsReview": ["builds.list needsReview"],
   "R3.runsList": ["runs.list"],
-  // The batch page's and the viewer's: both on the newest batch.
+  // The batch page's, on the newest batch. (The viewer reads its run header
+  // from `runs.getById` since slice 3, so it no longer asks for the batch.)
   "R5.buildsGetById": ["builds.getById"],
   "R5.checkpointGroup": ["runs.getCheckpointGroup"],
   R7: ["review.approve"],
@@ -265,6 +270,27 @@ async function countPending(
   return row?.n ?? 0;
 }
 
+/**
+ * Each step as a viewer opens it: with the steps either side of it in its
+ * run's rail, which the viewer fetches ahead.
+ */
+async function withNeighbours(
+  stack: Stack,
+  projectId: string,
+  steps: readonly { buildId: string; runId: string; checkpointId: string }[],
+): Promise<ViewerTarget[]> {
+  const rails = await railsOf(
+    stack.db,
+    projectId,
+    steps.map((s) => s.runId),
+  );
+  return steps.map((s) => ({
+    projectId,
+    ...s,
+    neighbours: railNeighbours(rails.get(s.runId) ?? [], s.checkpointId),
+  }));
+}
+
 /** The step a viewer opens on when the batch has no reserved step. */
 async function firstStepOf(
   stack: Stack,
@@ -284,7 +310,10 @@ async function firstStepOf(
     )
     .limit(1);
   if (!row) throw new Error("the newest batch has no step");
-  return { projectId, buildId, ...row };
+  const [target] = await withNeighbours(stack, projectId, [
+    { buildId, ...row },
+  ]);
+  return target!;
 }
 
 /** The ids of the runs on a `runs.list` page. */
@@ -345,10 +374,13 @@ async function iteration(
   }
 
   // 3. The viewer, on the step this reviewer decides next (or, its slice
-  //    used up, a reserved pending step).
+  //    used up, a reserved pending step): every request of its call set,
+  //    the step's neighbours in the rail included.
   const target = r.slice[r.next] ?? r.idle;
   for (const call of viewerCalls) {
-    await query(call.path, call.path, call.inputAt(target));
+    for (const input of call.inputsAt(target)) {
+      await query(call.path, call.path, input);
+    }
   }
 
   // 4. Where the review goes next, from the batch ("Start reviewing").
@@ -400,11 +432,13 @@ async function runReviewers(
   if (seeded.reviewers.length === 0) {
     throw new Error("the seed has no reviewers");
   }
-  const pending: ViewerTarget[] = (
-    await pendingSteps(stack.db, seeded.projectId)
-  )
-    .filter((p) => p.buildId === seeded.newestBuildId)
-    .map((p) => ({ projectId: seeded.projectId, ...p }));
+  const pending: ViewerTarget[] = await withNeighbours(
+    stack,
+    seeded.projectId,
+    (await pendingSteps(stack.db, seeded.projectId)).filter(
+      (p) => p.buildId === seeded.newestBuildId,
+    ),
+  );
   const { approvable, reserve } = splitReserve(pending);
   // Where viewers open once their slice is used up: the reserved pending
   // steps, round robin (the batch's first step if it has none).
@@ -551,9 +585,11 @@ async function runProbe(
 }
 
 /**
- * R4: every procedure of the viewer call set on step 1 of the long run, one
- * pass after another (5 warm-ups, then 50). R4.time is the slowest
- * procedure's p95; R4.size the decoded JSON of the largest measured pass.
+ * R4: every request of the viewer call set on step 1 of the long run (the
+ * step's `runs.getStep` and its neighbour's included), one pass after
+ * another (5 warm-ups, then 50). R4.time is the slowest procedure's p95, a
+ * procedure's requests pooled; R4.size the decoded JSON of the largest
+ * measured pass.
  */
 async function measureViewerOpen(
   stack: Stack,
@@ -573,24 +609,26 @@ async function measureViewerOpen(
     const byPath = new Map<string, number>();
     let complete = true;
     for (const call of viewerCalls) {
-      rec.alive();
-      let res: TrpcResult | undefined;
-      try {
-        res = await client.query(call.path, call.input(seeded));
-      } catch {
-        // No response: R8 counts it.
-      }
-      const status = res?.status ?? 0;
-      rec.statuses.push({ status });
-      if (status !== 200) complete = false;
-      byPath.set(call.path, res?.bytes ?? 0);
-      if (pass >= PROBE_WARMUP) {
-        samples.push({
-          key: call.path,
-          ms: res?.ms ?? 0,
-          status,
-          bytes: res?.bytes ?? 0,
-        });
+      for (const input of call.inputs(seeded)) {
+        rec.alive();
+        let res: TrpcResult | undefined;
+        try {
+          res = await client.query(call.path, input);
+        } catch {
+          // No response: R8 counts it.
+        }
+        const status = res?.status ?? 0;
+        rec.statuses.push({ status });
+        if (status !== 200) complete = false;
+        byPath.set(call.path, (byPath.get(call.path) ?? 0) + (res?.bytes ?? 0));
+        if (pass >= PROBE_WARMUP) {
+          samples.push({
+            key: call.path,
+            ms: res?.ms ?? 0,
+            status,
+            bytes: res?.bytes ?? 0,
+          });
+        }
       }
     }
     const bytes = [...byPath.values()].reduce((a, b) => a + b, 0);
@@ -618,7 +656,11 @@ async function measureViewerOpen(
       return `${call.path} ${v == null ? "—" : `${v.toFixed(1)} ms`}`;
     })
     .join(", ");
-  const setNote = `${viewerCalls.length} procedures (${source} call set) on long-run step 1, ${PROBE_CALLS} passes after ${PROBE_WARMUP} warm-ups, under the reviewers' load`;
+  const requests = viewerCalls.reduce(
+    (n, call) => n + call.inputs(seeded).length,
+    0,
+  );
+  const setNote = `${viewerCalls.length} procedures in ${requests} requests (${source} call set; runs.getStep reads the step and the neighbours the viewer fetches ahead) on long-run step 1, ${PROBE_CALLS} passes after ${PROBE_WARMUP} warm-ups, under the reviewers' load`;
   const time: Measurement = {
     id: "R4.time",
     value: slowest,

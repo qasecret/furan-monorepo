@@ -376,14 +376,27 @@ checks run in WebKit and Firefox, launched by the spec (`webkit.launch()`,
 Chromium session (its `storageState`), so the spec signs in once. It runs in
 `s3-full`.
 
+`tests/review/viewer-step.spec.ts` (capability `review.viewer_step`, not
+`@visual`) checks that the diff viewer reads one step at a time. In a project
+created fresh for every run (`viewer-step-ui-<timestamp>`), made the bootstrap
+admin's default for the run as the review-loop spec does, a run of three
+steps is captured twice, its middle step changed the second time. Opening the
+middle step must ask `runs.getStep` for it first, then for the steps either
+side of it (fetched ahead), each once and no other step; the run header comes
+from `runs.getById`, and `builds.getById` is never called. The step is drawn
+(`data-stage-drawn` names it), the sidebar shows its own pixel diff, and its
+baseline, current and diff images are fetched. It reads the tRPC calls from
+the request URLs, so it works through the single origin and against a dev
+stack whose api has an origin of its own. It runs in `s3-full`.
+
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 7 times (the seeder,
-  then the login, dashboard, review-flow, review-loop, keyboard-review and
-  viewer-compare specs; viewer-compare signs in once, in Chromium, and its
-  WebKit and Firefox pages reuse that session), so repeated Playwright runs against a kept stack trip it after a
-  few iterations: the login form then reads "Invalid email or password" and
+  per-account login brake, ADR-063). A run signs in 8 times (the seeder,
+  then the login, dashboard, review-flow, review-loop, keyboard-review,
+  viewer-compare and viewer-step specs; viewer-compare signs in once, in
+  Chromium, and its WebKit and Firefox pages reuse that session), so repeated
+  Playwright runs against a kept stack trip it after a few iterations: the login form then reads "Invalid email or password" and
   the api logs `login_account_rate_limited` (429). Wait out the window, or
   recreate the stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation

@@ -2,7 +2,7 @@
   "runs.listCheckpoints",
   "runs.getById",
   "projects.getById",
-  "builds.getById",
+  "runs.getStep",
   "review.next",
   "runs.getCheckpointGroup",
   "builds.pendingCount"
