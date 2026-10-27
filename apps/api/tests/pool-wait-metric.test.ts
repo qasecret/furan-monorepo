@@ -119,7 +119,12 @@ d("the pool-wait metric", () => {
         checkpointIds: [randomUUID()],
       },
     });
-    expect(refused.statusCode).toBeGreaterThanOrEqual(400);
+    // The core's refusal, not some other failure: PRECONDITION_FAILED.
+    expect(refused.statusCode).toBe(412);
+    expect(
+      (refused.json() as { error?: { data?: { code?: string } } }).error?.data
+        ?.code,
+    ).toBe("PRECONDITION_FAILED");
     expect((await poolWait()).count).toBe(before + 1);
 
     // A batch of three: one sample per procedure.
