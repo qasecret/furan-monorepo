@@ -36,9 +36,6 @@ export const baselines = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    variationIdx: index("baselines_test_variation_id_idx").on(
-      t.testVariationId,
-    ),
     runIdx: index("baselines_test_run_id_idx").on(t.testRunId),
     // One baseline per (variation, run): makes recordBaseline's upsert
     // idempotent so a diff-worker retry / re-approve can't append duplicates.
@@ -48,7 +45,10 @@ export const baselines = pgTable(
     ),
     // Migration 0043 (spec 2026-10-27 §2): a variation's baselines on a
     // branch, newest first, for resolving one step's baseline. DESC NULLS
-    // FIRST is what `ORDER BY ... DESC` reads.
+    // FIRST is what `ORDER BY ... DESC` reads. Its leading
+    // `test_variation_id` also serves every lookup by variation (the FK
+    // cascade from `test_variations` included), so 0043 dropped the narrower
+    // `baselines_test_variation_id_idx` it supersedes.
     variationBranchCreatedIdx: index(
       "baselines_variation_branch_created_idx",
     ).on(

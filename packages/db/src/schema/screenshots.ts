@@ -166,9 +166,6 @@ export const screenshots = pgTable(
       t.viewport,
     ),
     runIdx: index("screenshots_run_idx").on(t.runId),
-    testVariationIdx: index("screenshots_test_variation_id_idx").on(
-      t.testVariationId,
-    ),
     diffSignatureIdx: index("screenshots_diff_signature_idx").on(
       t.diffSignature,
     ),
@@ -199,7 +196,10 @@ export const screenshots = pgTable(
       .where(stepAwaitingDiff(t)),
     // Migration 0043 (spec 2026-10-27 §2). A variation's captures newest
     // first: the viewer's "newer capture" (a top-1) and `variations.history`.
-    // DESC NULLS FIRST is what `ORDER BY ... DESC` reads.
+    // DESC NULLS FIRST is what `ORDER BY ... DESC` reads. Its leading
+    // `test_variation_id` also serves every lookup by variation (the FK
+    // cascade from `test_variations` included), so 0043 dropped the narrower
+    // `screenshots_test_variation_id_idx` it supersedes.
     variationCreatedIdx: index("screenshots_variation_created_idx").on(
       t.testVariationId,
       t.createdAt.desc().nullsFirst(),
