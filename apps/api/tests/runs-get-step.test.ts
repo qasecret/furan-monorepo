@@ -1131,6 +1131,40 @@ d("runs.getStep", () => {
           expected: want,
         }));
       },
+
+    // Not a golden either: it pins the other half of the build lookup, the
+    // join from the build to its runs (`test_runs.project_id =
+    // builds.project_id`), which names a build by its one test name.
+    "another project's run inside the later run's build never feeds that build's test name":
+      async () => {
+        const s = await seed({ checkpoints: [cp("a", "unresolved")] });
+        const foreign = await seed({ checkpoints: [cp("z", "unresolved")] });
+        // A build of this project with no name, number or CI id: it is named
+        // by the test name its runs share.
+        const later = await addReviewBuild(h, s, {
+          spec: { checkpoints: [cp("a", "unresolved")] },
+        });
+        // Corrupt data: a run of the foreign project inside that build, under
+        // another test name. Counted, it would leave the build with two
+        // names, so none, and the build named by its id.
+        await h.db.insert(testRuns).values({
+          buildId: later.buildId,
+          projectId: foreign.projectId,
+          name: `foreign-${foreign.tag}`,
+          status: "passed",
+        });
+        const want = {
+          runId: later.runId,
+          checkpointId: later.shots.a!.id,
+          buildName: `run-${s.tag}`,
+        };
+        return [s.editor, s.admin].map((user) => ({
+          user,
+          runId: s.runId,
+          stepId: s.shots.a!.id,
+          expected: want,
+        }));
+      },
   };
 
   /**
@@ -1152,9 +1186,10 @@ d("runs.getStep", () => {
         }
       : null;
 
-  // Every scenario but the last is a golden of the old code (green on
-  // 5d23f7f0, then through listCheckpoints and getById); the last pins the
-  // build lookup to the project. getStep reports the newer capture in full;
+  // Every scenario but the last two is a golden of the old code (green on
+  // 5d23f7f0, then through listCheckpoints and getById); the last two pin the
+  // build lookup, and its join to the build's runs, to the project. getStep
+  // reports the newer capture in full;
   // the step list carries whether there is one and its build's name, which a
   // batch step card names before approving an older capture.
   describe("the newer capture, as the step list reports it", () => {
