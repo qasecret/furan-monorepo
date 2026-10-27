@@ -339,7 +339,7 @@ runner, and local runs use the same thresholds.
 
 Three budgets passed but stay `tracked`:
 
-- `P5` read 0 only because the race it detects didn't fire on that run (slice 2's section below has the later runs).
+- `P5` read 0 only because the race it detects didn't fire on that run (slice 2's section below has the later run).
 - `R2-solo.pendingCount` (41 ms) and `D2.firstRow` (1,332 ms) have too little headroom to enforce from a single run.
 
 The other solo cases (`R1-solo.*`, `R2-solo.buildsListNeedsReview`, `R2-solo.worst`) stay tracked under slice 3. The old script's own worst case already took more than 50 ms.
