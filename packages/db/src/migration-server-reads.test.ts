@@ -28,8 +28,9 @@ import {
 
 /**
  * Migration `0043_server_reads` (spec 2026-10-27 speed-at-scale server reads
- * §2): the stored pending counters on `test_runs` with their one-off backfill
- * (§3.1), the slice-3 read indexes, and the two schema drift fixes.
+ * §2): the stored pending counters on `test_runs` with their backfill (§3.1),
+ * which doubles as their repair; the slice-3 read indexes, the reconciler's
+ * index and the three indexes they supersede; and the two schema drift fixes.
  *
  * Like the other migration tests, it seeds rows on the already-migrated test
  * database, executes the file from disk and asserts; executing it again is the
@@ -82,6 +83,20 @@ const SLICE3_INDEXES: Record<string, string> = {
     "CREATE INDEX screenshots_diff_image_key_idx ON public.screenshots USING btree (diff_image_key) WHERE (diff_image_key IS NOT NULL)",
   test_runs_diff_name_idx:
     "CREATE INDEX test_runs_diff_name_idx ON public.test_runs USING btree (diff_name) WHERE (diff_name IS NOT NULL)",
+};
+
+/** The diff-worker reconciler's empty-run scan (beyond spec §2). */
+const RUNNING_IDX =
+  "CREATE INDEX test_runs_running_idx ON public.test_runs USING btree (updated_at) WHERE (status = 'running'::run_status)";
+
+/**
+ * The plain single-column indexes 0043 drops, each with the new index whose
+ * leading column replaces it.
+ */
+const SUPERSEDED_INDEXES: Record<string, string> = {
+  test_runs_build_id_idx: "test_runs_build_created_idx",
+  screenshots_test_variation_id_idx: "screenshots_variation_created_idx",
+  baselines_test_variation_id_idx: "baselines_variation_branch_created_idx",
 };
 
 /**
@@ -360,7 +375,7 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
     await close();
   });
 
-  it("backfills pending_steps and failed_steps by spec §3.1, writing only the runs with a count above 0", async () => {
+  it("backfills pending_steps and failed_steps by spec §3.1, writing only the runs whose counters change", async () => {
     // A reviewable run: every kind of step.
     const mixed = await seedRun("mixed", { status: "unresolved" });
     await seedStep(mixed, "new", { verdict: "new" }); // pending
@@ -464,6 +479,67 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
     expect(await versionsOf(untouched)).toEqual(before);
   });
 
+  it("re-running the backfill fixes counters that were wrong in either direction", async () => {
+    const pending = await seedRun("repair-pending", { status: "unresolved" });
+    await seedStep(pending, "failed", {
+      verdict: "unresolved",
+      diffFailed: true,
+    });
+    await seedStep(pending, "new", { verdict: "new" });
+    const partly = await seedRun("repair-partly", { status: "unresolved" });
+    await seedStep(partly, "failed", {
+      verdict: "unresolved",
+      diffFailed: true,
+    });
+    const settled = await seedRun("repair-settled", { status: "passed" });
+    await seedStep(settled, "passed", { verdict: "passed" });
+    const running = await seedRun("repair-running", { status: "running" });
+    await seedStep(running, "open", { verdict: "unresolved" });
+    const runs = { pending, partly, settled, running };
+    const right = {
+      pending: { pending: 2, failed: 1 },
+      partly: { pending: 1, failed: 1 },
+      settled: { pending: 0, failed: 0 },
+      running: { pending: 0, failed: 0 },
+    };
+    await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+    expect(await countersOf(runs)).toEqual(right);
+
+    // Stale both ways: too high on runs with nothing pending (one of them not
+    // even reviewable), 0 on a run with pending steps, and one counter off.
+    const corrupt = async (
+      id: string,
+      pendingSteps: number,
+      failedSteps: number,
+    ) =>
+      db
+        .update(testRuns)
+        .set({ pendingSteps, failedSteps })
+        .where(eq(testRuns.id, id));
+    await corrupt(settled, 5, 3);
+    await corrupt(running, 2, 0);
+    await corrupt(pending, 0, 0);
+    await corrupt(partly, 1, 0);
+
+    const repaired = await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+
+    expect(await countersOf(runs)).toEqual(right);
+    expect(repaired.count).toBe(4);
+  });
+
+  it("re-running it on correct counters changes no row", async () => {
+    const pending = await seedRun("rerun-pending", { status: "new" });
+    await seedStep(pending, "new", { verdict: "new" });
+    await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+
+    const again = await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+
+    expect(again.count).toBe(0);
+    expect(await countersOf({ pending })).toEqual({
+      pending: { pending: 1, failed: 0 },
+    });
+  });
+
   it("re-applying 0043 is a no-op: the same columns, indexes and counters, and no row rewritten", async () => {
     const pending = await seedRun("reapply-pending", { status: "unresolved" });
     await seedStep(pending, "open", {
@@ -494,6 +570,30 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
 
   it("creates every slice-3 index with its exact definition", async () => {
     expect(await slice3Defs()).toEqual(SLICE3_INDEXES);
+  });
+
+  it("creates the reconciler's index on running runs", async () => {
+    const inDb = await indexDefs("test_runs");
+    expect(inDb.get("test_runs_running_idx")).toBe(RUNNING_IDX);
+    expect(
+      getTableConfig(testRuns).indexes.map((i) => i.config.name),
+    ).toContain("test_runs_running_idx");
+  });
+
+  it("drops the indexes the new ones supersede, from the database and the schema", async () => {
+    for (const table of [testRuns, screenshots, baselines]) {
+      const cfg = getTableConfig(table);
+      const inDb = await indexDefs(cfg.name);
+      const declared = cfg.indexes.map((i) => i.config.name);
+      for (const [gone, replacement] of Object.entries(SUPERSEDED_INDEXES)) {
+        expect(inDb.has(gone)).toBe(false);
+        expect(declared).not.toContain(gone);
+        // Its replacement is on the same table, if this is the table.
+        if (gone.startsWith(`${cfg.name}_`)) {
+          expect(inDb.has(replacement)).toBe(true);
+        }
+      }
+    }
   });
 
   it("adds pending_steps and failed_steps NOT NULL DEFAULT 0", async () => {

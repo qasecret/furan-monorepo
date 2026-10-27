@@ -20,38 +20,51 @@
  */
 
 /**
- * The one-off backfill of migration `0043_server_reads`, verbatim: the
- * migration file contains this exact statement (`migration-server-reads.test.ts`
- * holds the two together).
+ * The backfill of migration `0043_server_reads`, verbatim: the migration file
+ * contains this exact statement (`migration-server-reads.test.ts` holds the
+ * two together). It doubles as the repair of counters that went stale.
  *
- * One UPDATE over the aggregate of every run's pending steps. A run without
- * one is absent from the aggregate, so only runs whose counts are above 0 are
- * written; of those, only rows whose stored counters differ, so a re-applied
- * migration rewrites no row. Every other run keeps the columns' default, 0,
- * which is right for it on the database the migration has just given the
- * columns to.
+ * One UPDATE: every run, LEFT JOINed to the aggregate of its pending steps.
+ * The join takes a run's aggregate only when the run is reviewable, so a run
+ * that is not, or that has no pending step, computes 0 and 0. Every run whose
+ * stored counters differ from the computed ones is written, in either
+ * direction (a stale positive goes back to 0); a run whose counters are right
+ * is not rewritten, so running it again changes no row.
+ *
+ * It computes from one statement snapshot. Under READ COMMITTED, a writer
+ * that commits a run's new counters while it runs can be overwritten with the
+ * counters from before that commit, so a repair against a live database must
+ * not run it that way (take the runs' locks, or run it in REPEATABLE READ and
+ * retry on a serialization failure).
  */
 export const COUNTERS_BACKFILL_SQL = `UPDATE "test_runs" AS r
    SET "pending_steps" = c."pending",
        "failed_steps" = c."failed"
   FROM (
-    SELECT s."run_id",
-           count(*)::int AS "pending",
-           (count(*) FILTER (WHERE s."diff_failed_at" IS NOT NULL))::int AS "failed"
-      FROM "screenshots" AS s
-     WHERE s."verdict" IN ('new', 'unresolved')
-       AND NOT s."has_active_decision"
+    SELECT t."id",
+           COALESCE(p."pending", 0) AS "pending",
+           COALESCE(p."failed", 0) AS "failed"
+      FROM "test_runs" AS t
+      LEFT JOIN (
+        SELECT s."run_id",
+               count(*)::int AS "pending",
+               (count(*) FILTER (WHERE s."diff_failed_at" IS NOT NULL))::int AS "failed"
+          FROM "screenshots" AS s
+         WHERE s."verdict" IN ('new', 'unresolved')
+           AND NOT s."has_active_decision"
+           AND NOT EXISTS (
+                 SELECT 1 FROM "checkpoint_decisions" AS d
+                  WHERE d."screenshot_id" = s."id" AND d."reverted_at" IS NULL
+               )
+         GROUP BY s."run_id"
+      ) AS p
+        ON p."run_id" = t."id"
+       AND t."status" NOT IN ('running', 'aborted', 'empty')
+       AND t."status_override" IS NULL
        AND NOT EXISTS (
-             SELECT 1 FROM "checkpoint_decisions" AS d
-              WHERE d."screenshot_id" = s."id" AND d."reverted_at" IS NULL
+             SELECT 1 FROM "screenshots" AS u
+              WHERE u."run_id" = t."id" AND u."verdict" IS NULL
            )
-     GROUP BY s."run_id"
   ) AS c
- WHERE r."id" = c."run_id"
-   AND r."status" NOT IN ('running', 'aborted', 'empty')
-   AND r."status_override" IS NULL
-   AND NOT EXISTS (
-         SELECT 1 FROM "screenshots" AS u
-          WHERE u."run_id" = r."id" AND u."verdict" IS NULL
-       )
+ WHERE r."id" = c."id"
    AND (r."pending_steps", r."failed_steps") IS DISTINCT FROM (c."pending", c."failed");`;

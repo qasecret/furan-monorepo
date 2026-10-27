@@ -107,7 +107,6 @@ export const testRuns = pgTable(
   // index lives only in migration 0043's SQL.
   (t) => ({
     projectIdx: index("test_runs_project_id_idx").on(t.projectId),
-    buildIdx: index("test_runs_build_id_idx").on(t.buildId),
     primarySignatureIdx: index("test_runs_project_primary_sig_idx").on(
       t.projectId,
       t.primarySignature,
@@ -129,7 +128,10 @@ export const testRuns = pgTable(
     pendingIdx: index("test_runs_pending_idx")
       .on(t.projectId, t.buildId)
       .where(sql`${t.pendingSteps} > 0`),
-    // A build's runs in capture order: `runs.list` pages.
+    // A build's runs in capture order: `runs.list` pages. Its leading
+    // `build_id` also serves every lookup by build (the FK cascade from
+    // `builds` included), so 0043 dropped the narrower
+    // `test_runs_build_id_idx` it supersedes.
     buildCreatedIdx: index("test_runs_build_created_idx").on(
       t.buildId,
       t.createdAt,
@@ -139,5 +141,10 @@ export const testRuns = pgTable(
     diffNameIdx: index("test_runs_diff_name_idx")
       .on(t.diffName)
       .where(sql`${t.diffName} IS NOT NULL`),
+    // The diff-worker reconciler's empty-run rule (every 30 s): running runs
+    // not updated since its cutoff. Only the runs in flight are in it.
+    runningIdx: index("test_runs_running_idx")
+      .on(t.updatedAt)
+      .where(sql`${t.status} = 'running'`),
   }),
 );

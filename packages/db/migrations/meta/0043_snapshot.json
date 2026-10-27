@@ -1,5 +1,5 @@
 {
-  "id": "e081740f-8b64-4f9b-a848-6818e59a0211",
+  "id": "0b1dbf3c-8696-4897-99b4-fdf50399af75",
   "prevId": "a5fd7b98-ac4a-442d-bdb1-c59abffcce7d",
   "version": "7",
   "dialect": "postgresql",
@@ -1018,21 +1018,6 @@
           "method": "btree",
           "with": {}
         },
-        "test_runs_build_id_idx": {
-          "name": "test_runs_build_id_idx",
-          "columns": [
-            {
-              "expression": "build_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "test_runs_project_primary_sig_idx": {
           "name": "test_runs_project_primary_sig_idx",
           "columns": [
@@ -1152,6 +1137,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "test_runs_running_idx": {
+          "name": "test_runs_running_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"test_runs\".\"status\" = 'running'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -1254,21 +1255,6 @@
         }
       },
       "indexes": {
-        "baselines_test_variation_id_idx": {
-          "name": "baselines_test_variation_id_idx",
-          "columns": [
-            {
-              "expression": "test_variation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "baselines_test_run_id_idx": {
           "name": "baselines_test_run_id_idx",
           "columns": [
@@ -1840,21 +1826,6 @@
           "columns": [
             {
               "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "screenshots_test_variation_id_idx": {
-          "name": "screenshots_test_variation_id_idx",
-          "columns": [
-            {
-              "expression": "test_variation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
