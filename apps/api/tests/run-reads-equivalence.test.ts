@@ -676,11 +676,19 @@ d("run list, batch detail and checkpoint group answer as before", () => {
       );
     }
     expect(JSON.stringify(got)).not.toMatch(UUID);
+    // The old pendingCheckpoints counted what approve-pending acts on: it is
+    // the new, additive approvableCheckpoints.
+    const expected = Object.fromEntries(
+      Object.entries(GOLDEN_BUILDS).map(([b, golden]) => {
+        const g = golden as { pendingCheckpoints: number };
+        return [b, { ...g, approvableCheckpoints: g.pendingCheckpoints }];
+      }),
+    );
     expect(got).toEqual({
-      ...GOLDEN_BUILDS,
+      ...expected,
       // The one intended change: l, pending with its diff failed, now counts,
       // as it does in builds.list (spec 2026-10-27 §4, "`builds.getById`").
-      B1: { ...(GOLDEN_BUILDS.B1 as object), pendingCheckpoints: 8 },
+      B1: { ...expected.B1, pendingCheckpoints: 8 },
     });
     const listed = await client(w).builds.list.query({
       projectId: w.s.projectId,

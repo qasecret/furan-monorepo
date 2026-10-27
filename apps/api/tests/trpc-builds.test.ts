@@ -906,7 +906,10 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
    * leave. `fn` runs with them; both are restored after, whatever happens.
    */
   async function withStaleColumns(
-    stale: Record<string, { pendingSteps?: number; checkpointCount?: number }>,
+    stale: Record<
+      string,
+      { pendingSteps?: number; failedSteps?: number; checkpointCount?: number }
+    >,
     fn: () => Promise<void>,
   ): Promise<void> {
     const runIds = Object.keys(stale);
@@ -954,10 +957,11 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
 
     expect(await detail()).toMatchObject({
       pendingCheckpoints: 3,
+      approvableCheckpoints: 2,
       stepsTotal: 4,
     });
     expect(await listed()).toBe(3);
-    // Approve-pending acts on the approvable ones only.
+    // Approve-pending acts on the approvable ones only: the batch's count.
     const preview = await client.review.previewApproveBuild.query({
       buildId: s.buildId,
     });
@@ -966,12 +970,13 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     // The numbers are the columns', even stale: getById and the list agree.
     await withStaleColumns(
       {
-        [s.runId]: { pendingSteps: 7, checkpointCount: 10 },
-        [failed.runId]: { pendingSteps: 0 },
+        [s.runId]: { pendingSteps: 7, failedSteps: 2, checkpointCount: 10 },
+        [failed.runId]: { pendingSteps: 0, failedSteps: 0 },
       },
       async () => {
         expect(await detail()).toMatchObject({
           pendingCheckpoints: 7,
+          approvableCheckpoints: 5,
           stepsTotal: 11,
         });
         expect(await listed()).toBe(7);
@@ -979,9 +984,37 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     );
     expect(await detail()).toMatchObject({
       pendingCheckpoints: 3,
+      approvableCheckpoints: 2,
       stepsTotal: 4,
     });
     expect(await listed()).toBe(3);
+  });
+
+  test("getById: a batch whose only pending steps failed their diff has nothing approvable", async () => {
+    const s = await seed({
+      checkpoints: [
+        { name: "f1", verdict: "unresolved" },
+        { name: "f2", verdict: "new" },
+        { name: "ok", verdict: "passed" },
+      ],
+    });
+    await failDiff(h, s.shots.f1!.id);
+    await failDiff(h, s.shots.f2!.id);
+
+    const client = as(s.editor);
+    // Still pending (the list, the badge and the review loop stop on them),
+    // but approve-pending has nothing to act on until they are retried.
+    expect(
+      await client.builds.getById.query({ buildId: s.buildId }),
+    ).toMatchObject({ pendingCheckpoints: 2, approvableCheckpoints: 0 });
+    const page = await client.builds.list.query({ projectId: s.projectId });
+    expect(page.items.find((i) => i.id === s.buildId)).toMatchObject({
+      pendingCheckpoints: 2,
+    });
+    const preview = await client.review.previewApproveBuild.query({
+      buildId: s.buildId,
+    });
+    expect(preview.pendingCheckpoints).toBe(0);
   });
 
   test("getById is one statement, however many runs and steps the batch has", async () => {
