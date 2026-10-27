@@ -46,5 +46,16 @@ export const baselines = pgTable(
       t.testVariationId,
       t.testRunId,
     ),
+    // Migration 0043 (spec 2026-10-27 §2): a variation's baselines on a
+    // branch, newest first, for resolving one step's baseline. DESC NULLS
+    // FIRST is what `ORDER BY ... DESC` reads.
+    variationBranchCreatedIdx: index(
+      "baselines_variation_branch_created_idx",
+    ).on(
+      t.testVariationId,
+      t.branchName,
+      t.createdAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
   }),
 );

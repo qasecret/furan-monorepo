@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
@@ -77,6 +78,19 @@ export const testRuns = pgTable(
     resolutionSource: resolutionSourceEnum("resolution_source"),
     thumbnailUrl: text("thumbnail_url"),
     checkpointCount: integer("checkpoint_count").notNull().default(0), // denormalized rollup
+    // Migration 0043 (spec 2026-10-27 server reads §3.1): the run's pending
+    // review work, stored so the queue, counts and lists stop re-deriving it.
+    // Both are 0 unless the run is reviewable (`reviewableRunCondition`: its
+    // lifecycle is not running / aborted / empty, it has no status_override
+    // and no step has a NULL verdict). Then `pending_steps` counts its steps
+    // with verdict `new` or `unresolved` and no active decision (exactly
+    // `pendingStepCondition` without facets, diff-failed steps included), and
+    // `failed_steps` those of them whose diff failed (`diff_failed_at` set).
+    // Approvable = pending_steps - failed_steps. Migration 0043 backfilled
+    // them (`COUNTERS_BACKFILL_SQL`, `run-counters.ts`); spec §3.2 makes
+    // `recomputeRunStatus`, under the run lock, their only writer.
+    pendingSteps: integer("pending_steps").notNull().default(0),
+    failedSteps: integer("failed_steps").notNull().default(0),
     completedAt: timestamp("completed_at", { withTimezone: true }), // set by POST /runs/:id/complete
     primarySignature: text("primary_signature"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -86,16 +100,44 @@ export const testRuns = pgTable(
       .notNull()
       .defaultNow(),
   },
+  // Not visible to Drizzle, so drizzle-kit neither creates nor drops it:
+  // `test_runs_build_status_idx` on (build_id, status) INCLUDE (name), which
+  // serves the builds list's per-page aggregation and status filters (spec
+  // 2026-10-27 §2). Drizzle's index builder cannot express INCLUDE, so the
+  // index lives only in migration 0043's SQL.
   (t) => ({
     projectIdx: index("test_runs_project_id_idx").on(t.projectId),
     buildIdx: index("test_runs_build_id_idx").on(t.buildId),
-    statusCreatedIdx: index("test_runs_status_created_idx").on(
-      t.status,
-      t.createdAt,
-    ),
     primarySignatureIdx: index("test_runs_project_primary_sig_idx").on(
       t.projectId,
       t.primarySignature,
     ),
+    // Migration 0014: the inbox reads (`inbox.list`, `inbox.count`), a
+    // project's open runs newest first. Declared here since 0043; DESC NULLS
+    // FIRST is what `ORDER BY ... DESC` reads.
+    inboxIdx: index("test_runs_inbox_idx")
+      .on(
+        t.projectId,
+        t.status,
+        t.createdAt.desc().nullsFirst(),
+        t.id.desc().nullsFirst(),
+      )
+      .where(sql`${t.status} IN ('unresolved', 'failed')`),
+    // Migration 0043 (spec 2026-10-27 §2). The runs with pending work, for
+    // the review queue, the pending counts and the "needs review" filter, so
+    // they stay proportional to the open work rather than to the history.
+    pendingIdx: index("test_runs_pending_idx")
+      .on(t.projectId, t.buildId)
+      .where(sql`${t.pendingSteps} > 0`),
+    // A build's runs in capture order: `runs.list` pages.
+    buildCreatedIdx: index("test_runs_build_created_idx").on(
+      t.buildId,
+      t.createdAt,
+      t.id,
+    ),
+    // The storage proxy's legacy ownership probe on the run's diff image.
+    diffNameIdx: index("test_runs_diff_name_idx")
+      .on(t.diffName)
+      .where(sql`${t.diffName} IS NOT NULL`),
   }),
 );

@@ -41,6 +41,10 @@ export {
   PRIMARY_SIGNATURE_EXCLUDED_SOURCES,
 } from "./run-totals.js";
 
+// A run's stored pending counters (`test_runs.pending_steps` / `failed_steps`,
+// spec 2026-10-27 §3.1): migration 0043's backfill statement, verbatim.
+export { COUNTERS_BACKFILL_SQL } from "./run-counters.js";
+
 // A run's primary signature (ADR-043 §4.2), folded from its steps' signatures.
 export { computePrimarySignature } from "./primary-signature.js";
 export type { CheckpointSignatureInput } from "./primary-signature.js";
