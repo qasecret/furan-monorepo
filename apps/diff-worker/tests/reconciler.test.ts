@@ -1088,30 +1088,58 @@ desc("the empty-run scan's plan", () => {
     // plan and check the partial index is still the one read.
     const query = staleEmptyRunsQuery(db, new Date()).toSQL();
     const name = `furan_empty_runs_${randomUUID().replaceAll("-", "")}`;
-    const plan = await db.transaction(async (tx) => {
-      // Fresh statistics: the suites before this one (the api suite on the
-      // same database) leave test_runs' stats stale, and a stale estimate can
-      // steer the planner to another index.
-      await tx.execute(sql`ANALYZE test_runs`);
-      await tx.execute(sql`SET LOCAL plan_cache_mode = force_generic_plan`);
-      // The test table is small: make the planner show what it can use.
-      await tx.execute(sql`SET LOCAL enable_seqscan = off`);
-      await tx.execute(sql.raw(`PREPARE ${name} AS ${query.sql}`));
-      try {
-        const args = query.params.map(literal).join(", ");
-        return await tx.execute<{ "QUERY PLAN": string }>(
-          sql.raw(
-            `EXPLAIN EXECUTE ${name}${args.length > 0 ? `(${args})` : ""}`,
-          ),
+    class Rollback {
+      constructor(readonly rows: { "QUERY PLAN": string }[]) {}
+    }
+    let plan: { "QUERY PLAN": string }[];
+    try {
+      plan = await db
+        .transaction(async (tx) => {
+          // On a near-empty test_runs (other suites truncate it) reading the
+          // whole table in id order through its primary key costs about as
+          // much as the partial index plus a sort, and the planner may take
+          // either. Give it a table where reading every run is clearly
+          // dearer, so the choice turns only on whether it can prove the
+          // partial index's predicate under a generic plan. ANALYZE counts
+          // this transaction's own rows; everything is rolled back below.
+          const [p] = await tx
+            .insert(projects)
+            .values({ name: `plan-${randomUUID()}`, mainBranchName: "main" })
+            .returning();
+          const [b] = await tx
+            .insert(builds)
+            .values({ projectId: p!.id })
+            .returning();
+          await tx.execute(sql`
+            INSERT INTO test_runs (project_id, build_id, name, branch_name, status)
+            SELECT ${p!.id}, ${b!.id}, 'plan-' || g, 'main', 'passed'
+            FROM generate_series(1, 5000) g`);
+          await tx.execute(sql`ANALYZE test_runs`);
+          await tx.execute(sql`SET LOCAL plan_cache_mode = force_generic_plan`);
+          await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+          await tx.execute(sql.raw(`PREPARE ${name} AS ${query.sql}`));
+          const args = query.params.map(literal).join(", ");
+          const rows = await tx.execute<{ "QUERY PLAN": string }>(
+            sql.raw(
+              `EXPLAIN EXECUTE ${name}${args.length > 0 ? `(${args})` : ""}`,
+            ),
+          );
+          throw new Rollback([...rows]);
+        })
+        .then(
+          () => {
+            throw new Error("the plan transaction must roll back");
+          },
+          (err: unknown) => {
+            if (err instanceof Rollback) return err.rows;
+            throw err;
+          },
         );
-      } finally {
-        // Best effort: after a failed EXPLAIN the transaction is aborted and
-        // the DEALLOCATE fails too ("current transaction is aborted"), which
-        // must not replace the EXPLAIN's own error. The name is random and the
-        // connection is closed with the suite, so a leftover costs nothing.
-        await tx.execute(sql.raw(`DEALLOCATE ${name}`)).catch(() => undefined);
-      }
-    });
+    } finally {
+      // ANALYZE wrote test_runs' row estimate in place, outside the rolled-back
+      // transaction: measure the real table again for the tests after this one.
+      await db.execute(sql`ANALYZE test_runs`);
+    }
     const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
     expect(text).toContain("test_runs_running_idx");
     // The status is a literal, so the only parameter left is the cutoff.
