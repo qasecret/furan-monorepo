@@ -31,7 +31,9 @@ import { closeAllBrowsers } from "../src/playwright.js";
  * what their definition gives for the run as it stands.
  *
  * Each run starts reviewable, with a pending step and its counters right, so
- * a write that forgot to recompute leaves a stale positive count behind.
+ * a write that forgot to recompute leaves a stale positive count behind. A
+ * captured step also counts toward the run's `checkpoint_count`, which the
+ * run list and the batch detail read as its step count.
  */
 const skip =
   !process.env.DATABASE_URL ||
@@ -95,11 +97,13 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
 
   /**
    * A capture job for `url` on a run that is already reviewable: one diffed,
-   * unresolved step, and the counters a writer would have left (1 pending).
+   * unresolved step, and the counters a writer would have left (1 pending,
+   * 1 step). With `earlierStep: false`, a fresh `running` run with no step.
    */
   async function seedJob(
     url: string,
     viewports?: CaptureJob["viewports"],
+    { earlierStep = true }: { earlierStep?: boolean } = {},
   ): Promise<CaptureJob> {
     const uniq = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const [p] = await db
@@ -128,22 +132,28 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
         projectId: p!.id,
         buildId: b!.id,
         branchName: "main",
-        status: "unresolved",
-        pendingSteps: 1,
+        status: earlierStep ? "unresolved" : "running",
+        pendingSteps: earlierStep ? 1 : 0,
+        checkpointCount: earlierStep ? 1 : 0,
       })
       .returning();
-    await db.insert(screenshots).values({
-      runId: r!.id,
-      projectId: p!.id,
-      testVariationId: v!.id,
-      name: "earlier",
-      viewport: "1280x720",
-      browser: "chromium",
-      imageKey: `img-${uniq}`,
-      verdict: "unresolved",
-      verdictAt: new Date(),
+    if (earlierStep) {
+      await db.insert(screenshots).values({
+        runId: r!.id,
+        projectId: p!.id,
+        testVariationId: v!.id,
+        name: "earlier",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: `img-${uniq}`,
+        verdict: "unresolved",
+        verdictAt: new Date(),
+      });
+    }
+    await expectCounters(r!.id, {
+      pendingSteps: earlierStep ? 1 : 0,
+      failedSteps: 0,
     });
-    await expectCounters(r!.id, { pendingSteps: 1, failedSteps: 0 });
     return {
       runId: r!.id,
       projectId: p!.id,
@@ -155,6 +165,38 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
         : { viewport: { width: 800, height: 600 } }),
       browser: "chromium",
     };
+  }
+
+  /** The run's stored step count, and how many steps it really has. */
+  async function stepCounts(
+    runId: string,
+  ): Promise<{ stored: number; steps: number }> {
+    const [row] = await db
+      .select({ stored: testRuns.checkpointCount })
+      .from(testRuns)
+      .where(eq(testRuns.id, runId));
+    const steps = await db
+      .select({ id: screenshots.id })
+      .from(screenshots)
+      .where(eq(screenshots.runId, runId));
+    return { stored: row!.stored, steps: steps.length };
+  }
+
+  /** A local page to capture, for `fn`; closed after, whatever happens. */
+  async function withPage(fn: (url: string) => Promise<void>): Promise<void> {
+    const page = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(
+        `<!DOCTYPE html><html><body><p>counters ${Date.now()}</p></body></html>`,
+      );
+    });
+    await new Promise<void>((r) => page.listen(0, "127.0.0.1", () => r()));
+    try {
+      const port = (page.address() as AddressInfo).port;
+      await fn(`http://127.0.0.1:${port}/`);
+    } finally {
+      await new Promise<void>((r) => page.close(() => r()));
+    }
   }
 
   async function runStatus(runId: string): Promise<string> {
@@ -223,8 +265,31 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
       expect(steps.map((s) => s.verdict).sort()).toEqual([null, "unresolved"]);
       expect(await runStatus(job.runId)).toBe("running");
       await expectCounters(job.runId, { pendingSteps: 0, failedSteps: 0 });
+      expect(await stepCounts(job.runId)).toEqual({ stored: 2, steps: 2 });
     } finally {
       if (page) await new Promise<void>((r) => page!.close(() => r()));
     }
   }, 60_000);
+
+  it("each captured step counts toward checkpoint_count; a re-delivered one does not", async () => {
+    await withPage(async (url) => {
+      const job = await seedJob(
+        url,
+        [
+          { width: 800, height: 600 },
+          { width: 375, height: 667 },
+        ],
+        { earlierStep: false },
+      );
+
+      await handleCaptureJob(job, mockLogger, { db, storage, redis });
+      expect(await stepCounts(job.runId)).toEqual({ stored: 2, steps: 2 });
+
+      // The same job delivered again (a BullMQ retry after the steps
+      // landed): both viewports are already steps, so nothing is added.
+      await handleCaptureJob(job, mockLogger, { db, storage, redis });
+      expect(await stepCounts(job.runId)).toEqual({ stored: 2, steps: 2 });
+      await expectCounters(job.runId, { pendingSteps: 0, failedSteps: 0 });
+    });
+  }, 120_000);
 });
