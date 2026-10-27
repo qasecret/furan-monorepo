@@ -9,7 +9,6 @@ import {
   screenshots,
   sql,
   testRuns,
-  type DB,
   type SQL,
 } from "@furan/db";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
@@ -28,6 +27,11 @@ import type { Context } from "../src/trpc/context.js";
 import { buildsRouter } from "../src/trpc/v1/builds.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
+import {
+  bodyStatements,
+  capturing,
+  type CapturedStatement,
+} from "./capturing-db.js";
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
   addReviewBuild,
@@ -975,50 +979,6 @@ d("builds.list pages before it aggregates", () => {
     Plans?: PlanNode[];
   }
 
-  /**
-   * `db` with every statement `execute`d or `select`ed through it, or
-   * through a transaction it opens, recorded (`select` as its name only).
-   */
-  function capturing(db: DB, into: Array<SQL | "select">): DB {
-    return new Proxy(db, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver) as unknown;
-        if (typeof value !== "function") return value;
-        const fn = value as (...a: unknown[]) => unknown;
-        if (prop === "transaction") {
-          return (cb: (tx: DB) => unknown, ...rest: unknown[]) =>
-            fn.call(target, (tx: DB) => cb(capturing(tx, into)), ...rest);
-        }
-        if (prop === "execute") {
-          return (q: SQL) => {
-            into.push(q);
-            return fn.call(target, q);
-          };
-        }
-        if (prop === "select") {
-          return (...args: unknown[]) => {
-            into.push("select");
-            return fn.apply(target, args);
-          };
-        }
-        return fn.bind(target);
-      },
-    });
-  }
-
-  /** The request scope's own `set_config` statement (`withUserScope`). */
-  function isScopeStatement(q: SQL | "select"): boolean {
-    if (q === "select") return false;
-    return q.queryChunks.some(
-      (c) =>
-        typeof c === "object" &&
-        c !== null &&
-        "value" in c &&
-        Array.isArray(c.value) &&
-        c.value.some((v) => typeof v === "string" && v.includes("set_config")),
-    );
-  }
-
   test("the aggregate reads only the page's builds' runs, in one statement", async () => {
     // Twelve batches of three runs each, a few with pending work.
     const w = await world(
@@ -1050,13 +1010,13 @@ d("builds.list pages before it aggregates", () => {
       ["status passed", { limit: 2, status: "passed" }, ["G11", "G10", "G8"]],
     ];
     for (const [name, query, pageBatches] of cases) {
-      const statements: Array<SQL | "select"> = [];
+      const statements: CapturedStatement[] = [];
       const caller = buildsRouter.createCaller({
         user: { id: w.s.admin.id, role: "admin", via: "jwt" },
         db: capturing(h.db, statements),
       } as unknown as Context);
       await caller.list({ projectId: w.s.projectId, ...query });
-      const body = statements.filter((q) => !isScopeStatement(q));
+      const body = bodyStatements(statements);
       // One statement for the page: its rows, aggregates and pending counts.
       expect(body, name).toHaveLength(1);
       const [q] = body;
@@ -1075,6 +1035,10 @@ d("builds.list pages before it aggregates", () => {
       const aggregates: string[] = [];
       const readsRuns = (n: PlanNode): boolean =>
         n["Relation Name"] === "test_runs" || (n.Plans ?? []).some(readsRuns);
+      // Rows × loops is exact here only because every batch of this world
+      // has the same number of runs: Postgres reports a node's "Actual Rows"
+      // as the average per loop, rounded, so uneven batches would make the
+      // product an approximation.
       const sumRuns = (n: PlanNode): number =>
         (n["Relation Name"] === "test_runs"
           ? n["Actual Rows"] * n["Actual Loops"]
