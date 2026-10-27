@@ -204,14 +204,16 @@ export const projectsRouter = t.router({
 
   /**
    * Cross-branch baseline merge — promote every variation's `fromBranch`
-   * baseline onto `toBranch` as a synthetic test run for reviewer approval.
+   * baseline onto `toBranch` as a test run for reviewer approval.
    *
    * Mirrors the legacy `/test-variations/merge` endpoint's behavior: each
-   * variation with a baseline on `fromBranch` produces a `merge=true` test
-   * run on `toBranch` in a shared synthetic build. The diff worker then
-   * runs the standard pipeline — byte-identical sources auto-approve via
-   * ADR-032 and become the new toBranch baseline; divergent sources flip
-   * the synthetic run to `unresolved` for explicit reviewer review.
+   * variation with a baseline on `fromBranch` produces a test run on
+   * `toBranch` in a shared synthetic build. The run's `merge` flag is the
+   * rollup's, not set at insert: false until the run has a baseline row,
+   * true once one exists. The diff worker then runs the standard pipeline —
+   * byte-identical sources auto-approve via ADR-032 and become the new
+   * toBranch baseline; divergent sources flip the run to `unresolved` for
+   * explicit reviewer review.
    *
    * Spec: furan-design/specs/2026-05-24-cross-branch-baseline-merge-design.md
    */

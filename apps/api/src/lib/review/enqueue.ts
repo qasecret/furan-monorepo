@@ -1,44 +1,179 @@
+import {
+  and,
+  asc,
+  bumpStepGenerations,
+  eq,
+  isNotNull,
+  screenshots,
+  testRuns,
+  type DB,
+  type Tx,
+} from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
 
 import type { DiffQueueProducer } from "../../trpc/context.js";
-import { addDiffJob, type DiffTrigger } from "../diff-enqueue.js";
+import {
+  addStepDiffJobs,
+  stepDiffJob,
+  type DiffTrigger,
+  type StepDiffJob,
+} from "../diff-enqueue.js";
+
+type RunRef = {
+  id: string;
+  projectId: string;
+  parentBranchName: string | null;
+};
 
 /**
- * Queues a re-diff of `run` for after the request transaction commits, so the
- * worker never sees the job before the rows it re-reads (new ignore regions, a
- * threshold override, a reverted verdict) are visible.
+ * Queues steps of `run` for a re-diff (spec 2026-10-23 §7): gives each a new
+ * version in the request transaction (`bumpStepGenerations`), then, after it
+ * commits, adds one job per step at its version, under the job id
+ * `diffJobId(step, version)`. The worker never sees a job before the rows it
+ * re-reads (new ignore regions, a threshold override, a reverted verdict) and
+ * the version itself are visible. A re-diff keeps each step's current result
+ * until the new one replaces it. An empty `stepIds` does nothing.
  *
- * Forwards the run's parent branch as `parentPrBaseBranch` when it has one, so
- * the re-diff resolves baselines through the same parent_pr tier (ADR-055) as
- * the upload that first diffed it. The payload matches the SDK upload's
- * enqueue (`routes/sdk-runs.ts`); the field is omitted when null to keep the
- * wire minimal.
+ * A legacy run (Ruling R6): when any step of the run has a verdict while still
+ * at version 0 (diffed before the per-step pipeline), every version-0 step of
+ * the run is queued with `stepIds`. The run totals fold the steps' own result
+ * columns, which a legacy step does not have, so re-diffing one step alone
+ * would misstate the run's diff % and image. The run is locked before its
+ * version-0 steps are read and the bump leaves none behind, so this happens
+ * once per run, however many callers race, whether or not they already held
+ * the run.
  *
- * The deferred sink awaits whatever the effect returns, so a failed `add`
- * surfaces after the commit exactly as it did when each caller enqueued inline.
- * `addDiffJob` counts the failure under `trigger` and rethrows it, so it still
- * surfaces.
+ * Locks: the run row (`FOR NO KEY UPDATE`, a no-op when the transaction
+ * already holds it), then the bumped steps (`bumpStepGenerations`). Call it
+ * BEFORE locking or writing a variation of the run unless the transaction
+ * already holds the run (the diff commit's order is run -> step ->
+ * variation).
+ *
+ * After commit, every step's job is added in one bulk (`addStepDiffJobs`,
+ * counted under `trigger`). A refused bulk is rethrown, so it surfaces exactly
+ * as a single failed enqueue did; a step left without a job keeps its new
+ * version and the reconciler re-queues it.
  */
-export function enqueueRunDiff(
+export async function queueStepDiffs(
   ctx: {
+    db: DB | Tx;
     diffQueue: DiffQueueProducer;
     telemetry: Pick<Telemetry, "metrics">;
-    onCommit: (fn: () => void) => void;
+    onCommit: (fn: () => unknown) => void;
   },
-  run: { id: string; projectId: string; parentBranchName: string | null },
+  run: RunRef,
+  stepIds: readonly string[],
   trigger: DiffTrigger,
-): void {
-  ctx.onCommit(() =>
-    addDiffJob(
-      { diffQueue: ctx.diffQueue, registry: ctx.telemetry.metrics },
-      trigger,
-      {
-        runId: run.id,
-        projectId: run.projectId,
-        ...(run.parentBranchName
-          ? { parentPrBaseBranch: run.parentBranchName }
-          : {}),
-      },
-    ),
-  );
+): Promise<void> {
+  if (stepIds.length === 0) return;
+
+  const jobs = await bumpSteps(ctx.db, run, stepIds);
+  if (jobs.length === 0) return;
+
+  const deps = { diffQueue: ctx.diffQueue, registry: ctx.telemetry.metrics };
+  ctx.onCommit(async () => {
+    const [refused] = await addStepDiffJobs(deps, trigger, jobs);
+    if (refused) throw refused.err;
+  });
+}
+
+/**
+ * Ruling R6 for a step that its insert queues (an SDK upload, Ruling R40):
+ * when `run` is a legacy run (a step with a verdict at version 0), bumps every
+ * version-0 step of it, as {@link queueStepDiffs} would, and returns their
+ * jobs, in capture order, for the caller to add after commit with the new
+ * step's own; otherwise bumps nothing and returns none. It locks the run
+ * first, a no-op for the upload, which holds it already.
+ */
+export function bumpLegacySteps(
+  db: DB | Tx,
+  run: RunRef,
+): Promise<StepDiffJob[]> {
+  return bumpSteps(db, run, []);
+}
+
+/**
+ * Bumps `stepIds` of `run` (with R6's fan-out on a legacy run) and returns
+ * their jobs, in order: the version-0 steps in capture order first, then the
+ * rest of `stepIds`. Ids that are not steps of the run are dropped; a run that
+ * doesn't exist bumps nothing.
+ */
+async function bumpSteps(
+  db: DB | Tx,
+  run: RunRef,
+  stepIds: readonly string[],
+): Promise<StepDiffJob[]> {
+  // The run lock first, so the read below sees every bump that committed
+  // before it: a second caller that raced the first finds no version-0 step
+  // left and fans nothing out (`bumpStepGenerations` re-takes it, a no-op).
+  const [locked] = await db
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(eq(testRuns.id, run.id))
+    .for("no key update");
+  if (!locked) return [];
+
+  // Is this a legacy run? One probe that stops at the first version-0 step
+  // with a verdict. A run the per-step pipeline queued from the start has
+  // none: the probe returns no row, and the read below is skipped (nothing
+  // fetched, nothing sorted). No index covers `diff_generation`, so the probe
+  // still filters the run's rows it finds through `screenshots_run_idx`.
+  const [legacy] = await db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, run.projectId),
+        eq(screenshots.runId, run.id),
+        eq(screenshots.diffGeneration, 0),
+        isNotNull(screenshots.verdict),
+      ),
+    )
+    .limit(1);
+  // Only then the run's version-0 steps, in capture order (with or without a
+  // verdict: every one of them is queued, once).
+  const unversioned = legacy
+    ? await db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(
+          and(
+            eq(screenshots.projectId, run.projectId),
+            eq(screenshots.runId, run.id),
+            eq(screenshots.diffGeneration, 0),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt), asc(screenshots.id))
+    : [];
+  const ids = [...new Set([...unversioned.map((s) => s.id), ...stepIds])];
+  if (ids.length === 0) return [];
+
+  const bumped = await bumpStepGenerations(db, run.id, ids);
+  const generationOf = new Map(bumped.map((b) => [b.id, b.generation]));
+  return ids.flatMap((id) => {
+    const generation = generationOf.get(id);
+    // Not a step of the run: nothing was bumped, nothing is queued.
+    return generation === undefined ? [] : [stepDiffJob(run, id, generation)];
+  });
+}
+
+/**
+ * Every step of `run`, in capture order (`created_at`, `id`): what a re-diff
+ * that has to cover the whole run passes to {@link queueStepDiffs}.
+ */
+export async function runStepIds(
+  db: DB | Tx,
+  run: { id: string; projectId: string },
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, run.projectId),
+        eq(screenshots.runId, run.id),
+      ),
+    )
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  return rows.map((r) => r.id);
 }

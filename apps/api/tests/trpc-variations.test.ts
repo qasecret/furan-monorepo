@@ -559,6 +559,117 @@ d("tRPC variations router", () => {
     expect(res.items.map((i) => i.buildId)).toEqual([s.buildId, s.buildId]);
   });
 
+  test("variations.history shows the variation's own diff %, falling back to the run's only for a legacy step", async () => {
+    const [perStep, legacy, failed] = await h.db
+      .insert(testRuns)
+      .values([
+        {
+          // Diffed per step: the run's totals are the worst of its steps.
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "per-step",
+          branchName: "main",
+          status: "unresolved",
+          diffPercent: 9,
+          pixelMisMatchCount: 102,
+          baselineSource: "default_branch",
+          createdAt: new Date(Date.now() - 1000),
+        },
+        {
+          // From before the per-step columns: only the run has numbers.
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "legacy",
+          branchName: "main",
+          status: "unresolved",
+          diffPercent: 4,
+          pixelMisMatchCount: 33,
+          baselineSource: "parent_pr",
+          createdAt: new Date(Date.now() - 2000),
+        },
+        {
+          // Diffed per step, but this variation's step failed: the worst
+          // step of the run (7%) is another variation's.
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "failed",
+          branchName: "main",
+          status: "unresolved",
+          diffPercent: 7,
+          pixelMisMatchCount: 70,
+          baselineSource: "default_branch",
+          createdAt: new Date(Date.now() - 3000),
+        },
+      ])
+      .returning();
+    const step = (
+      runId: string,
+      variationId: string,
+      over: Partial<typeof screenshots.$inferInsert> = {},
+    ) =>
+      h.db.insert(screenshots).values({
+        runId,
+        projectId: s.projectId,
+        testVariationId: variationId,
+        name:
+          variationId === s.variationId
+            ? "LoginPage.darkMode"
+            : "Checkout.summary",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: `${runId}-${variationId}`,
+        ...over,
+      });
+    // The run's worst step belongs to the other variation.
+    await step(perStep!.id, s.variationId, {
+      diffGeneration: 1,
+      diffPercent: 1.5,
+      pixelMismatchCount: 12,
+      baselineSource: "this_branch",
+    });
+    await step(perStep!.id, s.otherVariationId, {
+      diffGeneration: 1,
+      diffPercent: 9,
+      pixelMismatchCount: 90,
+      baselineSource: "default_branch",
+    });
+    await step(legacy!.id, s.variationId);
+    // A failure leaves no numbers on the step (version >= 1, NULL columns).
+    await step(failed!.id, s.variationId, {
+      diffGeneration: 2,
+      verdict: "unresolved",
+      diffFailedAt: new Date(),
+      diffError: "engine_error",
+    });
+    await step(failed!.id, s.otherVariationId, {
+      diffGeneration: 1,
+      diffPercent: 7,
+      pixelMismatchCount: 70,
+      baselineSource: "default_branch",
+    });
+
+    const res = await mkClient(h, s.editorJwt).variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+
+    expect(
+      res.items.map((i) => [
+        i.id,
+        i.diffPercent,
+        i.pixelMisMatchCount,
+        i.baselineSource,
+      ]),
+    ).toEqual([
+      [perStep!.id, 1.5, 12, "this_branch"],
+      // A legacy step (version 0, no numbers of its own) shows the run's.
+      [legacy!.id, 4, 33, "parent_pr"],
+      // A failed step shows its own NULLs, never the run's 7% (which belongs
+      // to the other variation).
+      [failed!.id, null, null, null],
+    ]);
+  });
+
   test("history: a foreign project's step of the variation is not the row's step", async () => {
     const [run] = await h.db
       .insert(testRuns)

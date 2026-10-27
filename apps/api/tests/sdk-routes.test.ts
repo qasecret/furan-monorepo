@@ -538,6 +538,7 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      screenshotId: string;
       imageKey: string;
       domKey: string | null;
       runId: string;
@@ -567,15 +568,21 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     const fetched = Buffer.from(await storage.get(body.imageKey));
     expect(fetched.equals(TINY_PNG)).toBe(true);
 
-    // Verify a diff job was enqueued for the run so the diff-worker
-    // moves it out of `running` status. Before this enqueue landed, the
+    // Verify a diff job was enqueued for the new step so the diff-worker
+    // moves the run out of `running` status. Before this enqueue landed, the
     // SDK-only ingest path left every uploaded run hanging in `running`
     // until a reviewer manually triggered a setIgnoreAreas / threshold
-    // mutation from the dashboard.
-    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-      runId: s.runId,
-      projectId: s.projectId,
-    });
+    // mutation from the dashboard. One job, for this step at version 1.
+    expect(h.diffQueueAdd).toHaveBeenCalledWith(
+      "diff",
+      {
+        runId: s.runId,
+        projectId: s.projectId,
+        screenshotId: body.screenshotId,
+        generation: 1,
+      },
+      { jobId: `${body.screenshotId}-g1` },
+    );
     // ...and counted under the upload trigger.
     expect(await diffJobsEnqueued(h.app.telemetry.metrics, "upload")).toBe(
       enqueuedBefore + 1,
@@ -833,6 +840,7 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as {
+      screenshotId: string;
       imageKey: string;
       domKey: string | null;
       runId: string;
@@ -850,10 +858,16 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(fetched.equals(TINY_PNG)).toBe(true);
 
     // Diff job enqueued — same downstream behavior as multipart.
-    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-      runId: s.runId,
-      projectId: s.projectId,
-    });
+    expect(h.diffQueueAdd).toHaveBeenCalledWith(
+      "diff",
+      {
+        runId: s.runId,
+        projectId: s.projectId,
+        screenshotId: body.screenshotId,
+        generation: 1,
+      },
+      { jobId: `${body.screenshotId}-g1` },
+    );
   });
 
   test("base64 upload forwards parentPrBaseBranch on the diff job when the run has a parent (ADR-055)", async () => {
@@ -880,12 +894,19 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       },
     });
     expect(res.statusCode).toBe(200);
+    const { screenshotId } = res.json() as { screenshotId: string };
 
-    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-      runId: s.runId,
-      projectId: s.projectId,
-      parentPrBaseBranch: "develop",
-    });
+    expect(h.diffQueueAdd).toHaveBeenCalledWith(
+      "diff",
+      {
+        runId: s.runId,
+        projectId: s.projectId,
+        screenshotId,
+        generation: 1,
+        parentPrBaseBranch: "develop",
+      },
+      { jobId: `${screenshotId}-g1` },
+    );
   });
 
   test("upload enqueue failure stays best-effort and is counted", async () => {

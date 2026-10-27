@@ -22,7 +22,11 @@ import { UNREVIEWABLE_LIFECYCLE_LIST } from "./legality.js";
  * every surface that filters or counts by it: the list filters, the
  * `review.next` queue and the counts. It must select exactly what
  * `selectPendingTargets` does (the set `decideCheckpoints` accepts for
- * "approve"); `review-pending.test.ts` holds the two together.
+ * "approve"); `review-pending.test.ts` holds the two together, with one
+ * deliberate exception: a step whose diff failed (spec 2026-10-23 §10) is
+ * pending here, so the review loop stops on it and counts show it, but it is
+ * not approvable (`diff_failed`, `assessDecision`) until it is retried, so
+ * `selectPendingTargets` leaves it out.
  *
  * A step is pending when
  * - its verdict is `new` or `unresolved`,

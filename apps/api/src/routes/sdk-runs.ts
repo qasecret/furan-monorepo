@@ -16,8 +16,13 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
-import { addDiffJob } from "../lib/diff-enqueue.js";
+import {
+  addStepDiffJobs,
+  NEW_STEP_GENERATION,
+  stepDiffJob,
+} from "../lib/diff-enqueue.js";
 import { sendError } from "../lib/errors.js";
+import { bumpLegacySteps } from "../lib/review/enqueue.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
@@ -256,7 +261,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * Persist a screenshot upload's bytes + sidecars, resolve/create the
-   * test_variation, insert the checkpoint row, and enqueue a diff job.
+   * test_variation, insert the checkpoint row, and enqueue its diff job.
    *
    * ADR-038 v1.1.0 path: screenshot rows carry checkpoint identity
    * (name, viewport, browser, os, device, matchLevel, regions). The run
@@ -375,11 +380,18 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       // snapshot). `null` → the run vanished (the requireProjectMember gate
       // already resolved it, so this only trips on a concurrent delete); the
       // caller maps that to 404.
+      //
+      // Locked (`FOR NO KEY UPDATE`) first, before the variation upsert below
+      // locks the variation (Ruling R34): a new step then updates the run
+      // (`checkpoint_count`, the status), and a diff commit locks run -> step
+      // -> variation, so taking the variation before the run could deadlock
+      // with one auto-approving another step of this run and variation.
+      // Uploads to one run already queued on the run row from that update on.
       const runRows = await db
         .select()
         .from(testRuns)
         .where(eq(testRuns.id, runId))
-        .limit(1);
+        .for("no key update");
       const run = runRows[0];
       if (!run) return null;
 
@@ -417,6 +429,11 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         ignoreDisplacements,
         accessibilityLevel: accessibilityLevel ?? undefined,
         accessibilityVersion: accessibilityVersion ?? undefined,
+        // Queued by its insert (spec 2026-10-23 §7): the version its job
+        // carries, and the queue time the reconciler's stuck clock reads (the
+        // clock, like every queue time: `bumpStepGenerations`).
+        diffGeneration: NEW_STEP_GENERATION,
+        diffQueuedAt: sql`clock_timestamp()`,
       };
       const [screenshot] = await db
         .insert(screenshots)
@@ -471,27 +488,30 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       // through the rollup unchanged.
       await recomputeRunStatus(db, run.id);
 
-      // Best-effort diff enqueue — deferred to post-commit so the worker
-      // never picks up the job before the screenshot/run rows are visible.
+      // A legacy run (its earlier steps diffed before the per-step pipeline,
+      // still at version 0) has them all re-diffed with this one, once
+      // (Ruling R40): the run totals fold the steps' own columns, which they
+      // lack. Under the run lock taken above.
+      const legacyJobs = await bumpLegacySteps(db, run);
+
+      // Best-effort diff enqueue of the new step (after a legacy run's
+      // version-0 steps) — deferred to post-commit so the worker never picks
+      // up a job before the screenshot/run rows are visible. A lost job is
+      // re-queued by the reconciler. A duplicate upload (above) queues nothing.
       onCommit(async () => {
-        try {
-          await addDiffJob(
-            { diffQueue: app.diffQueue, registry: app.telemetry.metrics },
-            "upload",
+        const refused = await addStepDiffJobs(
+          { diffQueue: app.diffQueue, registry: app.telemetry.metrics },
+          "upload",
+          [...legacyJobs, stepDiffJob(run, screenshot.id, NEW_STEP_GENERATION)],
+        );
+        for (const { job, err } of refused) {
+          logger.warn(
             {
+              err,
               runId: run.id,
               projectId: run.projectId,
-              // ADR-055: forward the run's parent branch (when set) so the
-              // diff-worker's resolveBaseline can fire the parent_pr tier.
-              // Omitted when null to keep the wire minimal.
-              ...(run.parentBranchName
-                ? { parentPrBaseBranch: run.parentBranchName }
-                : {}),
+              screenshotId: job.screenshotId,
             },
-          );
-        } catch (err) {
-          logger.warn(
-            { err, runId: run.id, projectId: run.projectId },
             "sdk_upload_diff_enqueue_failed",
           );
         }
