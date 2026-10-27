@@ -113,26 +113,28 @@ type KeyOwnershipSource = (
  * Every place a storage key can be attributed to a project. This is the SINGLE
  * source of truth for key→project ownership. The check is fail-closed — a key
  * attributed to no project is denied (404) — so when a new feature adds a
- * key-bearing column or table, it MUST be registered here (and indexed, as
- * migration 0043 does for these), otherwise the proxy will 404 that artifact
- * for legitimate members.
+ * key-bearing column or table, it MUST be registered here (and indexed by the
+ * key and `project_id`, as migrations 0043 and 0044 do for these), otherwise
+ * the proxy will 404 that artifact for legitimate members.
  *
  * {@link keyOwnershipQuery} OR-s one `EXISTS` per source into one statement:
  * - A single `OR` over several key columns can only be answered by a bitmap
  *   scan of all their indexes, which collects every match of a key before it
  *   returns the first one, and a key is shared by every identical screenshot
  *   (the keys are content hashes). One `EXISTS` per column is planned alone and
- *   answered by an index scan that stops at the first match; the `project_id`
- *   list only filters the rows the key matches.
- * - The sparse key columns have indexes that are partial on `IS NOT NULL`,
- *   which `col = key` implies, so those indexes serve their arms.
+ *   answered by an index scan that stops at the first match.
+ * - Each index is `(key, project_id)` (migrations 0043 and 0044), so an arm's
+ *   `key = $1 AND project_id IN (...)` is an index condition on both: a key
+ *   that other projects share costs no more than one only the caller's
+ *   projects hold, and no entry of another project's is read to be discarded.
+ *   The sparse key columns have indexes that are partial on `IS NOT NULL`,
+ *   which `col = key` implies, so those serve their arms too.
  * - The arms are evaluated left to right and the evaluation stops at the first
- *   that is true, so the order is the cost: the most-fetched sources come
- *   first, and the one source with no index, the legacy `test_runs.image_name`
- *   (nothing in this repository writes it any more), comes last, so a key that
- *   any other source holds never reaches it. SQL does not promise the order of
- *   an `OR`'s operands; these arms are uncorrelated, so Postgres runs each as
- *   an InitPlan on first use, and the plan test pins that.
+ *   that is true, so the most-fetched sources come first and the legacy
+ *   `test_runs.image_name` (nothing in this repository writes it any more)
+ *   comes last. SQL does not promise the order of an `OR`'s operands; these
+ *   arms are uncorrelated, so Postgres runs each as an InitPlan on first use,
+ *   and the plan test pins that.
  */
 const KEY_OWNERSHIP_SOURCES: KeyOwnershipSource[] = [
   // screenshots.image_key: a step's capture.
@@ -191,7 +193,7 @@ const KEY_OWNERSHIP_SOURCES: KeyOwnershipSource[] = [
           eq(testRuns.diffName, key),
         ),
       ),
-  // test_runs.image_name: legacy, no index; last, see above.
+  // test_runs.image_name: legacy (nothing writes it any more); last.
   (db, projectIds, key) =>
     db
       .select({ one: sql`1` })

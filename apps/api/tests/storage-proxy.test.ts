@@ -611,6 +611,40 @@ d("GET /api/v1/storage/:key", () => {
     },
   );
 
+  // The keys are content hashes, so two projects that capture the same page
+  // hold the same one. Each project is still served only through its own rows.
+  test.each(KEY_SOURCES)(
+    "$column: a key two projects share is served to a member of either, and refused to a third",
+    async ({ makeKey, seed }) => {
+      const h = await createTestApp();
+      try {
+        const key = makeKey();
+        await createStorage().put(key, TINY_PNG, "image/png");
+        const { project: a } = await seedProjectWithStep(h, seed(key));
+        const { project: b } = await seedProjectWithStep(h, seed(key));
+        const memberA = await seedUser(h, "editor");
+        const memberB = await seedUser(h, "editor");
+        await h.db.insert(projectMembers).values([
+          { userId: memberA.id, projectId: a.id },
+          { userId: memberB.id, projectId: b.id },
+        ]);
+        // A third project that holds other things and not this key.
+        const { outsider } = await seedOutsiderWithOwnProject(h);
+
+        for (const member of [memberA, memberB]) {
+          const res = await getAs(h, member, key);
+          expect(res.statusCode).toBe(200);
+          expect(Buffer.from(res.rawPayload).equals(TINY_PNG)).toBe(true);
+        }
+        const refused = await getAs(h, outsider, key);
+        expect(refused.statusCode).toBe(404);
+        expect(refused.json()).toEqual(NOT_FOUND);
+      } finally {
+        await h.close();
+      }
+    },
+  );
+
   test("roles: an owner is served any stored key; a guest is held to membership like an editor", async () => {
     const h = await createTestApp();
     try {
@@ -644,12 +678,17 @@ d("GET /api/v1/storage/:key", () => {
   // ── The probe's plan (budget R6) ────────────────────────────────────────
   // The probe is one statement of one `EXISTS` per key column, OR-ed, so each
   // arm is planned alone and answered by its own index, and evaluation stops
-  // at the first arm that finds the key.
+  // at the first arm that finds the key. Each index is `(key, project_id)`:
+  // the arm's lookup is on the key and the caller's projects together, so a
+  // key that other projects share costs nothing extra.
   interface PlanNode {
     "Node Type": string;
     "Relation Name"?: string;
     "Index Name"?: string;
+    "Index Cond"?: string;
+    Filter?: string;
     "Actual Loops"?: number;
+    "Actual Rows"?: number;
     Plans?: PlanNode[];
   }
   const planNodes = (node: PlanNode): PlanNode[] => [
@@ -658,11 +697,11 @@ d("GET /api/v1/storage/:key", () => {
   ];
   async function explainProbe(
     db: DB,
-    projectId: string,
+    projectIds: string[],
     key: string,
     analyze: boolean,
   ): Promise<PlanNode[]> {
-    const probe = keyOwnershipQuery(db, [projectId], key);
+    const probe = keyOwnershipQuery(db, projectIds, key);
     const rows = await db.execute<{ "QUERY PLAN": Array<{ Plan: PlanNode }> }>(
       analyze
         ? sql`EXPLAIN (ANALYZE, FORMAT JSON) ${probe}`
@@ -670,54 +709,117 @@ d("GET /api/v1/storage/:key", () => {
     );
     return planNodes(rows[0]!["QUERY PLAN"][0]!.Plan);
   }
+  /** The table scans of a probe's plan, in arm order. */
+  const scansOf = (nodes: PlanNode[]) =>
+    nodes.filter((n) => n["Relation Name"] !== undefined);
 
-  test("the ownership probe answers each key source from its own index", async () => {
-    // Plans depend on table size and statistics, so seed a project large
+  /** The six arms, in order, each with the index that answers it. */
+  const ARM_INDEXES = [
+    ["screenshots", "screenshots_image_key_idx"],
+    ["screenshots", "screenshots_diff_image_key_idx"],
+    ["screenshots", "screenshots_element_map_key_idx"],
+    ["screenshots", "screenshots_dom_key_idx"],
+    ["test_runs", "test_runs_diff_name_idx"],
+    ["test_runs", "test_runs_image_name_idx"],
+  ];
+
+  /**
+   * Every arm is a plain index scan (never sequential, never a bitmap scan,
+   * which has to collect every match of a shared key before it returns the
+   * first) on its own key's index, whose condition holds the key AND the
+   * project: no row is read just to be filtered out by its project.
+   *
+   * `tinyProject`: the caller's project has a handful of runs. Then the
+   * planner may answer the legacy `diff_name` arm from the project's own index
+   * on `test_runs` instead (a read of that project's few runs, none of
+   * another's), so that one arm only has to be an index scan on the project.
+   */
+  function expectKeyAndProjectLookups(
+    nodes: PlanNode[],
+    opts: { tinyProject?: boolean } = {},
+  ): void {
+    const scans = scansOf(nodes);
+    const DIFF_NAME_ARM = 4;
+    expect(
+      scans
+        .filter((_, i) => !(opts.tinyProject && i === DIFF_NAME_ARM))
+        .map((n) => [n["Relation Name"], n["Index Name"]]),
+    ).toEqual(
+      ARM_INDEXES.filter((_, i) => !(opts.tinyProject && i === DIFF_NAME_ARM)),
+    );
+    expect(scans).toHaveLength(ARM_INDEXES.length);
+    for (const [i, n] of scans.entries()) {
+      expect(["Index Scan", "Index Only Scan"]).toContain(n["Node Type"]);
+      expect(n["Index Cond"]).toMatch(/project_id/);
+      if (!(opts.tinyProject && i === DIFF_NAME_ARM)) {
+        expect(n.Filter).toBeUndefined();
+      }
+    }
+  }
+
+  test("the ownership probe answers each key source from its own index, by key and project", async () => {
+    // Plans depend on table size and statistics, so seed projects large
     // enough that a sequential scan is the wrong answer for the planner too,
     // then analyze. Everything is rolled back.
+    //
+    // Project A is big and is the first of the two in every index (its id
+    // sorts first). One key, `shared`, is held by about one step in seven and
+    // one run in seven of A, and by a single step and run of B, whose id sorts
+    // last: B's rows are the last entries of the key's entries in any index
+    // that begins with the key alone.
+    const A = "00000000-0000-4000-8000-0000000000a1";
+    const B = "ffffffff-ffff-4fff-8fff-ffffffffffb2";
+    const nobody = randomUUID(); // a project no row belongs to
+    const shared = unrelatedKey();
     const h = await createTestApp();
     const rollback = new Error("rollback");
-    const seen: {
-      cold?: PlanNode[];
-      hit?: PlanNode[];
-    } = {};
+    const seen: Record<string, PlanNode[]> = {};
     try {
       await h.db
         .transaction(async (tx) => {
-          const [project] = await tx
-            .insert(projects)
-            .values({ name: `sp-${randomUUID()}` })
-            .returning();
-          const [build] = await tx
-            .insert(builds)
-            .values({ projectId: project!.id })
-            .returning();
-          const [variation] = await tx
-            .insert(testVariations)
-            .values({
-              name: "home",
-              projectId: project!.id,
-              branchName: "main",
-              browser: "chromium",
-              viewport: "400x400",
-            })
-            .returning();
-          // 20 000 runs and as many steps. About 45% of the runs and of the
-          // steps carry a diff, 60% of the steps an element map, 10% a DOM
-          // snapshot; every key is distinct.
+          const db = tx as unknown as DB;
+          for (const id of [A, B]) {
+            await tx
+              .insert(projects)
+              .values({ id, name: `sp-${randomUUID()}` });
+          }
+          const seedOwn = async (id: string) => {
+            const [build] = await tx
+              .insert(builds)
+              .values({ projectId: id })
+              .returning();
+            const [variation] = await tx
+              .insert(testVariations)
+              .values({
+                name: "home",
+                projectId: id,
+                branchName: "main",
+                browser: "chromium",
+                viewport: "400x400",
+              })
+              .returning();
+            return { buildId: build!.id, variationId: variation!.id };
+          };
+          const a = await seedOwn(A);
+          const b = await seedOwn(B);
+          // 20 000 runs and as many steps in A. About 45% of the runs and of
+          // the steps carry a diff, 60% of the steps an element map, 10% a DOM
+          // snapshot; every key is distinct but `shared`.
           await tx.execute(sql`
             INSERT INTO test_runs (build_id, project_id, name, diff_name)
-            SELECT ${build!.id}::uuid, ${project!.id}::uuid, 'r' || n,
-                   CASE WHEN n % 100 < 45
+            SELECT ${a.buildId}::uuid, ${A}::uuid, 'r' || n,
+                   CASE WHEN n % 7 = 0 THEN ${shared}
+                        WHEN n % 100 < 45
                         THEN md5(random()::text) || md5(random()::text) END
               FROM generate_series(1, 20000) AS n`);
           await tx.execute(sql`
             INSERT INTO screenshots (run_id, project_id, test_variation_id, name,
                                      viewport, browser, image_key, dom_key,
                                      element_map_key, diff_image_key)
-            SELECT r.id, ${project!.id}::uuid, ${variation!.id}::uuid, 'home',
+            SELECT r.id, ${A}::uuid, ${a.variationId}::uuid, 'home',
                    '400x400', 'chromium',
-                   md5(random()::text) || md5(random()::text),
+                   CASE WHEN r.n % 7 = 0 THEN ${shared}
+                        ELSE md5(random()::text) || md5(random()::text) END,
                    CASE WHEN r.n % 10 = 0
                         THEN md5(random()::text) || md5(random()::text) END,
                    CASE WHEN r.n % 10 < 6
@@ -726,60 +828,75 @@ d("GET /api/v1/storage/:key", () => {
                    CASE WHEN r.n % 100 < 45
                         THEN md5(random()::text) || md5(random()::text) END
               FROM (SELECT id, row_number() OVER () AS n
-                      FROM test_runs WHERE project_id = ${project!.id}::uuid) AS r`);
+                      FROM test_runs WHERE project_id = ${A}::uuid) AS r`);
+          // B holds the shared key once, as a step's image and as a run's diff.
+          const [bRun] = await tx
+            .insert(testRuns)
+            .values({
+              buildId: b.buildId,
+              projectId: B,
+              name: "t",
+              diffName: shared,
+            })
+            .returning();
+          await tx.insert(screenshots).values({
+            runId: bRun!.id,
+            projectId: B,
+            testVariationId: b.variationId,
+            name: "home",
+            imageKey: shared,
+            viewport: "400x400",
+            browser: "chromium",
+          });
           await tx.execute(sql`ANALYZE screenshots`);
           await tx.execute(sql`ANALYZE test_runs`);
 
           // A key nothing holds: every arm is planned, and none is skipped.
-          seen.cold = await explainProbe(
-            tx as unknown as DB,
-            project!.id,
-            unrelatedKey(),
-            false,
-          );
-          // A key a step's image holds: the first arm finds it, and the rest
-          // never run.
+          seen.cold = await explainProbe(db, [A], unrelatedKey(), false);
+          // A key one of A's steps holds alone: the first arm finds it, and
+          // the rest never run.
           const [step] = await tx.execute<{ key: string }>(sql`
             SELECT image_key AS key FROM screenshots
-             WHERE project_id = ${project!.id}::uuid LIMIT 1`);
-          seen.hit = await explainProbe(
-            tx as unknown as DB,
-            project!.id,
-            step!.key,
-            true,
-          );
+             WHERE project_id = ${A}::uuid AND image_key <> ${shared} LIMIT 1`);
+          seen.hit = await explainProbe(db, [A], step!.key, true);
+          // The shared key, asked by B, whose rows come after thousands of A's:
+          // found through its own entry.
+          seen.sharedMember = await explainProbe(db, [B], shared, true);
+          // And asked by a project that holds none of it: every arm looks and
+          // finds nothing, again without reading any of A's entries.
+          seen.sharedOutsider = await explainProbe(db, [nobody], shared, true);
           throw rollback;
         })
         .catch((err: unknown) => {
           if (err !== rollback) throw err;
         });
 
-      // Each key column of `screenshots` is read through its own index by a
-      // plain index scan: never a sequential scan, and never a bitmap scan,
-      // which has to collect every match of a shared key before it returns
-      // the first.
-      const shots = seen
-        .cold!.filter((n) => n["Relation Name"] === "screenshots")
-        .map((n) => [n["Node Type"], n["Index Name"]]);
-      expect(shots).toEqual([
-        ["Index Scan", "screenshots_image_key_idx"],
-        ["Index Scan", "screenshots_diff_image_key_idx"],
-        ["Index Scan", "screenshots_element_map_key_idx"],
-        ["Index Scan", "screenshots_dom_key_idx"],
-      ]);
-      // The run's legacy diff image is read through its partial index too.
-      const runs = seen
-        .cold!.filter((n) => n["Relation Name"] === "test_runs")
-        .map((n) => [n["Node Type"], n["Index Name"]]);
-      expect(runs).toContainEqual(["Index Scan", "test_runs_diff_name_idx"]);
+      // Every key source is read through its own index, by key and project.
+      expectKeyAndProjectLookups(seen.cold!);
 
       // A hit in the first arm stops there: no other table or index is read.
-      const ran = seen.hit!.filter(
-        (n) => n["Relation Name"] !== undefined && (n["Actual Loops"] ?? 0) > 0,
+      const ran = scansOf(seen.hit!).filter(
+        (n) => (n["Actual Loops"] ?? 0) > 0,
       );
       expect(ran.map((n) => n["Index Name"])).toEqual([
         "screenshots_image_key_idx",
       ]);
+
+      // B is served by one index lookup that finds exactly its own row: no
+      // entry of A's is read and discarded.
+      expectKeyAndProjectLookups(seen.sharedMember!, { tinyProject: true });
+      const [first, ...rest] = scansOf(seen.sharedMember!);
+      expect(first!["Index Name"]).toBe("screenshots_image_key_idx");
+      expect(first!["Actual Rows"]).toBe(1);
+      expect(rest.every((n) => (n["Actual Loops"] ?? 0) === 0)).toBe(true);
+
+      // A project that holds nothing of the key: all six lookups run and
+      // return no row, each by key and project like the others.
+      expectKeyAndProjectLookups(seen.sharedOutsider!, { tinyProject: true });
+      for (const n of scansOf(seen.sharedOutsider!)) {
+        expect(n["Actual Loops"]).toBe(1);
+        expect(n["Actual Rows"]).toBe(0);
+      }
     } finally {
       await h.close();
     }
