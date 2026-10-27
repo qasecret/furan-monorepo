@@ -2,7 +2,11 @@ import { withUserScope, type DB } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
 import { createDeferredSink } from "../lib/deferred-sink.js";
-import { procedureOutcome, recordProcedure } from "../lib/request-metrics.js";
+import {
+  procedureOutcome,
+  recordPoolWait,
+  recordProcedure,
+} from "../lib/request-metrics.js";
 import { ReviewRefusal } from "../lib/review/errors.js";
 
 import type { Context } from "./context.js";
@@ -60,6 +64,13 @@ class ProcedureFailed extends Error {
  * the callback throws {@link ProcedureFailed} to force a ROLLBACK, then the
  * middleware returns that same result, leaving the error (code, message,
  * `cause`) exactly as thrown.
+ *
+ * The wait for the transaction (from asking for it until its callback starts:
+ * a pooled connection, then BEGIN) is observed into
+ * `furan_db_pool_wait_seconds`, once per procedure that opens one, whatever
+ * the procedure then does (spec 2026-10-27 §8). A transaction that never
+ * begins (the database is unreachable) is not observed: its failure is the
+ * procedure's, a `server_error` in `furan_trpc_procedure_duration_seconds`.
  */
 const scopeToUser = t.middleware(async ({ ctx, next }) => {
   // The sink lives in the middleware closure (not on the Context), so
@@ -78,12 +89,29 @@ const scopeToUser = t.middleware(async ({ ctx, next }) => {
   const { id, role } = ctx.user;
   const run = (tx: DB) => next({ ctx: { ...scopedCtx, db: tx } });
   let result: Awaited<ReturnType<typeof run>>;
+  const askedAt = performance.now();
+  const onBegin = () => {
+    try {
+      recordPoolWait(
+        ctx.telemetry.metrics,
+        (performance.now() - askedAt) / 1000,
+      );
+    } catch {
+      // Metric only (a hand-built `createCaller` context may carry no
+      // telemetry): never fail, or alter, the procedure.
+    }
+  };
   try {
-    result = await withUserScope(ctx.db, { userId: id, role }, async (tx) => {
-      const outcome = await run(tx);
-      if (!outcome.ok) throw new ProcedureFailed(outcome);
-      return outcome;
-    });
+    result = await withUserScope(
+      ctx.db,
+      { userId: id, role },
+      async (tx) => {
+        const outcome = await run(tx);
+        if (!outcome.ok) throw new ProcedureFailed(outcome);
+        return outcome;
+      },
+      { onBegin },
+    );
   } catch (err) {
     // Rolled back: nothing the procedure wrote survives, and its deferred
     // effects are dropped (they would reference rows that aren't there).

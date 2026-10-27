@@ -11,6 +11,14 @@ const LATENCY_BUCKETS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 ];
 
+/**
+ * Buckets (seconds) of the pool-wait histogram. They run from 0.5 ms, an idle
+ * pooled connection plus its BEGIN, to 5 s, a pool that is exhausted.
+ */
+const POOL_WAIT_BUCKETS = [
+  0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+];
+
 export type StatusClass = "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
 
 /** How a tRPC procedure ended: `server_error` is a 5xx, `client_error` any other failure. */
@@ -22,17 +30,18 @@ export type ProcedureResult = { ok: true } | { ok: false; error: TRPCError };
 interface RequestMetrics {
   http: Histogram<"method" | "route" | "status_class">;
   procedure: Histogram<"procedure" | "type" | "outcome">;
+  poolWait: Histogram;
 }
 
 const metricsByRegistry = new WeakMap<Registry, RequestMetrics>();
 
 /**
- * Register the two histograms on `registry`, once. A second call with the same
- * registry reuses the first call's metrics (prom-client throws on a duplicate
- * registration, and tests build many apps on fresh registries).
+ * Register the request histograms on `registry`, once. A second call with the
+ * same registry reuses the first call's metrics (prom-client throws on a
+ * duplicate registration, and tests build many apps on fresh registries).
  *
  * No ids in any label: `route` is the route template (`/api/v1/storage/:key`,
- * never the URL), `procedure` is the router path.
+ * never the URL), `procedure` is the router path. The pool wait has no labels.
  */
 function getOrRegister(registry: Registry): RequestMetrics {
   const existing = metricsByRegistry.get(registry);
@@ -52,7 +61,13 @@ function getOrRegister(registry: Registry): RequestMetrics {
     buckets: LATENCY_BUCKETS,
     registers: [registry],
   });
-  const out: RequestMetrics = { http, procedure };
+  const poolWait = new Histogram({
+    name: "furan_db_pool_wait_seconds",
+    help: "Time a tRPC procedure waited for its request transaction: from asking for it until its callback started (a pooled connection and its BEGIN)",
+    buckets: POOL_WAIT_BUCKETS,
+    registers: [registry],
+  });
+  const out: RequestMetrics = { http, procedure, poolWait };
   metricsByRegistry.set(registry, out);
   return out;
 }
@@ -133,4 +148,14 @@ export function recordProcedure(
 ): void {
   const { procedure } = getOrRegister(registry);
   if (isObservable(seconds)) procedure.observe(call, seconds);
+}
+
+/**
+ * Observe `furan_db_pool_wait_seconds` for one procedure's request
+ * transaction. Skipped like `recordProcedure` when the duration is not
+ * observable.
+ */
+export function recordPoolWait(registry: Registry, seconds: number): void {
+  const { poolWait } = getOrRegister(registry);
+  if (isObservable(seconds)) poolWait.observe(seconds);
 }
