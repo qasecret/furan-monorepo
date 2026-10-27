@@ -52,8 +52,9 @@ export interface RetryDiff {
 /**
  * Retry for a step of run `runId` whose diff failed for good (spec
  * 2026-10-23 §6, §10). On success the run's steps, the run, the step's own
- * read and the run lists are read again, so the step reads as being diffed. A retry another reviewer
- * made first is already handled: the same reads, and at most a quiet word.
+ * read and the run lists are read again, so the step reads as being diffed.
+ * A retry another reviewer made first is already handled: the same reads,
+ * and at most a quiet word.
  *
  * One retry at a time per step: a press while that step's is out does nothing,
  * and another step's retry is not held up by it (a viewer moves between steps

@@ -83,7 +83,10 @@ export interface ReviewActions {
   state: CheckpointReviewState | null;
   /** The active decision on the selected step. */
   decision: Decision | null;
-  /** A later run captured this step again (approving would go backwards). */
+  /**
+   * A later run captured this step again (approving would go backwards): its
+   * run and step, for a link. Only while the latest read of the step says so.
+   */
   newerCapture: NewerCapture | null;
   /** The run's hand-set status, or null when it is computed. */
   statusOverride: RunStatusOverride | null;
@@ -107,6 +110,8 @@ export interface ReviewActions {
   staleConfirm: {
     open: boolean;
     opener: HTMLElement | null;
+    /** The build the newer capture is in, as the latest read names it. */
+    buildName: string;
     confirm: () => void;
     cancel: () => void;
   };
@@ -178,10 +183,13 @@ export function useReviewActions({
     ? items?.find((i) => i.id === checkpointId)
     : undefined;
   // The step's own read (`runs.getStep`) has its review in full: who decided
-  // and whether it can be undone, and the newer capture's run, step and build.
-  // Until it has loaded, the step list says what the step needs (its state,
-  // whether it is decided, whether its diff failed), so the header is not held
-  // back by it; what only the step's read has stays empty meanwhile.
+  // and whether it can be undone, and the newer capture's run and step. What
+  // the step needs now (its state, whether it is decided, whether its diff
+  // failed, whether a newer capture exists and in which build) is taken from
+  // whichever of it and the step list was read last: a read the cache kept
+  // while an event made it stale (a neighbour fetched ahead, the loop's next
+  // step) never decides the header while the list, read since, says
+  // otherwise. Before the step's read is in, the list says.
   const view =
     stepQuery.data?.step.id === checkpointId ? stepQuery.data : undefined;
   useStepAgreesWithList(
@@ -189,27 +197,42 @@ export function useReviewActions({
     listed && { item: listed, readAt: checkpoints.dataUpdatedAt },
     view && { view, readAt: stepQuery.dataUpdatedAt },
   );
+  const fromList =
+    listed !== undefined &&
+    (view === undefined ||
+      checkpoints.dataUpdatedAt >= stepQuery.dataUpdatedAt);
   const current:
     | {
         state: StepView["review"]["state"];
         decided: boolean;
         diffFailed: boolean;
+        newer: { buildName: string } | null;
       }
-    | undefined = view
+    | undefined = fromList
     ? {
-        state: view.review.state,
-        decided: view.review.decision !== null,
-        diffFailed: view.step.diffFailedAt != null,
-      }
-    : listed && {
         state: listed.state,
         decided: listed.decision !== null,
         diffFailed: listed.diffFailedAt != null,
+        newer: listed.newerCapture,
+      }
+    : view && {
+        state: view.review.state,
+        decided: view.review.decision !== null,
+        diffFailed: view.step.diffFailedAt != null,
+        newer: view.newerCapture && { buildName: view.newerCapture.buildName },
       };
 
   const state = current?.state ?? null;
+  // Who decided and when: the step's own read alone has it. The chip shows
+  // only while the latest read says the step is decided.
   const decision = view?.review.decision ?? null;
-  const newerCapture = view?.newerCapture ?? null;
+  const newer = current?.newer ?? null;
+  // The link needs the newer capture's run and step, which only the step's
+  // own read has; named by the build the latest read names.
+  const newerCapture: NewerCapture | null =
+    newer && view?.newerCapture
+      ? { ...view.newerCapture, buildName: newer.buildName }
+      : null;
   const statusOverride = run?.statusOverride ?? null;
   const effectiveStatus: RunStatus = status ?? run?.status ?? "running";
 
@@ -319,6 +342,7 @@ export function useReviewActions({
     staleConfirm: {
       open: confirming !== null,
       opener: confirming?.opener ?? null,
+      buildName: newer?.buildName ?? "",
       confirm: () => {
         setConfirming(null);
         // The step may have changed under the dialog (another reviewer);
@@ -330,7 +354,7 @@ export function useReviewActions({
     approve: (opener) => {
       if (!header.canApprove || !checkpointId) return;
       // An older capture is approved only after the reviewer says so.
-      if (newerCapture) {
+      if (newer) {
         const focused = document.activeElement;
         setConfirming({
           checkpointId,

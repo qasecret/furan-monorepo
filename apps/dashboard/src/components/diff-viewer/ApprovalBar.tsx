@@ -99,7 +99,6 @@ export function ApprovalBar({
     canApprove,
     canReject,
     staleConfirm,
-    newerCapture,
   } = actions;
 
   // Focus goes back to the control that opened the older-capture question
@@ -266,7 +265,7 @@ export function ApprovalBar({
         </div>
 
         <StaleStepConfirm
-          buildName={newerCapture?.buildName ?? ""}
+          buildName={staleConfirm.buildName}
           open={staleConfirm.open}
           onCancel={staleConfirm.cancel}
           onConfirm={staleConfirm.confirm}

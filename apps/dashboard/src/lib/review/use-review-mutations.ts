@@ -310,7 +310,9 @@ export function useReviewMutations() {
     const action = ACTIONS.get(actionId);
     if (!action?.change) return;
     try {
-      await Promise.all(action.runIds.map((runId) => cancelRun(caches, runId)));
+      await Promise.all(
+        action.runIds.map((runId) => cancelRun(caches, runId, action.held)),
+      );
       action.rollback = action.inverse?.(caches);
       for (const runId of action.runIds) {
         patchRun(caches, runId, action.change);

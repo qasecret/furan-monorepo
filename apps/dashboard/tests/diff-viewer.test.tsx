@@ -509,7 +509,6 @@ vi.mock("../src/lib/trpc", () => {
           }),
         },
       },
-
       baselines: {
         listForVariation: {
           useQuery: () => ({ data: { items: [] }, isLoading: false }),

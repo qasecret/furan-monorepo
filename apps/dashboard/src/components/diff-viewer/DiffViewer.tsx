@@ -37,9 +37,10 @@ import { stepNumber } from "./step-number";
 import { TestInfoSidebar } from "./TestInfoSidebar";
 import {
   isNoSuchStep,
-  useCachedStep,
+  useNeighbourStep,
   usePrefetchSteps,
   useStep,
+  useStepsStaleWhenLeft,
   type StepView,
 } from "./use-viewer-step";
 import { useDiffStepper } from "./useDiffStepper";
@@ -233,14 +234,23 @@ export function DiffViewer({
   const stepError =
     shownStep === undefined && !noSuchStep ? selectedStep.error : null;
   // Still on its way: the first step (`_first`, the rail), the step, or the
-  // step shown in its place.
+  // step shown in its place. A step from before steps kept their own diff
+  // images waits for the rail too: whether it may borrow the run's image (a
+  // run of one step) is the rail's count to say, and until then Diff would
+  // say "No pixel changes" for want of an image.
+  const legacyDiffUnknown =
+    shownStep !== undefined &&
+    shownStep.step.diffGeneration === 0 &&
+    shownStep.step.diffImageKey === null &&
+    railItems === undefined;
   const stepLoading =
     activeCheckpointId === undefined
       ? checkpointsQuery.isLoading
-      : shownStep === undefined &&
-        (selectedStep.isLoading ||
-          (noSuchStep &&
-            (checkpointsQuery.isLoading || fallbackStep.isLoading)));
+      : (shownStep === undefined &&
+          (selectedStep.isLoading ||
+            (noSuchStep &&
+              (checkpointsQuery.isLoading || fallbackStep.isLoading)))) ||
+        (legacyDiffUnknown && checkpointsQuery.isLoading);
 
   // The context is the SELECTED step's (the one Save writes to), not the
   // displayed candidate's, which may stand in for an id the run lacks. Its
@@ -586,8 +596,10 @@ export function DiffViewer({
   const prevStepId =
     railAt > 0 ? checkpointSummaries[railAt - 1]?.id : undefined;
   usePrefetchSteps(runId, [nextStepId, prevStepId]);
-  const nextStep = useCachedStep(runId, nextStepId);
-  const prevStep = useCachedStep(runId, prevStepId);
+  const nextStep = useNeighbourStep(runId, nextStepId);
+  const prevStep = useNeighbourStep(runId, prevStepId);
+  // Leaving the run, its step reads go stale: its events stop reaching them.
+  useStepsStaleWhenLeft(runId);
   const prefetch = useMemo<ImageSetRequest[]>(
     () =>
       [nextStep, prevStep]
@@ -665,8 +677,14 @@ export function DiffViewer({
   // says why, and a viewer who may review can retry it, from the stage or the
   // palette. This step's retry in flight is the one retry, and the palette
   // action waits for it; another step's retry does not hold this one up.
-  // The step's own read says, else the step list until it is in.
-  const failure = stepView?.step ?? stepItem;
+  // Whichever of the step's own read and the step list was read last says,
+  // as for the header (`useReviewActions`): a read kept stale by the cache
+  // never outranks a newer list.
+  const listIsLatest =
+    stepItem !== undefined &&
+    (stepView === undefined ||
+      checkpointsQuery.dataUpdatedAt >= selectedStep.dataUpdatedAt);
+  const failure = listIsLatest ? stepItem : stepView?.step;
   const failedDiff =
     failure?.diffFailedAt != null ? diffErrorCode(failure.diffError) : null;
   const retryingHere =
