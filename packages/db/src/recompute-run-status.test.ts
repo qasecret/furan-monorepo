@@ -1151,6 +1151,12 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
         debug: (_conn, query) => void statements.push(query),
       });
       const counting = drizzle(client, { schema });
+      /** The statements since the last check: none locks or savepoints. */
+      const noLockNorSavepoint = () => {
+        for (const q of statements) {
+          expect(q).not.toMatch(/for (no key )?update|savepoint/i);
+        }
+      };
       try {
         await counting.transaction(async (tx) => {
           for (const runId of [moving.runId, settled.runId].sort()) {
@@ -1166,17 +1172,17 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
           ).toEqual({ before: "running", after: "unresolved", changed: true });
           expect(statements).toHaveLength(2);
           expect(statements[1]).toMatch(/^update "test_runs"/i);
+          // Checked before they are cleared for the second call.
+          noLockNorSavepoint();
           statements.length = 0;
           expect(
             await recomputeRunStatus(tx, settled.runId, { lockHeld: true }),
           ).toEqual({ before: "passed", after: "passed", changed: false });
           expect(statements).toHaveLength(1);
+          noLockNorSavepoint();
         });
       } finally {
         await client.end();
-      }
-      for (const q of statements) {
-        expect(q).not.toMatch(/for (no key )?update|savepoint/i);
       }
       expect(await storedRun(moving.runId)).toMatchObject({
         status: "unresolved",
