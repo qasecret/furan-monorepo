@@ -97,8 +97,8 @@ baseline (every step `new`).
 **Reads stay small as a project grows.** Each run stores how many of its
 steps need review (`pending_steps`, and `failed_steps` for those whose diff
 failed). One function writes them, `recomputeRunStatus`, in the same
-transaction as the run's status and under the run lock every write path takes
-first; `verify-review-rollup --repair-counters` checks and repairs them (see
+transaction as the run's status and under the run lock it takes first;
+`verify-review-rollup --repair-counters` checks and repairs them (see
 [`docs/runbooks/server-reads-upgrade.md`](docs/runbooks/server-reads-upgrade.md)).
 The review queue, the pending counts and the "Needs review" filters read those
 counters, and the batch and run lists pick one page of rows first and build
