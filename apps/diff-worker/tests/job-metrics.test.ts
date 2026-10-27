@@ -3,30 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createDiffJobMetrics } from "../src/job-metrics.js";
 
-type Sample = {
-  metricName?: string;
-  labels: Record<string, string | number | undefined>;
-  value: number;
-};
-
-/** `_count` and `_sum` of one histogram series (optionally under a label). */
-async function histogramSeries(
-  registry: Registry,
-  name: string,
-  labels: Record<string, string> = {},
-): Promise<{ count: number; sum: number }> {
-  const json = await registry.getMetricsAsJSON();
-  const metric = json.find((m) => m.name === name);
-  if (!metric) return { count: 0, sum: 0 };
-  const samples = metric.values as Sample[];
-  const pick = (suffix: string): number =>
-    samples.find(
-      (s) =>
-        s.metricName === `${name}${suffix}` &&
-        Object.entries(labels).every(([k, v]) => s.labels[k] === v),
-    )?.value ?? 0;
-  return { count: pick("_count"), sum: pick("_sum") };
-}
+import { histogramSeries } from "./helpers/metrics.js";
 
 describe("createDiffJobMetrics", () => {
   it("records duration by outcome", async () => {

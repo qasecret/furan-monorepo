@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  asc,
   baselines,
   builds,
   checkpointDecisions,
   createDb,
   diffRegions,
   eq,
+  inArray,
   projects,
   screenshots,
   testRuns,
@@ -15,7 +15,6 @@ import {
   users,
   type DB,
 } from "@furan/db";
-import type { DiffJob } from "@furan/queue";
 import { createStorage, objectKey, type Storage } from "@furan/storage";
 import { Redis } from "ioredis";
 import { Registry } from "prom-client";
@@ -24,6 +23,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createDiffMetrics, type DiffMetrics } from "../src/diff-metrics.js";
 import { handleDiffJob, type DiffJobOutcome } from "../src/handler.js";
+
+import { counterValue } from "./helpers/metrics.js";
+import { pgCode } from "./helpers/pg.js";
+import { diffRunPerStep, stepJobsFor } from "./helpers/step-jobs.js";
 
 /**
  * Spec §3 (review flow, slice 1): every checkpoint of a run is diffed against
@@ -84,13 +87,6 @@ async function square(color: "red" | "blue", pos: number): Promise<Buffer> {
     ])
     .png()
     .toBuffer();
-}
-
-async function counterValue(reg: Registry, name: string): Promise<number> {
-  const json = await reg.getMetricsAsJSON();
-  const metric = json.find((m) => m.name === name);
-  const series = (metric?.values ?? []) as Array<{ value: number }>;
-  return series.reduce((sum, s) => sum + s.value, 0);
 }
 
 interface CheckpointSpec {
@@ -291,15 +287,22 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     };
   }
 
+  /**
+   * Diffs the run the per-step way (spec 2026-10-23): every step is queued
+   * and its own job run. Returns the checkpoints the jobs diffed, summed.
+   */
   async function diff(
     s: Scenario,
     metrics?: DiffMetrics,
   ): Promise<DiffJobOutcome> {
-    return handleDiffJob(
-      { runId: s.candidateRunId, projectId: s.projectId } as DiffJob,
+    const outcomes = await diffRunPerStep(
+      { runId: s.candidateRunId, projectId: s.projectId },
       mockLogger,
       { db, storage, redis, ...(metrics ? { metrics } : {}) },
     );
+    return {
+      checkpoints: outcomes.reduce((n, o) => n + o.checkpoints, 0),
+    };
   }
 
   async function verdicts(
@@ -343,7 +346,8 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
   it("diffs each checkpoint against its own baseline", async () => {
     const s = await seed({ checkpoints: await threeCheckpoints() });
 
-    // The job reports how many checkpoints it diffed (the worker records it).
+    // Each step's job reports the one checkpoint it diffed (the worker
+    // records it): three in all.
     expect(await diff(s)).toEqual({ checkpoints: 3 });
 
     expect(await verdicts(s, ["home", "cart", "checkout"])).toEqual([
@@ -460,12 +464,12 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     expect(run.merge).toBe(true);
   }, 60_000);
 
-  it("records auto-approved baselines in ascending variation-id order, whatever the capture order", async () => {
-    // recordBaseline updates a test_variations row per call, inside one
-    // transaction. Two jobs whose runs share variations deadlock if they take
-    // those row locks in different orders, so the order is fixed by variation
-    // id, not by capture order. Each call stamps clock_timestamp(), so
-    // baselines.created_at shows the order the writes happened in.
+  it("auto-approves steps that share variations, committing concurrently, without a deadlock", async () => {
+    // The old whole-run commit recorded every auto-approved baseline in one
+    // transaction, so its variation locks needed a fixed order (ascending id)
+    // against another run's job holding the same variations. A step's commit
+    // locks its run, its step, then its ONE variation, so concurrent commits
+    // queue on a run or a variation and never wait on each other in a cycle.
     const names = ["a", "b", "c", "d"];
     const checkpoints: CheckpointSpec[] = [];
     for (const name of names) {
@@ -479,9 +483,9 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     }
     const s = await seed({ autoApproveFeature: true, checkpoints });
 
-    // Capture order = DESCENDING variation id (the worst case for a handler
-    // that writes in capture order). The handler reads screenshots by
-    // (created_at, id), so spread created_at to make that order explicit.
+    // Capture order = DESCENDING variation id (the worst case for the old
+    // whole-run commit). The handler reads screenshots by (created_at, id), so
+    // spread created_at to make that order explicit.
     const byVariationDesc = names
       .map((n) => ({ shot: s.shotId[n]!, variation: s.variationId[n]! }))
       .sort((x, y) => (x.variation < y.variation ? 1 : -1));
@@ -493,18 +497,101 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
         .where(eq(screenshots.id, c.shot));
     }
 
-    await diff(s);
+    /** Runs the step jobs all at once; every one must commit. */
+    async function allAtOnce(
+      runs: Array<{ runId: string; projectId: string }>,
+    ): Promise<void> {
+      const jobs = (
+        await Promise.all(runs.map((run) => stepJobsFor(db, run)))
+      ).flat();
+      const settled = await Promise.allSettled(
+        jobs.map((job) =>
+          handleDiffJob(job, mockLogger, { db, storage, redis }),
+        ),
+      );
+      const errors = settled.flatMap((r) =>
+        r.status === "rejected" ? [r.reason as unknown] : [],
+      );
+      expect(errors.map(pgCode)).not.toContain("40P01");
+      expect(errors).toEqual([]);
+      expect(
+        settled.map((r) => (r.status === "fulfilled" ? r.value : null)),
+      ).toEqual(jobs.map(() => ({ checkpoints: 1 })));
+    }
 
+    // The run's four step jobs at once: each records exactly its own
+    // variation's auto baseline.
+    const first = { runId: s.candidateRunId, projectId: s.projectId };
+    await allAtOnce([first]);
     const written = await db
       .select({
         variation: baselines.testVariationId,
-        createdAt: baselines.createdAt,
+        userId: baselines.userId,
       })
       .from(baselines)
-      .where(eq(baselines.testRunId, s.candidateRunId))
-      .orderBy(asc(baselines.createdAt));
-    const expected = names.map((n) => s.variationId[n]!).sort();
-    expect(written.map((w) => w.variation)).toEqual(expected);
+      .where(eq(baselines.testRunId, s.candidateRunId));
+    expect(written.map((w) => w.variation).sort()).toEqual(
+      names.map((n) => s.variationId[n]!).sort(),
+    );
+    expect(written.every((w) => w.userId === null)).toBe(true);
+    expect(await verdicts(s, names)).toEqual(names.map(() => "passed"));
+    expect((await runRow(s)).status).toBe("passed");
+
+    // A second run of the build captures the same four variations, in
+    // ASCENDING variation order; its step jobs and a re-diff of the first
+    // run's all run at once, each locking one of the shared variations.
+    const [cr2] = await db
+      .insert(testRuns)
+      .values({
+        name: "candidate-2",
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+    const ascending = [...byVariationDesc].reverse();
+    for (const [i, c] of ascending.entries()) {
+      const [own] = await db
+        .select({ imageKey: screenshots.imageKey, name: screenshots.name })
+        .from(screenshots)
+        .where(eq(screenshots.id, c.shot));
+      await db.insert(screenshots).values({
+        runId: cr2!.id,
+        projectId: s.projectId,
+        testVariationId: c.variation,
+        name: own!.name,
+        imageKey: own!.imageKey,
+        viewport: VP,
+        browser: "chromium",
+        createdAt: new Date(t0 + i * 1000),
+      });
+    }
+    await allAtOnce([first, { runId: cr2!.id, projectId: s.projectId }]);
+
+    const second = await db
+      .select({ verdict: screenshots.verdict })
+      .from(screenshots)
+      .where(eq(screenshots.runId, cr2!.id));
+    expect(second.map((r) => r.verdict)).toEqual(names.map(() => "passed"));
+    expect(await verdicts(s, names)).toEqual(names.map(() => "passed"));
+    // Whichever run wrote last, every baseline of the shared variations is
+    // an auto baseline of one of the two runs, one row per (variation, run).
+    const all = await db
+      .select({
+        variation: baselines.testVariationId,
+        run: baselines.testRunId,
+        userId: baselines.userId,
+      })
+      .from(baselines)
+      .where(inArray(baselines.testRunId, [s.candidateRunId, cr2!.id]));
+    expect(all.every((b) => b.userId === null)).toBe(true);
+    expect(new Set(all.map((b) => `${b.variation}/${b.run}`)).size).toBe(
+      all.length,
+    );
+    expect(new Set(all.map((b) => b.variation))).toEqual(
+      new Set(names.map((n) => s.variationId[n]!)),
+    );
   }, 60_000);
 
   it("per-checkpoint past-baseline auto-approve pairs each past baseline by variation", async () => {

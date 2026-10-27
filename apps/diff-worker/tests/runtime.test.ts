@@ -10,36 +10,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { handleDiffJob } from "../src/handler.js";
 import { createDiffJobMetrics } from "../src/job-metrics.js";
+import { reconcileStuckSteps } from "../src/reconciler.js";
 import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
+
+import { histogramSeries, type Sample } from "./helpers/metrics.js";
+
+// The reconciler's pass is a fake each test controls (its metric is real); the
+// tests that start a runtime with the reconciler off never call it.
+vi.mock("../src/reconciler.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/reconciler.js")>()),
+  reconcileStuckSteps: vi.fn(),
+}));
 
 const PROJECT = "00000000-0000-0000-0000-000000000002";
 const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
 const OK = "00000000-0000-0000-0000-0000000000bb";
-
-type Sample = {
-  metricName?: string;
-  labels: Record<string, string | number | undefined>;
-  value: number;
+const STALE = "00000000-0000-0000-0000-0000000000dd";
+/** A step job's step and version (spec 2026-10-23); the stub ignores them. */
+const STEP = {
+  screenshotId: "00000000-0000-0000-0000-0000000000cc",
+  generation: 1,
 };
-
-async function histogramSeries(
-  registry: Registry,
-  name: string,
-  labels: Record<string, string> = {},
-): Promise<{ count: number; sum: number }> {
-  const metric = (await registry.getMetricsAsJSON()).find(
-    (m) => m.name === name,
-  );
-  if (!metric) return { count: 0, sum: 0 };
-  const samples = metric.values as Sample[];
-  const pick = (suffix: string): number =>
-    samples.find(
-      (s) =>
-        s.metricName === `${name}${suffix}` &&
-        Object.entries(labels).every(([k, v]) => s.labels[k] === v),
-    )?.value ?? 0;
-  return { count: pick("_count"), sum: pick("_sum") };
-}
 
 /** Resolve when `job` leaves the worker, completed or failed. */
 function settled(
@@ -71,11 +62,13 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
   let runtime: DiffWorkerRuntime | undefined;
   const calls = new Map<string, number>();
 
-  // Succeeds with 7 checkpoints; the RETRY_ONCE run throws on its first call.
+  // Succeeds with 7 checkpoints; the RETRY_ONCE run throws on its first call;
+  // the STALE run's job finds its version taken by a newer one.
   const stub: typeof handleDiffJob = async (data) => {
     const n = (calls.get(data.runId) ?? 0) + 1;
     calls.set(data.runId, n);
     if (data.runId === RETRY_ONCE && n === 1) throw new Error("boom");
+    if (data.runId === STALE) return { checkpoints: 0, stale: true };
     return { checkpoints: 7 };
   };
 
@@ -88,7 +81,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 1,
-      sweeper: false,
+      reconciler: false,
       handler: stub,
     });
 
@@ -112,7 +105,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
   it("records duration, queue wait and checkpoints for a completed job", async () => {
     runtime = start();
     const done = settled(runtime, "completed", OK);
-    await queue.add("diff", { runId: OK, projectId: PROJECT });
+    await queue.add("diff", { runId: OK, projectId: PROJECT, ...STEP });
     await done;
 
     expect(
@@ -140,7 +133,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     const done = settled(runtime, "completed", RETRY_ONCE);
     await queue.add(
       "diff",
-      { runId: RETRY_ONCE, projectId: PROJECT },
+      { runId: RETRY_ONCE, projectId: PROJECT, ...STEP },
       { attempts: 2, backoff: { type: "fixed", delay: 0 } },
     );
     await done;
@@ -171,6 +164,70 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     ).toBe(1);
   });
 
+  it("records a stale job under the stale outcome, with no checkpoints", async () => {
+    runtime = start();
+    const done = settled(runtime, "completed", STALE);
+    await queue.add("diff", { runId: STALE, projectId: PROJECT, ...STEP });
+    await done;
+
+    const duration = (outcome: string) =>
+      histogramSeries(registry, "furan_diff_job_duration_seconds", {
+        outcome,
+      });
+    expect((await duration("stale")).count).toBe(1);
+    expect((await duration("completed")).count).toBe(0);
+    expect(
+      await histogramSeries(registry, "furan_diff_job_checkpoints"),
+    ).toEqual({ count: 1, sum: 0 });
+  });
+
+  it("hands the handler the queue it consumes, so split jobs come back to it", async () => {
+    // A whole-run job: the handler adds a step job to `deps.queue`, which
+    // this same worker must then pick up (same name, same prefix).
+    const seen: DiffJob[] = [];
+    const splitter: typeof handleDiffJob = async (data, _logger, deps) => {
+      seen.push(data);
+      if (data.screenshotId === undefined) {
+        await deps.queue!.addBulk([
+          {
+            name: "diff",
+            data: { ...data, ...STEP },
+            opts: { jobId: `${STEP.screenshotId}-g${STEP.generation}` },
+          },
+        ]);
+        return { checkpoints: 0 };
+      }
+      return { checkpoints: 1 };
+    };
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      reconciler: false,
+      handler: splitter,
+    });
+    let completed = 0;
+    const both = new Promise<void>((resolve) => {
+      runtime!.worker.on("completed", () => {
+        if (++completed === 2) resolve();
+      });
+    });
+    await queue.add("diff", { runId: OK, projectId: PROJECT });
+    await both;
+
+    expect(seen).toEqual([
+      { runId: OK, projectId: PROJECT },
+      { runId: OK, projectId: PROJECT, ...STEP },
+    ]);
+    expect(
+      await histogramSeries(registry, "furan_diff_job_checkpoints"),
+    ).toEqual({ count: 2, sum: 1 });
+  });
+
   it("records a job that exhausts its attempts as failed and dead-lettered", async () => {
     const always: typeof handleDiffJob = async () => {
       throw new Error("always");
@@ -182,11 +239,15 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       logger: noop as never,
       registry,
       queuePrefix: prefix,
-      sweeper: false,
+      reconciler: false,
       handler: always,
     });
     const done = settled(runtime, "failed", OK);
-    await queue.add("diff", { runId: OK, projectId: PROJECT }, { attempts: 1 });
+    await queue.add(
+      "diff",
+      { runId: OK, projectId: PROJECT, ...STEP },
+      { attempts: 1 },
+    );
     await done;
 
     expect(
@@ -221,14 +282,14 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 1,
-      sweeper: false,
+      reconciler: false,
       handler: stub,
     });
     const done = settled(runtime, "completed", OK);
     // Two attempts: a throw out of the processor would be retried.
     const job = await queue.add(
       "diff",
-      { runId: OK, projectId: PROJECT },
+      { runId: OK, projectId: PROJECT, ...STEP },
       { attempts: 2, backoff: { type: "fixed", delay: 0 } },
     );
     await done;
@@ -265,14 +326,15 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
         registry,
         queuePrefix: prefix,
         concurrency: 1,
-        sweeper: false,
+        reconciler: false,
         handler: held,
       });
-      await other.add("diff", { runId: OK, projectId: PROJECT });
+      await other.add("diff", { runId: OK, projectId: PROJECT, ...STEP });
       for (const n of [1, 2, 3]) {
         await queue.add("diff", {
           runId: `00000000-0000-0000-0000-00000000010${n}`,
           projectId: PROJECT,
+          ...STEP,
         });
       }
 
@@ -303,6 +365,136 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     // BullMQ flips `isRunning` once its main loop has unwound, a tick after
     // `close()` resolves.
     await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
+  });
+
+  it("a worker connection error is logged, at most once a minute, and never thrown", () => {
+    const warn = vi.fn();
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: { ...noop, warn } as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      handler: stub,
+      reconciler: false,
+    });
+    const worker = runtime.worker;
+
+    // Without a listener, `emit("error")` throws: inside BullMQ's loop that
+    // is an unhandled rejection, which ends the process.
+    expect(() =>
+      worker.emit("error", new Error("Connection is closed.")),
+    ).not.toThrow();
+    worker.emit("error", new Error("Connection is closed."));
+
+    const logged = warn.mock.calls.filter(
+      ([, msg]) => msg === "diff_worker_redis_error",
+    );
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.[0]).toEqual({
+      err: expect.objectContaining({ message: "Connection is closed." }),
+    });
+  });
+
+  it("registers the reconcile enqueue counter at 0 when it starts", async () => {
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      handler: stub,
+    });
+
+    // Before any pass: an alert on its rate has a baseline.
+    const metric = (await registry.getMetricsAsJSON()).find(
+      (m) => m.name === "furan_diff_jobs_enqueued_total",
+    );
+    expect(metric?.values).toEqual([
+      expect.objectContaining({ labels: { trigger: "reconcile" }, value: 0 }),
+    ]);
+  });
+
+  it("close waits for a reconciler pass in flight, which still sees open clients", async () => {
+    const reconcile = vi.mocked(reconcileStuckSteps);
+    reconcile.mockReset();
+    // Any pass after the first would be counted, not hang.
+    reconcile.mockResolvedValue({
+      requeued: 0,
+      failed: 0,
+      emptied: 0,
+      errors: 0,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const inPass = new Promise<void>((resolve) => (entered = resolve));
+    const seen: { queue?: string; workerRunning?: boolean | undefined } = {};
+    reconcile.mockImplementationOnce(async (args) => {
+      entered();
+      await gate;
+      // What the pass uses is still open once it is let go: the queue it
+      // re-adds jobs to answers a read, and the worker has not been closed.
+      await args.queue.getJob("probe");
+      seen.queue = (await (args.queue as Queue<DiffJob>).client).status;
+      seen.workerRunning = runtime?.worker.isRunning();
+      return { requeued: 0, failed: 0, emptied: 0, errors: 0 };
+    });
+
+    // The reconciler's 30 s tick, as `startDiffWorker` installs it, runs every
+    // 20 ms instead, so the test sees every tick it would take.
+    const realSetInterval = globalThis.setInterval;
+    let ticking = false;
+    const spy = vi.spyOn(globalThis, "setInterval").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+    ) => {
+      if (ms === 30_000 && !ticking) {
+        ticking = true;
+        return realSetInterval(fn, 20);
+      }
+      return realSetInterval(fn, ms);
+    }) as never);
+    try {
+      runtime = startDiffWorker({
+        db: {} as DB,
+        storage: {} as Storage,
+        redis: {} as Redis,
+        logger: noop as never,
+        registry,
+        queuePrefix: prefix,
+        concurrency: 1,
+        handler: stub,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(ticking).toBe(true);
+
+    await inPass;
+    // Ticks keep coming while the pass is held: none starts a second pass.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    let closed = false;
+    const closing = runtime.close().then(() => {
+      closed = true;
+    });
+    // Give `close()` every chance to run ahead of the pass.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(closed).toBe(false);
+
+    release();
+    await closing;
+
+    expect(closed).toBe(true);
+    expect(seen).toEqual({ queue: "ready", workerRunning: true });
+    // No tick fires once `close()` has resolved.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
   it("closes promptly when the worker's connection never became ready", async () => {

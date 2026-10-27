@@ -34,6 +34,8 @@ import {
 } from "../src/dynamic-text.js";
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 // Mock tesseract.js for the dynamic-text integration tests. The first
 // `recognize` call returns "Mar 5, 2026" (matches the date preset); the
 // second returns "ORDER-XYZ" (no match). The mock applies module-wide
@@ -237,7 +239,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const [row] = await db
         .select()
@@ -273,7 +275,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const [row] = await db
         .select()
@@ -299,7 +301,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const [row] = await db
         .select()
@@ -323,7 +325,7 @@ desc(
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await expect(
-        handleDiffJob(job, mockLogger, { db, storage, redis }),
+        diffRunPerStep(job, mockLogger, { db, storage, redis }),
       ).resolves.not.toThrow();
     }, 60_000);
 
@@ -332,7 +334,7 @@ desc(
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await expect(
-        handleDiffJob(job, mockLogger, { db, storage, redis }),
+        diffRunPerStep(job, mockLogger, { db, storage, redis }),
       ).resolves.not.toThrow();
     }, 60_000);
 
@@ -382,7 +384,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const auditRows = await db
         .select()
@@ -524,7 +526,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: cr.id, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const [updated] = await db
         .select()
@@ -564,7 +566,7 @@ desc(
         .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const auditRows = await db
         .select()

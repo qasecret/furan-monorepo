@@ -3,6 +3,8 @@ import type { EngineConfig } from "./types.js";
 export { runDiff } from "./engine.js";
 export type { RunDiffInput } from "./engine.js";
 export { runL1 } from "./l1.js";
+export { DiffEngineError } from "./errors.js";
+export type { DiffStage } from "./errors.js";
 export { runAxe } from "./axe.js";
 export type { AccessibilityOptions } from "./axe.js";
 export { classifyRegions, severityRank } from "./classify.js";
@@ -40,11 +42,7 @@ export {
 } from "./vlm/index.js";
 
 export type MatchLevel =
-  | "Strict"
-  | "Layout"
-  | "Content"
-  | "IgnoreColors"
-  | "Dynamic";
+  "Strict" | "Layout" | "Content" | "IgnoreColors" | "Dynamic";
 
 /**
  * Image-first (ADR-047): every matchLevel maps to the single image compare,

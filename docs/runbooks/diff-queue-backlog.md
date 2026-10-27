@@ -25,10 +25,33 @@ read, what they mean, and what to do about each cause.
 - The p95 of `furan_diff_job_queue_wait_seconds` keeps rising.
 - The worker logs `diff_job_dead_lettered` or `diff_queue_depth_unavailable`.
 
-**Treat a queue wait of more than 5 minutes as a correctness risk, not only a
-latency one.** Every 30 s the worker's stale-run sweeper finalises a `running`
-run that has not been touched for 5 minutes, and it does that without waiting
-for a diff job still in the queue.
+**A backlog delays results, it never changes them.** Every 30 s each worker's
+reconciler looks at the steps that have waited more than 10 minutes for a diff
+result:
+
+- A step whose job will still run (`waiting`, `active`, `delayed`,
+  `prioritized` or `waiting-children`) is left alone, however deep the
+  backlog.
+- A step whose job was lost (gone from Redis, or finished without writing a
+  result) is re-queued. It logs `reconciler_step_requeued` and counts in the
+  worker's `furan_diff_jobs_enqueued_total{trigger="reconcile"}`.
+- After 3 re-queues of the same step, the step fails with the reason
+  `timeout` (`reconciler_step_timed_out`): its verdict becomes `unresolved`, so
+  its run needs attention.
+
+A step without a result is never marked passed by time. Earlier releases had a
+stale-run sweeper that turned such steps into `passed` after 5 minutes, a CI
+false pass under a backlog; it is gone. A `running` run that no step was
+uploaded to still becomes `empty` after 5 minutes.
+
+Right after an upgrade from a release that queued one diff job per run, such
+an old whole-run job may still wait in the queue. A step of its run that has
+no result 10 minutes after its upload (and whose run is still `running`) gets
+a job of its own from the reconciler, `<step id>-g0`, as if that job were lost.
+This is harmless: when the old job is processed it re-queues every step of
+the run at a new version, and the `-g0` job finds its version superseded and
+writes nothing (or has already written the step's result, which the new
+version then replaces).
 
 ## The four metrics
 
@@ -107,8 +130,9 @@ rather than 0.
    ```
 
    `diff_job_failed_will_retry` is a failing attempt that will retry. A job
-   that exhausted its attempts logs `diff_job_dead_lettered`, and its run has
-   no verdict until the sweeper finalises it.
+   that exhausted its attempts logs `diff_job_dead_lettered`, and its step
+   fails with a reason code (`unresolved`). If even that write failed, the
+   reconciler re-queues the step once it has waited 10 minutes.
 
 3. **Look at the dead letters.** The newest failed jobs and why:
 
@@ -129,9 +153,14 @@ rather than 0.
    docker compose -f infra/docker/compose.yml up -d --scale diff-worker=3
    ```
 
-   Replicas share the queue. Each one also runs the sweeper, which is safe to
-   run concurrently. If the cause is a slow VLM provider, more replicas add
-   waiting calls, not speed: fix the provider instead.
+   Replicas share the queue. Each one also runs the reconciler, which is safe
+   to run concurrently: a replica re-checks the step, removes its finished job
+   and claims the re-queue in one transaction that locks the step's run, and
+   adds the new job only after that commits. A replica that lost the race finds
+   the step changed and touches neither the step nor its job, so two replicas
+   never re-queue one step twice nor remove each other's new job. If the cause
+   is a slow VLM provider, more replicas add waiting calls, not speed: fix the
+   provider instead.
 
 5. **Restart a stuck worker.**
 
@@ -152,7 +181,7 @@ rather than 0.
 | Condition                                                           | Escalate at |
 | ------------------------------------------------------------------- | ----------- |
 | `waiting` still growing after scaling and a restart                 | 15 min      |
-| Queue wait p95 above 5 minutes (the sweeper starts finalising runs) | 5 min       |
+| The reconciler keeps re-queuing steps, or fails them with `timeout` | 15 min      |
 | `failed` or dead-letters rising with one repeated `failedReason`    | 15 min      |
 | Redis out of memory, or `/readyz` 503 on Postgres or Redis          | 10 min      |
 

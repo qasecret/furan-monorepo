@@ -403,6 +403,7 @@ export function DiffViewer({
     (e: RunEvent) => {
       if (
         e.type === "diff.completed" ||
+        e.type === "run.checkpoint_diffed" ||
         e.type === "capture.completed" ||
         e.type === "run.completed"
       ) {

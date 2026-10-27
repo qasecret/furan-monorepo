@@ -8,8 +8,12 @@
 // its old payload — the v1.1.0 screenshots route already accepts that
 // shape because it requires `name` + `viewport` + `browser`.
 //
-// The stale-run sweeper (Phase 7.1) finalizes runs that don't get
-// /complete because the v1.0.x SDK never sends it.
+// The v1.0.x SDK never sends POST /runs/:id/complete. Its run still settles:
+// the status follows from the steps' verdicts as each step's diff lands, and
+// a run no step was uploaded to is turned `empty` after 5 minutes by the diff
+// worker's reconciler. `checkpoint_count` is kept by the upload route (one
+// per step); only `completed_at` of a run with steps, which /complete stamps,
+// stays NULL.
 
 import { testRuns } from "@furan/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";

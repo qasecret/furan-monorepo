@@ -365,11 +365,11 @@ export interface RunStatuses {
 }
 
 /**
- * The run's own channel (`run:<id>:events`), where every diff job publishes
- * `run.completed` with the status its rollup derived (top-level `status`,
- * `apps/diff-worker/src/handler.ts`). The api's `/complete` publishes a
- * `run.completed` too, with the status it read nested in `payload`; that one
- * is not a diff result and is skipped.
+ * The run's own channel (`run:<id>:events`), where the diff worker publishes
+ * `run.completed` with the new status each time a step's commit moves the
+ * run's status (top-level `status`, `apps/diff-worker/src/step-events.ts`). The
+ * api's `/complete` publishes a `run.completed` too, with the status it read
+ * nested in `payload`; that one is not a diff result and is skipped.
  */
 export async function subscribeRunStatuses(
   redis: Redis,

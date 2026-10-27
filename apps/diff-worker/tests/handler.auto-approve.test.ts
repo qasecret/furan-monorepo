@@ -25,6 +25,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string): Buffer =>
   readFileSync(join(__dirname, "fixtures", n));
@@ -281,7 +283,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       viewports: [VP_DESKTOP],
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: ctx.candidateRunId, projectId: ctx.projectId },
       mockLogger,
       { db, storage, redis },
@@ -317,7 +319,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       viewports: [VP_DESKTOP, VP_MOBILE],
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: ctx.candidateRunId, projectId: ctx.projectId },
       mockLogger,
       { db, storage, redis },
@@ -354,7 +356,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       mismatchOnMobile: true,
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: ctx.candidateRunId, projectId: ctx.projectId },
       mockLogger,
       { db, storage, redis },
@@ -390,7 +392,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       viewports: [VP_DESKTOP],
     });
 
-    await handleDiffJob(
+    await diffRunPerStep(
       { runId: ctx.candidateRunId, projectId: ctx.projectId },
       mockLogger,
       { db, storage, redis },
@@ -457,7 +459,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     // path). The distinguishing signal is the test_runs.status value:
     // first-baseline → "new", auto-approve → "passed".
 
-    await handleDiffJob({ runId: cr.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: cr.id, projectId: p.id }, mockLogger, {
       db,
       storage,
       redis,
@@ -534,7 +536,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       });
       const before = await baselineRows(ctx.variationId);
 
-      await handleDiffJob(
+      await diffRunPerStep(
         { runId: ctx.candidateRunId, projectId: ctx.projectId },
         mockLogger,
         { db, storage, redis },
@@ -566,7 +568,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         .where(eq(baselines.testRunId, ctx.baselineRunId));
       const before = await baselineRows(ctx.variationId);
 
-      await handleDiffJob(
+      await diffRunPerStep(
         { runId: ctx.candidateRunId, projectId: ctx.projectId },
         mockLogger,
         { db, storage, redis },
@@ -650,7 +652,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       });
       const before = await baselineRows(v!.id);
 
-      await handleDiffJob({ runId: r1.id, projectId: p!.id }, mockLogger, {
+      await diffRunPerStep({ runId: r1.id, projectId: p!.id }, mockLogger, {
         db,
         storage,
         redis,

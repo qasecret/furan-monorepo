@@ -62,6 +62,21 @@ describe("useRunEvents", () => {
     });
   });
 
+  it("forwards the per-step run.checkpoint_diffed event", () => {
+    const onEvent = vi.fn();
+    renderHook(() => useRunEvents("run-1", onEvent));
+    const es = MockEventSource.instances[0]!;
+    const event = {
+      type: "run.checkpoint_diffed",
+      runId: "run-1",
+      screenshotId: "shot-1",
+      verdict: "unresolved",
+      failed: true,
+    };
+    act(() => es.emit("progress", event));
+    expect(onEvent).toHaveBeenCalledWith(event);
+  });
+
   it("does not open an EventSource when runId is null", () => {
     renderHook(() => useRunEvents(null, () => undefined));
     expect(MockEventSource.instances).toHaveLength(0);

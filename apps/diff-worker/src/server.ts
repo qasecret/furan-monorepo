@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   const retentionMetrics = createRetentionMetrics(telemetry.metrics);
 
   // The diff worker, its job metrics, the dead-letter signal and the 30 s
-  // stale-run sweeper live in `runtime.ts`; the scale harness runs the same
+  // reconciler live in `runtime.ts`; the scale harness runs the same
   // code in-process.
   const diffRuntime = startDiffWorker({
     db,
@@ -125,7 +125,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
-    // Stops the sweeper, then closes the diff worker.
+    // Stops the reconciler, then closes the diff worker.
     await diffRuntime.close();
     await retentionWorker.close();
     await retentionQueue.close();
