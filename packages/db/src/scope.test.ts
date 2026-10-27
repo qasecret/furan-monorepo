@@ -152,6 +152,38 @@ describe.runIf(RUN_INTEGRATION)("withUserScope (integration)", () => {
     expect(await currentUserId(db)).toBeNull();
     expect(await currentUserRole(db)).toBeNull();
   });
+
+  test("onBegin runs once, after BEGIN and before the scope is set", async () => {
+    const statements: string[] = [];
+    const counted = createDb();
+    const client = (
+      counted.db as unknown as { $client: { options: { debug: unknown } } }
+    ).$client;
+    const events: string[] = [];
+    try {
+      // Connect first: a new connection reads its types before anything else.
+      await counted.db.execute(sql`SELECT 1`);
+      client.options.debug = (_conn: number, query: string) => {
+        statements.push(query);
+      };
+      await withUserScope(
+        counted.db,
+        { userId: "77777777-7777-7777-7777-777777777777", role: "editor" },
+        async (tx) => {
+          events.push(`body after ${statements.length} statements`);
+          await currentUserId(tx);
+        },
+        { onBegin: () => events.push(`onBegin after ${statements.length}`) },
+      );
+    } finally {
+      client.options.debug = false;
+      await counted.close();
+    }
+    // BEGIN, then onBegin; then the scope's set_config, then the body.
+    expect(statements[0]).toMatch(/^begin/i);
+    expect(statements[1]).toMatch(/set_config\('app\.user_id'/);
+    expect(events).toEqual(["onBegin after 1", "body after 2 statements"]);
+  });
 });
 
 describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {

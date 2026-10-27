@@ -46,6 +46,12 @@ export interface UserScope {
   projectId?: string;
 }
 
+/** Hooks into {@link withUserScope}'s transaction. */
+export interface UserScopeOptions {
+  /** Called when the transaction's callback starts (see `withUserScope`). */
+  onBegin?: () => void;
+}
+
 /**
  * Runs `fn` inside a transaction with the caller identity pinned as
  * transaction-local GUCs (`app.user_id`, `app.user_role`, and the
@@ -65,13 +71,20 @@ export interface UserScope {
  * equals the transaction equals the pooled unit. v1.0 talks directly to
  * Postgres (no pooler), so this is unconstrained today; a future pgBouncer must
  * run in transaction mode (see `arch-backend.md §4.11`).
+ *
+ * `opts.onBegin` runs first thing in the transaction's callback, once the
+ * pool has handed over a connection and BEGIN has returned, before the scope
+ * is set: the API times its pool wait with it (`furan_db_pool_wait_seconds`).
+ * It must not throw.
  */
 export async function withUserScope<T>(
   db: DB,
   scope: UserScope,
   fn: (tx: DB) => Promise<T>,
+  opts: UserScopeOptions = {},
 ): Promise<T> {
   return db.transaction(async (tx) => {
+    opts.onBegin?.();
     await tx.execute(
       sql`SELECT
         set_config('app.user_id', ${scope.userId}, true),
