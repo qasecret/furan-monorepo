@@ -16,6 +16,7 @@ import {
   buildHasStoredPending,
   pendingBatchCount,
 } from "../../lib/review/pending.js";
+import { runByDisplayName } from "../../lib/run-by-name.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -472,10 +473,7 @@ export const buildsRouter = t.router({
         stepsTotal: Number(r.steps_total),
         pendingCheckpoints: Number(r.pending_checkpoints),
         approvableCheckpoints: Number(r.approvable_checkpoints),
-        runByName:
-          r.run_by_first_name || r.run_by_last_name
-            ? `${r.run_by_first_name ?? ""} ${r.run_by_last_name ?? ""}`.trim()
-            : null,
+        runByName: runByDisplayName(r.run_by_first_name, r.run_by_last_name),
         aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       };
     }),

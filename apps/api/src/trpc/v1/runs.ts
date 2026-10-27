@@ -15,11 +15,11 @@ import {
   projects,
   recomputeRunStatus,
   recomputeRunTotals,
-  resolveBaseline,
   screenshots,
   sql,
   testRuns,
   testVariations,
+  users,
   type RunStatus,
   type SQL,
 } from "@furan/db";
@@ -61,7 +61,14 @@ import {
   NO_REVIEW,
   type CheckpointReviewView,
 } from "../../lib/review/reads.js";
+import {
+  loadStep,
+  resolveCheckpointContext,
+  type CheckpointContext,
+  type IgnoreRegion,
+} from "../../lib/review/step-view.js";
 import { lockRuns, selectGroupTargets } from "../../lib/review/targets.js";
+import { runByDisplayName } from "../../lib/run-by-name.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -70,13 +77,11 @@ import { publicProcedure, t } from "../trpc.js";
 const runIdInput = z.object({ runId: z.string().uuid() });
 type RunIdInput = z.infer<typeof runIdInput>;
 
-type IgnoreRegion = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  viewport?: string;
-};
+const stepInput = z.object({
+  runId: z.string().uuid(),
+  checkpointId: z.string().uuid(),
+});
+type StepInput = z.infer<typeof stepInput>;
 
 /**
  * Shape of a single ignore-region element. Extracted to a module-level
@@ -661,6 +666,11 @@ export const runsRouter = t.router({
       return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
 
+  /**
+   * The run, every one of its steps with each step's baseline context and
+   * review, and its regions. `runByName` is its build's runner, named like
+   * `builds.getById` names them. The viewer reads one step through `getStep`.
+   */
   getById: publicProcedure
     .input(runIdInput)
     .use(authed)
@@ -673,12 +683,26 @@ export const runsRouter = t.router({
     )
     .query(async ({ input, ctx }) => {
       const runRows = await ctx.db
-        .select()
+        .select({
+          run: testRuns,
+          runByFirstName: users.firstName,
+          runByLastName: users.lastName,
+        })
         .from(testRuns)
+        // The run's build, in the run's project, and who ran it.
+        .leftJoin(
+          builds,
+          and(
+            eq(builds.id, testRuns.buildId),
+            eq(builds.projectId, testRuns.projectId),
+          ),
+        )
+        .leftJoin(users, eq(users.id, builds.userId))
         .where(eq(testRuns.id, input.runId))
         .limit(1);
-      const run = runRows[0];
-      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+      const runRow = runRows[0];
+      if (!runRow) throw new TRPCError({ code: "NOT_FOUND" });
+      const run = runRow.run;
 
       const shots = await ctx.db
         .select()
@@ -715,95 +739,16 @@ export const runsRouter = t.router({
         .limit(1);
       const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
 
-      // Resolve { baselineScreenshot, baselineSource, variationIgnoreAreas }
-      // for one candidate screenshot. Failures in baseline resolution are
-      // informational and degrade to nulls — same semantics as the old
-      // first-checkpoint-only path; one bad variation must not kill the
-      // whole getById response.
-      type CheckpointContext = {
-        baselineScreenshot: (typeof shots)[number] | null;
-        baselineSource: string | null;
-        variationIgnoreAreas: IgnoreRegion[] | null;
-      };
-      const resolveCheckpointContext = async (
-        shot: (typeof shots)[number],
-      ): Promise<CheckpointContext> => {
-        const ctxResult: CheckpointContext = {
-          baselineScreenshot: null,
-          baselineSource: null,
-          variationIgnoreAreas: null,
-        };
-        if (!shot.testVariationId) return ctxResult;
-
-        const variationRows = await ctx.db
-          .select({ ignoreRegions: testVariations.ignoreRegions })
-          .from(testVariations)
-          .where(eq(testVariations.id, shot.testVariationId))
-          .limit(1);
-        const variationIgnoreRegionsRaw =
-          variationRows[0]?.ignoreRegions ?? null;
-        if (
-          variationIgnoreRegionsRaw &&
-          Array.isArray(variationIgnoreRegionsRaw)
-        ) {
-          ctxResult.variationIgnoreAreas =
-            variationIgnoreRegionsRaw as IgnoreRegion[];
-        }
-
-        try {
-          const resolution = await resolveBaseline(
-            ctx.db,
-            run.projectId,
-            run.branchName ?? defaultBranch,
-            shot.testVariationId,
-            // ADR-055: feed the parent_pr tier so the displayed baselineSource
-            // matches what the diff-worker actually resolves against.
-            { defaultBranch, parentPrBaseBranch: run.parentBranchName ?? null },
-          );
-          if (resolution) {
-            ctxResult.baselineSource = resolution.source;
-            const baselineRows = await ctx.db
-              .select({ testRunId: baselines.testRunId })
-              .from(baselines)
-              .where(eq(baselines.id, resolution.baselineId))
-              .limit(1);
-            const baselineRunId = baselineRows[0]?.testRunId;
-            if (baselineRunId) {
-              // Match the baseline screenshot to the RESOLVED baseline
-              // variation, not the candidate's. For a cross-branch
-              // (parent_pr / default_branch) resolution the baseline lives
-              // under the sibling variation on the target branch (ADR-054),
-              // so its screenshots are indexed under `baselineVariationId`,
-              // not the candidate's `shot.testVariationId` — keying off the
-              // latter would find nothing and blank the baseline image.
-              const blShots = await ctx.db
-                .select()
-                .from(screenshots)
-                .where(
-                  and(
-                    eq(screenshots.runId, baselineRunId),
-                    eq(
-                      screenshots.testVariationId,
-                      resolution.baselineVariationId,
-                    ),
-                  ),
-                )
-                .limit(1);
-              ctxResult.baselineScreenshot = blShots[0] ?? null;
-            }
-          }
-        } catch (err) {
-          ctx.telemetry.logger.warn(
-            { err, runId: run.id, screenshotId: shot.id },
-            "baseline_screenshot_lookup_failed",
-          );
-        }
-
-        return ctxResult;
-      };
-
       const contextList = await Promise.all(
-        shots.map(resolveCheckpointContext),
+        shots.map((shot) =>
+          resolveCheckpointContext(
+            ctx.db,
+            ctx.telemetry.logger,
+            run,
+            defaultBranch,
+            shot,
+          ),
+        ),
       );
       // Each checkpoint's review (verdict, state, decision, newer capture):
       // one batched read for the run, not one per checkpoint.
@@ -834,6 +779,10 @@ export const runsRouter = t.router({
 
       return {
         ...run,
+        runByName: runByDisplayName(
+          runRow.runByFirstName,
+          runRow.runByLastName,
+        ),
         ignoreAreas: runIgnoreAreas,
         screenshots: shots,
         diffRegions: regions,
@@ -844,6 +793,29 @@ export const runsRouter = t.router({
         autoApproved,
       };
     }),
+
+  /**
+   * One step of a run, as the diff viewer shows it (spec 2026-10-27 §5): the
+   * step, its baseline context, its regions, its review (the decision with its
+   * actor and undo) and its newer capture, each as `getById` and
+   * `listCheckpoints` report them for that step. Only this step's baseline is
+   * resolved; the statements do not grow with the run's step count. A step
+   * that is not the run's, or not in the run's project, is NOT_FOUND.
+   */
+  getStep: publicProcedure
+    .input(stepInput)
+    .use(authed)
+    .use(
+      projectMember<StepInput>("read", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .query(({ input, ctx }) =>
+      loadStep(ctx.db, ctx.telemetry.logger, ctx.user, input),
+    ),
 
   setComment: publicProcedure
     .input(
