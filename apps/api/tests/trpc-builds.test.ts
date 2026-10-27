@@ -13,6 +13,10 @@ import {
   testVariations,
   users,
 } from "@furan/db";
+import {
+  buildAggregateStatusSchema,
+  runStatusSchema,
+} from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import {
   afterAll,
@@ -25,6 +29,7 @@ import {
 
 import { encodeKeysetCursor } from "../src/lib/keyset-cursor.js";
 import { hashPassword } from "../src/lib/password.js";
+import { AGGREGATE_STATUS_RUNS } from "../src/trpc/v1/builds.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
@@ -40,6 +45,36 @@ import {
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
+
+describe("the aggregate status table", () => {
+  // The CASE that picks a build's status, its per-status counts and the
+  // status filter are all derived from AGGREGATE_STATUS_RUNS: this pins the
+  // table itself to spec §3.2.
+  test("is in precedence order, one row per aggregate status but empty", () => {
+    expect(AGGREGATE_STATUS_RUNS.map(([status]) => status)).toEqual([
+      "running",
+      "unresolved",
+      "failed",
+      "aborted",
+      "passed",
+    ]);
+    expect(
+      [...AGGREGATE_STATUS_RUNS.map(([status]) => status), "empty"].sort(),
+    ).toEqual([...buildAggregateStatusSchema.options].sort());
+  });
+
+  test("puts every run status but empty behind exactly one aggregate status", () => {
+    // A `new` run rolls up to passed while its steps still need review (the
+    // Passed chip adds `noPending` for that, Ruling R32).
+    expect(
+      AGGREGATE_STATUS_RUNS.find(([status]) => status === "passed")![1],
+    ).toEqual(["passed", "new"]);
+    const behind = AGGREGATE_STATUS_RUNS.flatMap(([, runs]) => runs);
+    expect([...behind].sort()).toEqual(
+      runStatusSchema.options.filter((s) => s !== "empty").sort(),
+    );
+  });
+});
 
 interface Seeded {
   editorId: string;
