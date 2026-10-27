@@ -53,8 +53,9 @@ import { UNREVIEWABLE_LIFECYCLE_LIST } from "./legality.js";
  * `test_runs.pending_steps` is the number of its steps this condition selects
  * with no facets, kept by `recomputeRunStatus` alone, the one writer. The
  * project-wide reads that need no facet take it from there
- * (`pendingBuildIds`, `pendingBatchCount`, `buildPendingCount`), through the
- * partial index `test_runs_pending_idx`. Whatever picks a step, or answers
+ * (`pendingBuildIds`, `pendingBatchCount`, `buildPendingCount`,
+ * `buildHasStoredPending`), through the partial index
+ * `test_runs_pending_idx`. Whatever picks a step, or answers
  * inside facets, still asks this condition, with `storedPendingRun` beside
  * it as a pre-filter: the counter cannot see facets, but no step of a run
  * stored at 0 is pending.
@@ -159,7 +160,7 @@ export function storedPendingRun(): SQL {
  * It asks the steps, never the stored counters, so it holds on rows whose
  * counters are not written yet (the scale seed resolves batches with it
  * before it backfills them). The review queue and the Batches badge use
- * `pendingBuildIds` instead.
+ * `pendingBuildIds` instead, and the batch list `buildHasStoredPending`.
  */
 export function buildHasPendingStep(
   projectId: string,
@@ -181,6 +182,23 @@ export function buildHasPendingStep(
       and ${screenshots.projectId} = ${projectId}
       and ${pendingStepCondition(opts.facets)}
       ${except}
+  )`;
+}
+
+/**
+ * The build has a run whose stored counter is above 0 (`storedPendingRun`):
+ * an `EXISTS` on `test_runs_pending_idx`, `(project_id, build_id)`. It holds
+ * for exactly the batches `pendingBuildIds` names with no facet, so a list
+ * filtered by it agrees with the Batches badge. `buildId` is the enclosing
+ * query's build id, as for `buildHasPendingStep`; the subquery is over the
+ * unaliased `test_runs`, its own scope.
+ */
+export function buildHasStoredPending(projectId: string, buildId: SQL): SQL {
+  return sql`exists (
+    select 1 from ${testRuns}
+    where ${testRuns.buildId} = ${buildId}
+      and ${testRuns.projectId} = ${projectId}
+      and ${storedPendingRun()}
   )`;
 }
 
