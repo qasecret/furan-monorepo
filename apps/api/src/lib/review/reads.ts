@@ -1,4 +1,5 @@
 import {
+  and,
   builds,
   eq,
   inArray,
@@ -156,8 +157,10 @@ async function loadNewerCaptures(
     checkpoint_id: string;
     run_id: string;
     build_id: string;
+    project_id: string;
   }>(sql`
-    select v.variation_id, n.checkpoint_id, n.run_id, n.build_id
+    select v.variation_id, n.checkpoint_id, n.run_id, n.build_id,
+           this_run.project_id
     from (
       select created_at, id, project_id from test_runs where id = ${runId}
     ) this_run
@@ -184,6 +187,10 @@ async function loadNewerCaptures(
   `);
   if (newest.length === 0) return out;
 
+  // The newer runs' builds, named from this project's rows only: a run whose
+  // build is another project's (corrupt data) is named by its build id alone,
+  // as is a build the reader cannot see.
+  const projectId = newest[0]!.project_id;
   const buildIds = [...new Set(newest.map((n) => n.build_id))];
   const buildRows = await db
     .select({
@@ -197,8 +204,14 @@ async function loadNewerCaptures(
       >`case when count(distinct ${testRuns.name}) = 1 then min(${testRuns.name}) else null end`,
     })
     .from(builds)
-    .leftJoin(testRuns, eq(testRuns.buildId, builds.id))
-    .where(inArray(builds.id, buildIds))
+    .leftJoin(
+      testRuns,
+      and(
+        eq(testRuns.buildId, builds.id),
+        eq(testRuns.projectId, builds.projectId),
+      ),
+    )
+    .where(and(inArray(builds.id, buildIds), eq(builds.projectId, projectId)))
     .groupBy(builds.id);
   const buildName = new Map(buildRows.map((b) => [b.id, buildDisplayName(b)]));
 
@@ -341,21 +354,23 @@ export async function loadCheckpointReview(
 }
 
 /**
- * The review view of one step of `runId`, as `loadCheckpointReview` reports it
- * for that step, with no read of the run's other steps: its active decision,
- * its newer capture and that capture's build, and the decision's undo
- * assessment (which reads the decision's whole action, as it always does).
+ * The review view of one step of `run`, as `loadCheckpointReview` reports it
+ * for that step, with no read of the run's other steps: its active decision
+ * (in the run's project), its newer capture and that capture's build, and the
+ * decision's undo assessment (which reads the decision's whole action, as it
+ * always does).
  */
 export async function loadStepReview(
   db: DB | Tx,
-  runId: string,
+  run: { id: string; projectId: string },
   step: ReviewStep,
   viewer: AuthedUser,
 ): Promise<CheckpointReviewView> {
   const decisions = await loadActiveDecisionDetails(db, {
     screenshotIds: [step.id],
+    projectId: run.projectId,
   });
-  const views = await reviewViews(db, runId, [step], decisions, viewer);
+  const views = await reviewViews(db, run.id, [step], decisions, viewer);
   return views.get(step.id) ?? NO_REVIEW;
 }
 

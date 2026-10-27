@@ -226,7 +226,7 @@ export async function loadStep(
     .orderBy(asc(diffRegions.createdAt), asc(diffRegions.id));
   const { newerCapture, ...review } = await loadStepReview(
     db,
-    run.id,
+    run,
     step,
     viewer,
   );
