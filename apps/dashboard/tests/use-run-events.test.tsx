@@ -55,9 +55,9 @@ describe("useRunEvents", () => {
     const es = MockEventSource.instances[0]!;
     expect(es.url).toContain("/api/v1/runs/run-1/events");
     expect(es.withCredentials).toBe(true);
-    act(() => es.emit("progress", { type: "diff.completed", runId: "run-1" }));
+    act(() => es.emit("progress", { type: "run.completed", runId: "run-1" }));
     expect(onEvent).toHaveBeenCalledWith({
-      type: "diff.completed",
+      type: "run.completed",
       runId: "run-1",
     });
   });

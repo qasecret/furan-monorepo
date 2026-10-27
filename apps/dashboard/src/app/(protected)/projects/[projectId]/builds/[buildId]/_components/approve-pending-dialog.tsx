@@ -289,7 +289,7 @@ function bodyOf(
       )}
       {p.notReviewableTests > 0 && (
         <p>
-          {`${p.notReviewableTests} test${plural(p.notReviewableTests)} can't be reviewed right now (still running, aborted, empty or overridden) and ${be(p.notReviewableTests)} skipped.`}
+          {`${p.notReviewableTests} test${plural(p.notReviewableTests)} can't be reviewed right now (still running, aborted, empty, overridden or with steps whose diff failed) and ${be(p.notReviewableTests)} skipped.`}
         </p>
       )}
       {p.capped && (

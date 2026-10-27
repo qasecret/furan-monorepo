@@ -19,7 +19,9 @@ import {
  * - `overridden`: the run's status was set by hand, so step decisions are off.
  * - `not-reviewable`: the run is not reviewable (processing, aborted, empty),
  *   or the selected step is not known / not diffed yet.
- * - `pending`: `new` / `unresolved`, waiting for a reviewer.
+ * - `pending`: `new` / `unresolved`, waiting for a reviewer. A step whose diff
+ *   failed is pending too (the review loop stops on it), but it has nothing
+ *   to decide on until it is retried.
  * - `machine-passed`: the diff found nothing; no decision is asked for.
  */
 export type ReviewView =
@@ -35,9 +37,25 @@ export interface ReviewHeaderInput {
    * placeholder, an id the run does not have, a list that has not loaded.
    */
   step:
-    { state: CheckpointReviewState | null; hasDecision: boolean } | undefined;
-  /** The review state of every step loaded for the run; undefined until loaded. */
-  stepStates: ReadonlyArray<CheckpointReviewState | null> | undefined;
+    | {
+        state: CheckpointReviewState | null;
+        hasDecision: boolean;
+        /** Its diff failed for good (`diffFailedAt`): retry it first. */
+        diffFailed?: boolean;
+      }
+    | undefined;
+  /**
+   * Every step loaded for the run; undefined until loaded. A step with no
+   * state has no verdict yet. One whose diff failed (`diffFailed`) is still
+   * pending for the review loop, but Approve pending steps does not count it:
+   * the server skips it, as it has nothing to approve.
+   */
+  runSteps:
+    | ReadonlyArray<{
+        state: CheckpointReviewState | null;
+        diffFailed?: boolean;
+      }>
+    | undefined;
   /** The selected step has a decision on its way to the server. */
   stepInFlight: boolean;
   /** Some step of the run has a decision on its way to the server. */
@@ -58,7 +76,10 @@ export interface ReviewHeader {
   /** The selected step may be approved / rejected right now. */
   canApprove: boolean;
   canReject: boolean;
-  /** How many steps of the run still need a reviewer. */
+  /**
+   * How many steps of the run Approve pending steps would act on: those that
+   * still need a reviewer, less the ones whose diff failed.
+   */
   pendingSteps: number;
   /** Approve pending steps is available: some are pending, none in flight. */
   canApprovePendingSteps: boolean;
@@ -100,7 +121,7 @@ const isPendingState = (state: CheckpointReviewState | null): boolean =>
  * either only while the run is reviewable and not overridden.
  */
 export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
-  const { status, statusOverride, step, stepStates } = input;
+  const { status, statusOverride, step, runSteps } = input;
   const state = step?.state ?? null;
 
   const overridden = statusOverride !== null;
@@ -108,7 +129,7 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
   // nothing, or some step of it has no verdict yet.
   const blocked =
     NOT_REVIEWABLE.has(status) ||
-    (stepStates?.some((s) => s === null) ?? false);
+    (runSteps?.some((s) => s.state === null) ?? false);
   // The selected step is not known, or has no verdict yet: nothing to act on,
   // and it reads as still processing.
   const loading = step === undefined || state === null;
@@ -126,13 +147,18 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
           ? "machine-passed"
           : "pending";
 
+  // A failed diff has no result to approve or reject (the server refuses it
+  // with `diff_failed`); the run's own reasons come first.
+  const diffFailed = step?.diffFailed === true;
   const disabledReason = overridden
     ? describeRefusal("run_overridden")
     : blocked
       ? describeBlockedRun(status)
       : loading
         ? describeRefusal("not_reviewable")
-        : null;
+        : diffFailed
+          ? describeRefusal("diff_failed")
+          : null;
   const decisionLockedReason = overridden
     ? DECISIONS_LOCKED_BY_OVERRIDE
     : blocked
@@ -140,8 +166,11 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
       : null;
 
   const reviewable = !overridden && !blocked;
-  const actionable = reviewable && step !== undefined && !input.stepInFlight;
-  const pendingSteps = (stepStates ?? []).filter(isPendingState).length;
+  const actionable =
+    reviewable && step !== undefined && !input.stepInFlight && !diffFailed;
+  const pendingSteps = (runSteps ?? []).filter(
+    (s) => isPendingState(s.state) && s.diffFailed !== true,
+  ).length;
 
   return {
     view,

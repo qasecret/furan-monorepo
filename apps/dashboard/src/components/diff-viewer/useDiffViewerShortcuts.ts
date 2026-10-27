@@ -43,6 +43,12 @@ export interface ShortcutOptions {
   projectId?: string;
   onApprove?: () => void;
   onReject?: () => void;
+  /**
+   * Retry the diff of the step on screen: given only while that step's diff
+   * has failed and the viewer may retry it. It is a palette action alone, with
+   * no key (spec 2026-10-23 §10).
+   */
+  onRetryDiff?: () => void;
   onNextDiff?: () => void;
   onPrevDiff?: () => void;
   /**
@@ -308,6 +314,17 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     allowed: ({ role }) => canReviewRole(role),
     enabled: ({ onReject }) => given(onReject),
     run: ({ onReject }) => onReject?.(),
+  },
+  {
+    // No key: a retry is rare and costs a diff, so it is never one press
+    // away. Editors and up, like the decisions; on only for a failed step.
+    id: "viewer.retryDiff",
+    label: "Retry diff",
+    group: "Review",
+    scope: "viewer",
+    allowed: ({ role }) => canReviewRole(role),
+    enabled: ({ onRetryDiff }) => given(onRetryDiff),
+    run: ({ onRetryDiff }) => onRetryDiff?.(),
   },
   ...MODE_COMMANDS,
   {

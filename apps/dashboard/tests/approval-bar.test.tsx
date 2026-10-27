@@ -820,6 +820,44 @@ describe("ApprovalBar: the More menu", () => {
     expect(args.label({ decided: [{}, {}, {}] })).toBe("Approved 3 steps");
   });
 
+  it("does not count a pending step whose diff failed: the server skips it", async () => {
+    arrange({
+      items: [
+        step(),
+        step({ id: OTHER, name: "pricing", verdict: "new", state: "new" }),
+        step({
+          id: "33333333-3333-4333-8333-333333333333",
+          name: "checkout",
+          diffFailedAt: "2026-10-24T08:00:00.000Z",
+          diffError: "engine_error",
+        }),
+      ],
+    });
+    renderBar();
+    await openMoreMenu();
+    const item = await screen.findByTestId("approve-pending-steps");
+    expect(item.textContent).toBe("Approve pending steps (2)");
+    expect(item.getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("is off when the only pending steps are ones whose diff failed", async () => {
+    arrange({
+      items: [
+        step({
+          diffFailedAt: "2026-10-24T08:00:00.000Z",
+          diffError: "timeout",
+        }),
+      ],
+    });
+    renderBar();
+    await openMoreMenu();
+    const item = await screen.findByTestId("approve-pending-steps");
+    expect(item.textContent).toBe("Approve pending steps (0)");
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(item);
+    expect(review.decide).not.toHaveBeenCalled();
+  });
+
   it("is disabled when no step is pending", async () => {
     arrange({
       items: [step({ state: "approved", decision: decisionOf() })],

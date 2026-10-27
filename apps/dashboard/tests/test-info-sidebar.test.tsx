@@ -70,6 +70,17 @@ describe("TestInfoSidebar", () => {
     expect(screen.getByText("None")).toBeDefined(); // no regions → severity None
   });
 
+  test("the pixel diff card shows the value it is given: a real 0 as 0.00%, none as an em dash", () => {
+    const card = () =>
+      screen.getByText("Pixel diff").previousElementSibling?.textContent;
+    const { rerender } = render(
+      <TestInfoSidebar {...baseProps} pixelDiffPercent={0} />,
+    );
+    expect(card()).toBe("0.00%");
+    rerender(<TestInfoSidebar {...baseProps} pixelDiffPercent={null} />);
+    expect(card()).toBe("—");
+  });
+
   const region = (id: string, severity: string): DiffRegion => ({
     id,
     severity,

@@ -24,19 +24,9 @@ export type RunEvent =
       imageKey?: string;
       durationMs?: number;
     }
-  | { type: "diff.started"; runId: string }
-  | {
-      type: "diff.completed";
-      runId: string;
-      passed?: boolean;
-      diffPercent?: number;
-      ranTiers?: string[];
-      firstBaseline?: boolean;
-      durationMs?: number;
-    }
   | {
       // One per step the diff worker settles (a committed result or a final
-      // failure).
+      // failure). The worker publishes no whole-run diff events.
       type: "run.checkpoint_diffed";
       runId: string;
       screenshotId: string;
