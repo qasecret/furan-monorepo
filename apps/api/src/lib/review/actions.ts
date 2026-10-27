@@ -79,9 +79,9 @@ export function trpcActionCtx(ctx: {
  * The lookups of the project a run, a build or a review action belongs to:
  * one column (`project_id`), at most one row, none when there is no such
  * resource. The membership gate runs them inside its own statement
- * (`projectMember`'s `query`, spec 2026-10-27 §7), and `resolve*Project` run
- * the same ones on their own, so the gate and a handler can never disagree on
- * what exists.
+ * (`projectMember`'s `lookup`, through `runLookup` and its siblings below, or
+ * its `query`; spec 2026-10-27 §7), and `resolve*Project` run the same ones on
+ * their own, so the gate and a handler can never disagree on what exists.
  */
 export function runProjectQuery(runId: string): SQL {
   return sql`SELECT ${testRuns.projectId} FROM ${testRuns}
@@ -105,6 +105,60 @@ export function actionProjectQuery(actionId: string): SQL {
     WHERE ${checkpointDecisions.actionId} = ${actionId}
     ORDER BY ${checkpointDecisions.createdAt} ASC, ${checkpointDecisions.id} ASC
     LIMIT 1`;
+}
+
+/** The resources whose project the membership gate resolves for a handler. */
+export type GatedKind = "run" | "build" | "action";
+
+/**
+ * A lookup for the membership gate (`projectMember`'s `from: { lookup }`):
+ * the resource it is about, and the select of its project (`*ProjectQuery`).
+ */
+export interface GateLookup {
+  kind: GatedKind;
+  id: string;
+  query: SQL;
+}
+
+/**
+ * What the gate resolved, tied to the resource it resolved it for:
+ * `ctx.gated` behind a `projectMember` gate with a `lookup`, null for an
+ * admin (who skips the gate) or behind any other kind of gate.
+ */
+export interface Gated {
+  kind: GatedKind;
+  id: string;
+  projectId: string;
+}
+
+/** The gate lookup of a run's project (`runProjectQuery`). */
+export function runLookup(runId: string): GateLookup {
+  return { kind: "run", id: runId, query: runProjectQuery(runId) };
+}
+
+/** The gate lookup of a build's project (`buildProjectQuery`). */
+export function buildLookup(buildId: string): GateLookup {
+  return { kind: "build", id: buildId, query: buildProjectQuery(buildId) };
+}
+
+/** The gate lookup of a review action's project (`actionProjectQuery`). */
+export function actionLookup(actionId: string): GateLookup {
+  return { kind: "action", id: actionId, query: actionProjectQuery(actionId) };
+}
+
+/**
+ * The project `gated` holds for the `kind` resource `id`, or null when it is
+ * about another resource (or absent): a handler trusts the gate's resolution
+ * only for the very resource it acts on, and reads any other itself.
+ */
+export function gatedProjectOf(
+  gated: Gated | null,
+  kind: GatedKind,
+  id: string,
+): string | null {
+  return gated !== null && gated.kind === kind && gated.id === id
+    ? gated.projectId
+    : null;
 }
 
 /** The project a `*ProjectQuery` lookup finds, or null. One statement. */
@@ -146,17 +200,18 @@ function resolveActionProject(
 /**
  * The run's project, NOT_FOUND when there is no such run.
  *
- * `gated` is what the membership gate resolved for this same run
- * (`ctx.gatedProjectId`, from `runProjectQuery(runId)`): when it is set,
- * nothing is read. An admin skips the gate (`gated` null), so the run is read
+ * `gated` is what the membership gate resolved (`ctx.gated`). When it is for
+ * this same run (a gate on `runLookup(runId)`), nothing is read. Otherwise
+ * (an admin, who skips the gate; a gate on another resource) the run is read
  * here, with the same lookup.
  */
 export async function requireRunProject(
   db: DB | Tx,
   runId: string,
-  gated: string | null = null,
+  gated: Gated | null = null,
 ): Promise<string> {
-  const projectId = gated ?? (await resolveRunProject(db, runId));
+  const projectId =
+    gatedProjectOf(gated, "run", runId) ?? (await resolveRunProject(db, runId));
   if (!projectId) throw reviewError("NOT_FOUND", "run_not_found");
   return projectId;
 }
@@ -165,9 +220,11 @@ export async function requireRunProject(
 export async function requireActionProject(
   db: DB | Tx,
   actionId: string,
-  gated: string | null = null,
+  gated: Gated | null = null,
 ): Promise<string> {
-  const projectId = gated ?? (await resolveActionProject(db, actionId));
+  const projectId =
+    gatedProjectOf(gated, "action", actionId) ??
+    (await resolveActionProject(db, actionId));
   if (!projectId) throw reviewError("NOT_FOUND", "action_not_found");
   return projectId;
 }
@@ -176,9 +233,11 @@ export async function requireActionProject(
 export async function requireBuildProject(
   db: DB | Tx,
   buildId: string,
-  gated: string | null = null,
+  gated: Gated | null = null,
 ): Promise<string> {
-  const projectId = gated ?? (await resolveBuildProject(db, buildId));
+  const projectId =
+    gatedProjectOf(gated, "build", buildId) ??
+    (await resolveBuildProject(db, buildId));
   if (!projectId) throw reviewError("NOT_FOUND", "build_not_found");
   return projectId;
 }
@@ -332,14 +391,14 @@ export async function auditBuildAction(
  * (VLM / auto-approved / no meaningful diff) has no group; the empty selection
  * still lets the core replay a known actionId. NOT_FOUND for an unknown run or
  * checkpoint, BAD_REQUEST for a checkpoint of another run. `gated` is
- * `ctx.gatedProjectId` behind a gate on `runProjectQuery(input.runId)` (see
+ * `ctx.gated` behind a gate on `runLookup(input.runId)` (see
  * `requireRunProject`).
  */
 export async function decideGroup(
   ctx: ReviewActionCtx,
   input: { runId: string; checkpointId: string; actionId: string },
   decision: CheckpointDecisionKind,
-  gated: string | null = null,
+  gated: Gated | null = null,
 ): Promise<ReviewResult> {
   const projectId = await requireRunProject(ctx.tx, input.runId, gated);
   const seed = await loadGroupSeed(ctx.tx, input, projectId);

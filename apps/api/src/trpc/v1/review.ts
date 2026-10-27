@@ -13,16 +13,16 @@ import type { ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
 import {
-  actionProjectQuery,
+  actionLookup,
   announceRuns,
   auditBuildAction,
-  buildProjectQuery,
+  buildLookup,
   decideGroup,
   decideSelection,
   requireActionProject,
   requireBuildProject,
   requireRunProject,
-  runProjectQuery,
+  runLookup,
   trpcActionCtx,
   type ReviewResult,
   type Selection,
@@ -63,7 +63,8 @@ export type RevertOutput = Omit<RevertResult, "rediffSteps">;
  * Every procedure but `next` resolves its project from the run, build or action
  * (resolve-then-gate, like `runs.getById`): admins bypass the membership check, guests are refused,
  * anyone else must be a member. A member's handler acts in the project the
- * gate resolved (`ctx.gatedProjectId`) and reads nothing to learn it; an
+ * gate resolved for that same resource (`ctx.gated`, behind a `lookup`) and
+ * reads nothing to learn it; an
  * admin skips the gate, so the handler resolves the project itself, with the
  * gate's own lookup, and answers NOT_FOUND for an unknown id.
  * `next` is the read of the queue: the caller names the project, and the
@@ -249,7 +250,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
@@ -258,7 +259,7 @@ export const reviewRouter = t.router({
       const projectId = await requireRunProject(
         actx.tx,
         input.runId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       if (
         input.ignoreAreas !== undefined &&
@@ -307,7 +308,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
@@ -316,7 +317,7 @@ export const reviewRouter = t.router({
       const projectId = await requireRunProject(
         actx.tx,
         input.runId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       const scope: SelectionScope = { projectId, runId: input.runId };
       let selection: Selection;
@@ -365,12 +366,12 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "approved", ctx.gatedProjectId),
+      decideGroup(trpcActionCtx(ctx), input, "approved", ctx.gated),
     ),
 
   /** Rejects the pending members of the checkpoint's group (`GROUP_APPROVE_CAP`). */
@@ -380,12 +381,12 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "rejected", ctx.gatedProjectId),
+      decideGroup(trpcActionCtx(ctx), input, "rejected", ctx.gated),
     ),
 
   /** What `approveBuild` would approve now. Read-only, takes no locks. */
@@ -395,7 +396,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("read", {
         from: {
-          query: ({ input }) => buildProjectQuery(input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
@@ -404,7 +405,7 @@ export const reviewRouter = t.router({
       const projectId = await requireBuildProject(
         actx.tx,
         input.buildId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       const { preview } = await selectPendingTargets(
         actx.tx,
@@ -429,7 +430,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("write", {
         from: {
-          query: ({ input }) => buildProjectQuery(input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
@@ -438,7 +439,7 @@ export const reviewRouter = t.router({
       const projectId = await requireBuildProject(
         actx.tx,
         input.buildId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       const tx = actx.tx;
       const base = {
@@ -521,7 +522,7 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ actionId: string }>("write", {
         from: {
-          query: ({ input }) => actionProjectQuery(input.actionId),
+          lookup: ({ input }) => actionLookup(input.actionId),
         },
       }),
     )
@@ -530,7 +531,7 @@ export const reviewRouter = t.router({
       const projectId = await requireActionProject(
         actx.tx,
         input.actionId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       const { rediffSteps, ...result } = await revertAction(
         actx.tx,

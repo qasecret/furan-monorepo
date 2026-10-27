@@ -37,9 +37,11 @@ import {
 } from "../../lib/keyset-cursor.js";
 import {
   announceRuns,
-  buildProjectQuery,
+  buildLookup,
+  gatedProjectOf,
   requireBuildProject,
   resolveRunProject,
+  runLookup,
   runProjectQuery,
   trpcActionCtx,
 } from "../../lib/review/actions.js";
@@ -236,17 +238,18 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
 ]);
 
 /**
- * The run's project, behind a gate on `runProjectQuery(input.runId)`: the one
- * the gate resolved (`ctx.gatedProjectId`), with nothing read; for an admin,
- * who skips the gate, the same lookup run here. NOT_FOUND when there is no
- * such run.
+ * The run's project, behind a gate on `runLookup(input.runId)`: the one the
+ * gate resolved for this run (`ctx.gated`), with nothing read; otherwise (an
+ * admin, who skips the gate, or a gate on another resource) the same lookup
+ * run here. NOT_FOUND when there is no such run.
  */
 async function requireRunProjectId(
   input: RunIdInput,
   ctx: Context & GatedContext,
 ): Promise<string> {
   const projectId =
-    ctx.gatedProjectId ?? (await resolveRunProject(ctx.db, input.runId));
+    gatedProjectOf(ctx.gated, "run", input.runId) ??
+    (await resolveRunProject(ctx.db, input.runId));
   if (!projectId) throw new TRPCError({ code: "NOT_FOUND" });
   return projectId;
 }
@@ -644,7 +647,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<FacetsInput>("read", {
         from: {
-          query: ({ input }) => buildProjectQuery(input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
@@ -654,7 +657,7 @@ export const runsRouter = t.router({
       const projectId = await requireBuildProject(
         ctx.db,
         input.buildId,
-        ctx.gatedProjectId,
+        ctx.gated,
       );
       return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
@@ -1139,7 +1142,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
@@ -1269,7 +1272,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string; checkpointId: string }>("read", {
         from: {
-          query: ({ input }) => runProjectQuery(input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
