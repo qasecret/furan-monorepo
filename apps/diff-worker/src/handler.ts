@@ -7,6 +7,7 @@ import {
   markStepDiffFailed,
   ne,
   projects,
+  recomputeRunStatus,
   screenshots,
   testRuns,
   testVariations,
@@ -168,16 +169,21 @@ export async function handleDiffJob(
     // carries the flag.
     let aborted = false;
     try {
-      const written = await withProjectScope(deps.db, data.projectId, (tx) =>
-        tx
+      aborted = await withProjectScope(deps.db, data.projectId, async (tx) => {
+        const written = await tx
           .update(testRuns)
           .set({ status: "aborted", abortedByDiff: true })
           .where(
             and(eq(testRuns.id, data.runId), ne(testRuns.status, "aborted")),
           )
-          .returning({ id: testRuns.id }),
-      );
-      aborted = written.length > 0;
+          .returning({ id: testRuns.id });
+        if (written.length === 0) return false;
+        // A lifecycle write: the run's stored pending counters follow it
+        // (spec 2026-10-27 §3.2), in this transaction, under the run lock
+        // the UPDATE took. An aborted run is not reviewable, so they go to 0.
+        await recomputeRunStatus(tx, data.runId);
+        return true;
+      });
     } catch (statusErr) {
       logger.error(
         { err: statusErr, runId: data.runId },

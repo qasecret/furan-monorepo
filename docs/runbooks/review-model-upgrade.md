@@ -112,11 +112,14 @@ $P logs --no-log-prefix migrate 2>&1 | grep -E 'NOTICE: +00(36|37)_'
 
 The CLI recomputes the status of every finished run (all but `running`) from
 its verdicts, its active decisions and its override, and prints each run whose
-stored status differs. It **only reads**: every query runs in a read-only
-transaction. It needs only `DATABASE_URL`, the **owner** connection. Never point
-it at the api's `DATABASE_URL_APP` role: row-level security would hide the rows
-it checks and give false results. The api container has the right
-`DATABASE_URL`, so run it as a one-off api container:
+stored status differs. It also checks every run's stored pending counters
+(`pending_steps` / `failed_steps`, migration 0043) against what its steps give,
+and prints each run where they differ. Without `--repair` it **only reads**:
+every query runs in a read-only transaction. It needs only `DATABASE_URL`, the
+**owner** connection. Never point it at the api's `DATABASE_URL_APP` role:
+row-level security would hide the rows it checks and give false results. The
+api container has the right `DATABASE_URL`, so run it as a one-off api
+container:
 
 ```bash
 # Every project.
@@ -125,6 +128,8 @@ $P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js
 $P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js --project <project-uuid>
 # Also list what 0036 repaired (the baseline.repair audit rows), oldest first.
 $P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js --repairs
+# Fix the listed runs whose pending counters are wrong, then check again.
+$P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js --repair
 ```
 
 With `P` set as in §2, the same commands work for the one-file install
@@ -137,13 +142,23 @@ Healthy output, exit code `0`:
 0 mismatches
 ```
 
-With mismatches, exit code `1`:
+With mismatches, exit code `1`. The last two columns are the stored and the
+computed counters, as `pending/failed`:
 
 ```
-run_id, stored, computed
-3f2a…, passed, unresolved
+run_id, stored, computed, stored_counters, computed_counters
+3f2a…, passed, unresolved, 0/0, 0/0
 1 mismatch
 ```
+
+`--repair` then recomputes each listed run whose counters differ, one run at a
+time under that run's lock, so it is safe while the app is running. It never
+changes a status: a run whose status differs too is listed as
+`<run_id>, not repaired: its status is not its rollup (runbook §5)` and is
+settled through §5 first. The check then runs again (`… mismatches after
+repair`), and the exit code is its result. Do not re-run 0043's backfill
+statement for this while the app is up: it reads one snapshot and can overwrite
+a concurrent writer's counters.
 
 `--repairs` first prints `baseline repairs (migration 0036): <count>`, then one
 line per repaired baseline: its audit id, the time, and `variationId`, `runId`,
@@ -153,7 +168,7 @@ With `--project`, only repairs whose run belongs to that project are listed.
 
 | Exit code | Meaning                                                                                                 |
 | --------- | ------------------------------------------------------------------------------------------------------- |
-| `0`       | No mismatches.                                                                                          |
+| `0`       | No mismatches (with `--repair`: none left after it).                                                    |
 | `1`       | Mismatches, listed above the count; or an error, printed on stderr (for example, `DATABASE_URL` unset). |
 | `2`       | Usage error: an unknown option, a positional argument, or a `--project` value that is not a uuid.       |
 

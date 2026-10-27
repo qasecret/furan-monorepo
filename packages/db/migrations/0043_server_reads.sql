@@ -81,7 +81,8 @@
 -- stored counters differ from the computed ones, in either direction, and
 -- rewrites no run whose counters are right. Here, on columns that have just
 -- been added at 0, that means the runs with pending work, usually a small share
--- of the table; run again later, it repairs counters that went stale. It reads
+-- of the table; run again later with the writers stopped, it repairs counters
+-- that went stale (the live repair is per run, see below). It reads
 -- every run once, the open steps (exactly what the partial
 -- `screenshots_pending_open_idx` holds) with their active decisions, and the
 -- undiffed steps of each run with pending work (`screenshots_undiffed_idx`).
@@ -104,7 +105,10 @@
 --   (it comes after the builds, so that is the drops and the backfill). Every
 --   write path that changes a counter's input locks its run row first or
 --   inserts a row that references it, so none can run during the backfill, and
---   the counters are exact at commit.
+--   the counters are exact at commit. Stop the app services (api,
+--   capture-worker, diff-worker) before a `drizzle-kit migrate` run: the
+--   index DROPs take ACCESS EXCLUSIVE inside the one transaction, so a live
+--   reader holding a lock the migration needs next can deadlock with it.
 -- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
 --   statement its own transaction): each `ADD COLUMN` is a brief metadata
 --   change; each `CREATE INDEX` holds SHARE on its table (writes wait, reads do
@@ -114,14 +118,19 @@
 --   the runs it writes, waiting for any write that holds one of them, and a
 --   write that locks several runs can deadlock with it, in which case Postgres
 --   aborts one of the two. If that is the backfill, the migration fails before
---   it is recorded, and running it again applies the whole file again, safely.
+--   it is recorded, and running it again applies the whole file again, safely,
+--   though that re-run rebuilds every index the file drops and creates, each
+--   build blocking writes to its table again.
 --   The previous release writes no counters, and under this runner it can keep
 --   serving while the file runs (on `docker compose up -d` the old containers
 --   run until their replacements start, after `migrate` completes). A run it
 --   changes after the backfill has read it keeps counters that are stale until
---   the run's next write recomputes them, or until the backfill is run again
---   once the old containers are gone (the repair). For exact counters at the
---   upgrade, stop the writers first (api, capture-worker, diff-worker), as
+--   the run's next write recomputes them, or until the repair fixes them:
+--   `verify-review-rollup --repair` (apps/api), which recomputes each such run
+--   under its own run lock. Do not re-run the backfill itself while any writer
+--   is up: it computes from one snapshot and can overwrite a concurrent
+--   writer's counters. For exact counters at the upgrade, stop the writers
+--   first (api, capture-worker, diff-worker), as
 --   docs/runbooks/migration-deploy-order.md describes.
 --
 -- One-off cost on a large install: each index build reads its whole table once

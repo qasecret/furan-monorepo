@@ -495,17 +495,43 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
     await seedStep(settled, "passed", { verdict: "passed" });
     const running = await seedRun("repair-running", { status: "running" });
     await seedStep(running, "open", { verdict: "unresolved" });
-    const runs = { pending, partly, settled, running };
+    // Not reviewable, or nothing to review, whatever the counters say: a run
+    // with no step at all, an overridden run, and a run with an undiffed step.
+    const stepless = await seedRun("repair-stepless", { status: "unresolved" });
+    const overridden = await seedRun("repair-overridden", {
+      status: "unresolved",
+      override: "failed",
+    });
+    await seedStep(overridden, "open", {
+      verdict: "unresolved",
+      diffFailed: true,
+    });
+    const undiffed = await seedRun("repair-undiffed", { status: "unresolved" });
+    await seedStep(undiffed, "open", { verdict: "new" });
+    await seedStep(undiffed, "undiffed", { verdict: null });
+    const runs = {
+      pending,
+      partly,
+      settled,
+      running,
+      stepless,
+      overridden,
+      undiffed,
+    };
+    const zero = { pending: 0, failed: 0 };
     const right = {
       pending: { pending: 2, failed: 1 },
       partly: { pending: 1, failed: 1 },
-      settled: { pending: 0, failed: 0 },
-      running: { pending: 0, failed: 0 },
+      settled: zero,
+      running: zero,
+      stepless: zero,
+      overridden: zero,
+      undiffed: zero,
     };
     await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
     expect(await countersOf(runs)).toEqual(right);
 
-    // Stale both ways: too high on runs with nothing pending (one of them not
+    // Stale both ways: too high on runs with nothing pending (most of them not
     // even reviewable), 0 on a run with pending steps, and one counter off.
     const corrupt = async (
       id: string,
@@ -520,23 +546,37 @@ describe.runIf(RUN_INTEGRATION)("0043_server_reads migration", () => {
     await corrupt(running, 2, 0);
     await corrupt(pending, 0, 0);
     await corrupt(partly, 1, 0);
+    await corrupt(stepless, 3, 1);
+    await corrupt(overridden, 1, 1);
+    await corrupt(undiffed, 1, 0);
+    const corrupted = await versionsOf(Object.values(runs));
 
-    const repaired = await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+    await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
 
     expect(await countersOf(runs)).toEqual(right);
-    expect(repaired.count).toBe(4);
+    // Every one of this test's corrupted runs was rewritten (the statement is
+    // global, so its row count would include other suites' runs).
+    const repaired = await versionsOf(Object.values(runs));
+    for (const id of Object.values(runs)) {
+      expect(repaired[id]).not.toBe(corrupted[id]);
+    }
   });
 
   it("re-running it on correct counters changes no row", async () => {
     const pending = await seedRun("rerun-pending", { status: "new" });
     await seedStep(pending, "new", { verdict: "new" });
+    const settled = await seedRun("rerun-settled", { status: "passed" });
+    await seedStep(settled, "passed", { verdict: "passed" });
+    await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+    const versions = await versionsOf([pending, settled]);
+
     await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
 
-    const again = await db.execute(sql.raw(COUNTERS_BACKFILL_SQL));
-
-    expect(again.count).toBe(0);
-    expect(await countersOf({ pending })).toEqual({
+    // Scoped to this test's runs: the statement's own row count is global.
+    expect(await versionsOf([pending, settled])).toEqual(versions);
+    expect(await countersOf({ pending, settled })).toEqual({
       pending: { pending: 1, failed: 0 },
+      settled: { pending: 0, failed: 0 },
     });
   });
 

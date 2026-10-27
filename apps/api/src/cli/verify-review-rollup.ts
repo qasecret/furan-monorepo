@@ -5,24 +5,38 @@ import { createDb } from "@furan/db";
 
 import { envSchema } from "../env.js";
 import {
+  countersMatch,
   findRollupMismatches,
   listBaselineRepairs,
+  repairRunCounters,
+  type RollupMismatch,
 } from "../lib/review/rollup-verify.js";
 
 /**
- * verify-review-rollup [--project <uuid>] [--repairs]
+ * verify-review-rollup [--project <uuid>] [--repairs] [--repair]
  *
- * Read-only check after the review-model upgrade (spec §4.6, runbook
- * docs/runbooks/review-model-upgrade.md). Recomputes `rollupRunStatus` for
- * every finished run (optionally of one project) and prints each run whose
- * stored status differs, as `run_id, stored, computed`, then the count.
+ * Check after the review-model upgrade (spec §4.6, runbook
+ * docs/runbooks/review-model-upgrade.md) and the server-reads upgrade (spec
+ * 2026-10-27 §3.3). Recomputes `rollupRunStatus` for every finished run, and
+ * the stored pending counters (`pending_steps` / `failed_steps`) for every
+ * run, optionally of one project, and prints each run where either differs,
+ * as `run_id, stored, computed, stored_counters, computed_counters` (counters
+ * as `pending/failed`), then the count.
  * `--repairs` first lists the baselines migration 0036 repaired (its
- * `baseline.repair` audit rows). Never writes.
+ * `baseline.repair` audit rows). Without `--repair` it never writes.
  *
- * Exit codes: 0 no mismatches, 1 mismatches (or an error), 2 usage error.
+ * `--repair` then fixes the listed runs whose counters are wrong, one at a
+ * time under each run's lock (`repairRunCounters`, through
+ * `recomputeRunStatus`), so it is safe while the app runs. It never changes a
+ * status: a run whose status is wrong too is left for runbook §5. The check
+ * then runs again and the exit code is its result.
+ *
+ * Exit codes: 0 no mismatches (left), 1 mismatches (or an error), 2 usage
+ * error.
  */
 
-const USAGE = "Usage: verify-review-rollup [--project <uuid>] [--repairs]";
+const USAGE =
+  "Usage: verify-review-rollup [--project <uuid>] [--repairs] [--repair]";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usageError(message: string): number {
@@ -31,13 +45,38 @@ function usageError(message: string): number {
   return 2;
 }
 
+const counters = (c: RollupMismatch["storedCounters"]): string =>
+  `${c.pendingSteps}/${c.failedSteps}`;
+
+/** Prints the mismatches, then their count. */
+function report(mismatches: RollupMismatch[], suffix = ""): void {
+  if (mismatches.length > 0) {
+    console.log("run_id, stored, computed, stored_counters, computed_counters");
+  }
+  for (const m of mismatches) {
+    console.log(
+      [
+        m.runId,
+        m.stored,
+        m.computed,
+        counters(m.storedCounters),
+        counters(m.computedCounters),
+      ].join(", "),
+    );
+  }
+  console.log(
+    `${mismatches.length} mismatch${mismatches.length === 1 ? "" : "es"}${suffix}`,
+  );
+}
+
 async function main(): Promise<number> {
-  let values: { project?: string; repairs?: boolean };
+  let values: { project?: string; repairs?: boolean; repair?: boolean };
   try {
     ({ values } = parseArgs({
       options: {
         project: { type: "string" },
         repairs: { type: "boolean", default: false },
+        repair: { type: "boolean", default: false },
       },
       strict: true,
       allowPositionals: false,
@@ -57,7 +96,9 @@ async function main(): Promise<number> {
   // `DATABASE_URL_APP`: under row-level security, with no request identity,
   // the policies hide every project-scoped row (`checkpoint_decisions`
   // included), so the check would read wrong inputs and report false
-  // mismatches, or nothing at all. `createDb()` reads `DATABASE_URL`.
+  // mismatches, or nothing at all, and the repair would recompute runs from
+  // inputs it cannot see. The owner role bypasses RLS, so both see every
+  // project. `createDb()` reads `DATABASE_URL`.
   const { db, close } = createDb();
   try {
     if (values.repairs) {
@@ -81,14 +122,29 @@ async function main(): Promise<number> {
     }
 
     const mismatches = await findRollupMismatches(db, { projectId });
-    if (mismatches.length > 0) console.log("run_id, stored, computed");
-    for (const m of mismatches) {
-      console.log(`${m.runId}, ${m.stored}, ${m.computed}`);
-    }
-    console.log(
-      `${mismatches.length} mismatch${mismatches.length === 1 ? "" : "es"}`,
+    report(mismatches);
+    if (!values.repair) return mismatches.length === 0 ? 0 : 1;
+
+    const stale = mismatches.filter((m) => !countersMatch(m));
+    const outcomes = await repairRunCounters(
+      db,
+      stale.map((m) => m.runId),
     );
-    return mismatches.length === 0 ? 0 : 1;
+    const repaired = outcomes.filter((o) => o.outcome === "repaired");
+    console.log(
+      `repaired the counters of ${repaired.length} run${repaired.length === 1 ? "" : "s"}`,
+    );
+    for (const o of outcomes) {
+      if (o.outcome === "status_differs") {
+        console.log(
+          `${o.runId}, not repaired: its status is not its rollup (runbook §5)`,
+        );
+      }
+    }
+
+    const left = await findRollupMismatches(db, { projectId });
+    report(left, " after repair");
+    return left.length === 0 ? 0 : 1;
   } finally {
     await close();
   }

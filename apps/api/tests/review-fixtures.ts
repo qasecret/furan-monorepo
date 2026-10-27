@@ -4,6 +4,7 @@ import {
   auditLog,
   baselines,
   builds,
+  computeRunCounters,
   inArray,
   or,
   projectMembers,
@@ -174,16 +175,20 @@ async function insertRun(
   baselineRunId: () => Promise<string>,
 ): Promise<ReviewRun> {
   const override = spec.override ?? null;
+  const checkpoints = spec.checkpoints.map((c) => ({
+    verdict: c.verdict,
+    decision: null,
+    diffFailed: false,
+  }));
   const lifecycle =
     spec.lifecycle ??
-    rollupRunStatus({
-      lifecycle: "running",
-      override,
-      checkpoints: spec.checkpoints.map((c) => ({
-        verdict: c.verdict,
-        decision: null,
-      })),
-    });
+    rollupRunStatus({ lifecycle: "running", override, checkpoints });
+  // The stored pending counters a writer would have left for these rows
+  // (spec 2026-10-27 §3.1): no decision and no failed diff yet.
+  const counters = computeRunCounters(
+    { lifecycle, override, checkpoints },
+    lifecycle,
+  );
   const [run] = await h.db
     .insert(testRuns)
     .values({
@@ -194,6 +199,8 @@ async function insertRun(
       status: lifecycle,
       statusOverride: override,
       branchName: ctx.branch,
+      pendingSteps: counters.pendingSteps,
+      failedSteps: counters.failedSteps,
       createdAt: nextCaptureTime(),
     })
     .returning({ id: testRuns.id });

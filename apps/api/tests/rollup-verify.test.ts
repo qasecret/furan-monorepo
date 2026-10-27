@@ -3,12 +3,27 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { auditLog, diffRegions, eq, inArray, sql, testRuns } from "@furan/db";
+import {
+  auditLog,
+  checkpointDecisions,
+  COUNTERS_BACKFILL_SQL,
+  createDb,
+  diffRegions,
+  eq,
+  inArray,
+  recomputeRunStatus,
+  sql,
+  testRuns,
+  type RunCounters,
+} from "@furan/db";
+import type { RunStatus } from "@furan/shared-types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   findRollupMismatches,
   listBaselineRepairs,
+  repairRunCounters,
+  type RollupMismatch,
 } from "../src/lib/review/rollup-verify.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
@@ -20,13 +35,16 @@ import {
 } from "./review-fixtures.js";
 
 /**
- * `findRollupMismatches` backs the read-only `verify-review-rollup` CLI (spec
- * §4.6): for every finished run it recomputes `rollupRunStatus` from the
- * stored verdicts, active decisions and override, and reports each run whose
- * stored status differs. `listBaselineRepairs` backs its `--repairs` flag.
+ * `findRollupMismatches` backs the `verify-review-rollup` CLI (spec §4.6):
+ * for every finished run it recomputes `rollupRunStatus` from the stored
+ * verdicts, active decisions and override, and reports each run whose stored
+ * status differs; for every run it also checks the stored pending counters
+ * against their definition (spec 2026-10-27 §3.3). `repairRunCounters` backs
+ * its `--repair` flag, `listBaselineRepairs` its `--repairs` flag.
  *
  * Everything is asserted on this file's own seeds (the functions also scan
- * whatever else the shared test database holds).
+ * whatever else the shared test database holds). The seeds start with
+ * consistent counters (`review-fixtures.ts`).
  */
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -44,6 +62,28 @@ const BACKFILL_SQL = skip
 /** Postgres orders uuids by their bytes, i.e. their lowercase hex text. */
 const byRunId = (a: { runId: string }, b: { runId: string }) =>
   a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0;
+
+/** `pending/failed`, for a `RunCounters`. */
+const c = (pendingSteps: number, failedSteps = 0): RunCounters => ({
+  pendingSteps,
+  failedSteps,
+});
+
+/**
+ * One expected mismatch. `counters` is the stored pair, then the computed one;
+ * a run listed for its status alone has the same pair on both sides.
+ */
+function mismatch(
+  runId: string,
+  stored: RunStatus,
+  computed: RunStatus,
+  counters: [RunCounters, RunCounters] | RunCounters = c(0),
+): RollupMismatch {
+  const [storedCounters, computedCounters] = Array.isArray(counters)
+    ? counters
+    : [counters, counters];
+  return { runId, stored, computed, storedCounters, computedCounters };
+}
 
 d("findRollupMismatches", () => {
   let h: TestApp;
@@ -70,6 +110,22 @@ d("findRollupMismatches", () => {
 
   async function setStatus(runId: string, status: "passed" | "failed") {
     await h.db.update(testRuns).set({ status }).where(eq(testRuns.id, runId));
+  }
+
+  async function setCounters(runId: string, counters: RunCounters) {
+    await h.db.update(testRuns).set(counters).where(eq(testRuns.id, runId));
+  }
+
+  async function storedRun(runId: string) {
+    const [row] = await h.db
+      .select({
+        status: testRuns.status,
+        pendingSteps: testRuns.pendingSteps,
+        failedSteps: testRuns.failedSteps,
+      })
+      .from(testRuns)
+      .where(eq(testRuns.id, runId));
+    return row!;
   }
 
   test("reports nothing when every stored status is its rollup", async () => {
@@ -132,9 +188,9 @@ d("findRollupMismatches", () => {
     });
     expect(before).toEqual(
       [
-        { runId: s.runId, stored: "passed", computed: "running" },
-        { runId: rejected.runId, stored: "failed", computed: "running" },
-        { runId: unresolved.runId, stored: "unresolved", computed: "running" },
+        mismatch(s.runId, "passed", "running"),
+        mismatch(rejected.runId, "failed", "running"),
+        mismatch(unresolved.runId, "unresolved", "running"),
       ].sort(byRunId),
     );
 
@@ -142,6 +198,9 @@ d("findRollupMismatches", () => {
       // Keep the migration's RAISE NOTICE off the test output.
       await tx.execute(sql`SET LOCAL client_min_messages = warning`);
       await tx.execute(sql.raw(BACKFILL_SQL));
+      // 0043's backfill runs after 0037 in an upgrade: the verdicts 0037
+      // derives give the unresolved run a pending step to count.
+      await tx.execute(sql.raw(COUNTERS_BACKFILL_SQL));
     });
 
     expect(
@@ -158,9 +217,11 @@ d("findRollupMismatches", () => {
     });
     await setStatus(s.runId, "passed");
 
+    // The counters are judged by the stored status: `passed` is reviewable,
+    // so the stored 1 pending step is right.
     expect(
       await findRollupMismatches(h.db, { projectId: s.projectId }),
-    ).toEqual([{ runId: s.runId, stored: "passed", computed: "unresolved" }]);
+    ).toEqual([mismatch(s.runId, "passed", "unresolved", c(1))]);
   });
 
   test("skips running runs and scopes to --project", async () => {
@@ -180,14 +241,14 @@ d("findRollupMismatches", () => {
 
     expect(
       await findRollupMismatches(h.db, { projectId: one.projectId }),
-    ).toEqual([{ runId: one.runId, stored: "failed", computed: "unresolved" }]);
+    ).toEqual([mismatch(one.runId, "failed", "unresolved", c(1))]);
 
     const all = await findRollupMismatches(h.db, {});
     const mine = new Set([...one.runIds, ...two.runIds]);
     expect(all.filter((m) => mine.has(m.runId))).toEqual(
       [
-        { runId: one.runId, stored: "failed", computed: "unresolved" },
-        { runId: two.runId, stored: "passed", computed: "new" },
+        mismatch(one.runId, "failed", "unresolved", c(1)),
+        mismatch(two.runId, "passed", "new", c(1)),
       ].sort(byRunId),
     );
   });
@@ -204,11 +265,7 @@ d("findRollupMismatches", () => {
     const corrupted = [s.runIds[1]!, s.runIds[3]!, s.runIds[6]!];
     for (const id of corrupted) await setStatus(id, "passed");
     const expected = corrupted
-      .map((runId) => ({
-        runId,
-        stored: "passed" as const,
-        computed: "unresolved" as const,
-      }))
+      .map((runId) => mismatch(runId, "passed", "unresolved", c(1)))
       .sort(byRunId);
 
     for (const batchSize of [1, 2, 3, 500]) {
@@ -222,6 +279,207 @@ d("findRollupMismatches", () => {
     await expect(
       findRollupMismatches(h.db, { projectId: s.projectId, batchSize: 0 }),
     ).rejects.toThrow(RangeError);
+  });
+
+  test("a counter mismatch is reported", async () => {
+    const s = await seed(h, {
+      checkpoints: [
+        { name: "a", verdict: "unresolved" },
+        { name: "b", verdict: "new" },
+      ],
+    });
+    const settled = await addReviewRun(h, s, {
+      checkpoints: [{ name: "c", verdict: "passed" }],
+    });
+    const partly = await addReviewRun(h, s, {
+      checkpoints: [{ name: "d", verdict: "unresolved" }],
+    });
+    // A running run is checked for its counters (always 0), not its status.
+    const running = await addReviewRun(h, s, {
+      checkpoints: [{ name: "e", verdict: null }],
+    });
+    const aborted = await addReviewRun(h, s, {
+      checkpoints: [{ name: "f", verdict: "unresolved" }],
+      lifecycle: "aborted",
+    });
+    const overridden = await addReviewRun(h, s, {
+      checkpoints: [{ name: "g", verdict: "unresolved" }],
+      override: "passed",
+    });
+    expect(
+      await findRollupMismatches(h.db, { projectId: s.projectId }),
+    ).toEqual([]);
+
+    // Stale both ways: too low, too high, one counter off, and positive on
+    // runs that are not reviewable.
+    await setCounters(s.runId, c(0));
+    await setCounters(settled.runId, c(2, 1));
+    await setCounters(partly.runId, c(1, 1));
+    await setCounters(running.runId, c(3));
+    await setCounters(aborted.runId, c(1, 1));
+    await setCounters(overridden.runId, c(1));
+
+    expect(
+      await findRollupMismatches(h.db, { projectId: s.projectId }),
+    ).toEqual(
+      [
+        mismatch(s.runId, "unresolved", "unresolved", [c(0), c(2)]),
+        mismatch(settled.runId, "passed", "passed", [c(2, 1), c(0)]),
+        mismatch(partly.runId, "unresolved", "unresolved", [c(1, 1), c(1)]),
+        mismatch(running.runId, "running", "running", [c(3), c(0)]),
+        mismatch(aborted.runId, "aborted", "aborted", [c(1, 1), c(0)]),
+        mismatch(overridden.runId, "passed", "passed", [c(1), c(0)]),
+      ].sort(byRunId),
+    );
+  });
+
+  test("--repair recomputes each run with stale counters, across projects, and never changes a status", async () => {
+    const one = await seed(h, {
+      checkpoints: [
+        { name: "a", verdict: "unresolved" },
+        { name: "b", verdict: "new" },
+      ],
+    });
+    const oneSettled = await addReviewRun(h, one, {
+      checkpoints: [{ name: "c", verdict: "passed" }],
+    });
+    const two = await seed(h, {
+      checkpoints: [{ name: "a", verdict: "unresolved" }],
+    });
+    // Both wrong: a hand-corrupted status and stale counters. Recomputing it
+    // would rewrite the status, so the repair leaves it to runbook §5.
+    const both = await addReviewRun(h, two, {
+      checkpoints: [{ name: "b", verdict: "new" }],
+    });
+    await setCounters(one.runId, c(0));
+    await setCounters(oneSettled.runId, c(4, 2));
+    await setCounters(two.runId, c(0));
+    await setStatus(both.runId, "passed");
+    await setCounters(both.runId, c(3));
+
+    // The CLI's selection: every listed run whose counters are wrong.
+    const listed = (await findRollupMismatches(h.db, {})).filter(
+      (m) =>
+        [one.runId, oneSettled.runId, two.runId, both.runId].includes(
+          m.runId,
+        ) &&
+        (m.storedCounters.pendingSteps !== m.computedCounters.pendingSteps ||
+          m.storedCounters.failedSteps !== m.computedCounters.failedSteps),
+    );
+    expect(listed.map((m) => m.runId).sort()).toEqual(
+      [one.runId, oneSettled.runId, two.runId, both.runId].sort(),
+    );
+
+    const outcomes = await repairRunCounters(
+      h.db,
+      listed.map((m) => m.runId),
+    );
+    expect(outcomes).toEqual(
+      [
+        { runId: one.runId, outcome: "repaired" },
+        { runId: oneSettled.runId, outcome: "repaired" },
+        { runId: two.runId, outcome: "repaired" },
+        { runId: both.runId, outcome: "status_differs" },
+      ].sort(byRunId),
+    );
+
+    expect(await storedRun(one.runId)).toEqual({
+      status: "unresolved",
+      ...c(2),
+    });
+    expect(await storedRun(oneSettled.runId)).toEqual({
+      status: "passed",
+      ...c(0),
+    });
+    expect(await storedRun(two.runId)).toEqual({
+      status: "unresolved",
+      ...c(1),
+    });
+    // Untouched: status and counters as they were.
+    expect(await storedRun(both.runId)).toEqual({ status: "passed", ...c(3) });
+
+    // Both projects are clean but for the run the repair left alone.
+    expect(
+      await findRollupMismatches(h.db, { projectId: one.projectId }),
+    ).toEqual([]);
+    expect(
+      await findRollupMismatches(h.db, { projectId: two.projectId }),
+    ).toEqual([mismatch(both.runId, "passed", "new", [c(3), c(1)])]);
+
+    // A second pass finds nothing left to do.
+    expect(
+      await repairRunCounters(h.db, [one.runId, oneSettled.runId, two.runId]),
+    ).toEqual(
+      [one.runId, oneSettled.runId, two.runId]
+        .sort()
+        .map((runId) => ({ runId, outcome: "already_right" })),
+    );
+  });
+
+  test("--repair waits for a writer holding the run, and never overwrites it", async () => {
+    const s = await seed(h, {
+      checkpoints: [
+        { name: "a", verdict: "unresolved" },
+        { name: "b", verdict: "unresolved" },
+      ],
+    });
+    await setCounters(s.runId, c(0));
+
+    // A writer: approves `a` and recomputes, holding the run until released.
+    const writer = createDb();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    const written = writer.db.transaction(async (tx) => {
+      await recomputeRunStatus(tx, s.runId); // takes the run lock
+      await tx.insert(checkpointDecisions).values({
+        projectId: s.projectId,
+        runId: s.runId,
+        screenshotId: s.shots.a!.id,
+        actionId: randomUUID(),
+        decision: "approved",
+        actorId: s.editor.id,
+        source: "viewer",
+      });
+      await recomputeRunStatus(tx, s.runId);
+      holding();
+      await gate;
+    });
+    written.catch(() => holding());
+
+    let repair: Promise<unknown> = Promise.resolve();
+    try {
+      await held;
+      const repaired = repairRunCounters(h.db, [s.runId]);
+      repair = repaired;
+      const raced = await Promise.race([
+        repaired.then(
+          () => "settled" as const,
+          () => "settled" as const,
+        ),
+        new Promise<"waiting">((resolve) =>
+          setTimeout(() => resolve("waiting"), 300),
+        ),
+      ]);
+      expect(raced).toBe("waiting");
+
+      release();
+      await written;
+      // The writer committed its decision and its counters; the repair read
+      // them under the lock and found nothing to change.
+      expect(await repaired).toEqual([
+        { runId: s.runId, outcome: "already_right" },
+      ]);
+      expect(await storedRun(s.runId)).toEqual({
+        status: "unresolved",
+        ...c(1),
+      });
+    } finally {
+      release();
+      await Promise.allSettled([written, repair]);
+      await writer.close();
+    }
   });
 
   test("listBaselineRepairs lists the baseline.repair audit rows, oldest first, scoped by --project", async () => {
