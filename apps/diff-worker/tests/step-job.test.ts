@@ -760,7 +760,7 @@ desc("step jobs (integration)", () => {
      */
     const decide = () =>
       db.transaction(async (tx) => {
-        // decide.ts:155 → targets.ts:102-126 (lockRunsBy).
+        // decide.ts → targets.ts `lockRuns` (`lockRunsBy`).
         await tx
           .select({ id: testRuns.id })
           .from(testRuns)
@@ -773,21 +773,17 @@ desc("step jobs (integration)", () => {
           .orderBy(asc(testRuns.id))
           .for("no key update");
         await tx.execute(sql`SELECT pg_sleep(${jitter() / 1000})`);
-        // decide.ts:172 → targets.ts:136-141 (lockVariations).
+        // decide.ts → promote.ts `lockVariationsForPromotion` (the
+        // promotion's fields, read with the lock).
         await tx
           .select({ id: testVariations.id })
           .from(testVariations)
           .where(inArray(testVariations.id, [variationId]))
           .orderBy(asc(testVariations.id))
           .for("no key update");
-        // decide.ts:181, the write phase's savepoint.
+        // decide.ts, the write phase's savepoint.
         await tx.transaction(async (sp) => {
-          // promote.ts:121-134 and 140-156.
-          await sp
-            .select({ id: testVariations.id })
-            .from(testVariations)
-            .where(eq(testVariations.id, variationId))
-            .for("no key update");
+          // promote.ts `promoteCheckpointInTx`: the (variation, run) baseline.
           await sp
             .select({ id: baselines.id })
             .from(baselines)
@@ -798,12 +794,12 @@ desc("step jobs (integration)", () => {
               ),
             )
             .for("no key update");
-          // promote.ts:175-198.
+          // promote.ts: the variation write.
           await sp
             .update(testVariations)
             .set({ baselineName: shot!.imageKey, updatedAt: new Date() })
             .where(eq(testVariations.id, variationId));
-          // promote.ts:215-235.
+          // promote.ts: the baseline upsert.
           await sp
             .insert(baselines)
             .values({
@@ -823,7 +819,7 @@ desc("step jobs (integration)", () => {
                 updatedAt: new Date(),
               },
             });
-          // decide.ts:209-212.
+          // decide.ts: the decision rows.
           await sp.insert(checkpointDecisions).values({
             projectId: s.projectId,
             runId,
@@ -833,8 +829,8 @@ desc("step jobs (integration)", () => {
             actorId: userId,
             source: "viewer",
           });
-          // decide.ts:215.
-          await recomputeRunStatus(sp, runId);
+          // decide.ts: the recompute, under the run lock taken above.
+          await recomputeRunStatus(sp, runId, { lockHeld: true });
         });
       });
 

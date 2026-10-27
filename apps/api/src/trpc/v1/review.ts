@@ -62,8 +62,10 @@ export type RevertOutput = Omit<RevertResult, "rediffSteps">;
  *
  * Every procedure but `next` resolves its project from the run, build or action
  * (resolve-then-gate, like `runs.getById`): admins bypass the membership check, guests are refused,
- * anyone else must be a member. An admin skips the gate's resolver, so each
- * handler resolves the project again and answers NOT_FOUND for an unknown id.
+ * anyone else must be a member. A member's handler acts in the project the
+ * gate resolved (`ctx.gatedProjectId`) and reads nothing to learn it; an
+ * admin skips the gate, so the handler resolves the project itself, with the
+ * gate's own lookup, and answers NOT_FOUND for an unknown id.
  * `next` is the read of the queue: the caller names the project, and the
  * handler checks that the ids it names belong to it.
  */
@@ -253,7 +255,11 @@ export const reviewRouter = t.router({
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireRunProject(actx.tx, input.runId);
+      const projectId = await requireRunProject(
+        actx.tx,
+        input.runId,
+        ctx.gatedProjectId,
+      );
       if (
         input.ignoreAreas !== undefined &&
         input.checkpointIds === undefined
@@ -307,7 +313,11 @@ export const reviewRouter = t.router({
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireRunProject(actx.tx, input.runId);
+      const projectId = await requireRunProject(
+        actx.tx,
+        input.runId,
+        ctx.gatedProjectId,
+      );
       const scope: SelectionScope = { projectId, runId: input.runId };
       let selection: Selection;
       if (input.checkpointIds) {
@@ -360,7 +370,7 @@ export const reviewRouter = t.router({
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "approved"),
+      decideGroup(trpcActionCtx(ctx), input, "approved", ctx.gatedProjectId),
     ),
 
   /** Rejects the pending members of the checkpoint's group (`GROUP_APPROVE_CAP`). */
@@ -375,7 +385,7 @@ export const reviewRouter = t.router({
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "rejected"),
+      decideGroup(trpcActionCtx(ctx), input, "rejected", ctx.gatedProjectId),
     ),
 
   /** What `approveBuild` would approve now. Read-only, takes no locks. */
@@ -391,7 +401,11 @@ export const reviewRouter = t.router({
     )
     .query(async ({ ctx, input }): Promise<ApproveBuildPreview> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireBuildProject(actx.tx, input.buildId);
+      const projectId = await requireBuildProject(
+        actx.tx,
+        input.buildId,
+        ctx.gatedProjectId,
+      );
       const { preview } = await selectPendingTargets(
         actx.tx,
         { projectId, buildId: input.buildId },
@@ -421,7 +435,11 @@ export const reviewRouter = t.router({
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireBuildProject(actx.tx, input.buildId);
+      const projectId = await requireBuildProject(
+        actx.tx,
+        input.buildId,
+        ctx.gatedProjectId,
+      );
       const tx = actx.tx;
       const base = {
         projectId,
@@ -509,7 +527,11 @@ export const reviewRouter = t.router({
     )
     .mutation(async ({ ctx, input }): Promise<RevertOutput> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireActionProject(actx.tx, input.actionId);
+      const projectId = await requireActionProject(
+        actx.tx,
+        input.actionId,
+        ctx.gatedProjectId,
+      );
       const { rediffSteps, ...result } = await revertAction(
         actx.tx,
         { actor: actx.actor, actionId: input.actionId, projectId },

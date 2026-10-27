@@ -1,8 +1,10 @@
 import {
   rollupRunStatus,
   type CheckpointDecisionKind,
+  type CheckpointVerdict,
+  type RunStatusOverride,
 } from "@furan/shared-types";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { DB } from "./client.js";
 import { computeRunCounters, type RunCountersInput } from "./run-counters.js";
@@ -142,6 +144,17 @@ export async function loadRollupInputs(
  *   (`before === after`). Callers that emit a status-change event must
  *   compare `before !== after`.
  *
+ * `opts.lockHeld` is for a caller that has ALREADY locked this run's row
+ * `FOR NO KEY UPDATE` in the same transaction (the decision core locks its
+ * runs before it decides anything): the lock is not taken again, and the
+ * inputs are read in one statement ({@link loadHeldRollupState}) instead of
+ * the lock, three input reads and the baseline probe. The computation and
+ * the write are the same, so the status and counters written are too. It
+ * runs on the caller's handle as is, with no savepoint of its own: a failure
+ * aborts what the caller's transaction (or savepoint) covers. Never pass it
+ * without holding the lock: the read-compute-write would then race other
+ * writers.
+ *
  * Nothing is written when neither `status`, `merge` nor a counter changed.
  * `updated_at` moves only with `status` or `merge`, as before the counters: a
  * decision that leaves the status as it was (one of two pending steps
@@ -153,7 +166,12 @@ export async function loadRollupInputs(
 export async function recomputeRunStatus(
   db: DB | Tx,
   runId: string,
-): Promise<{ before: RunStatus; after: RunStatus; changed: boolean }> {
+  opts: RecomputeOptions = {},
+): Promise<RecomputeResult> {
+  if (opts.lockHeld) {
+    const { stored, input, hasBaseline } = await loadHeldRollupState(db, runId);
+    return writeRollup(db, runId, stored, input, hasBaseline);
+  }
   return db.transaction(async (tx) => {
     // 1. Lock (FOR NO KEY UPDATE; see above). Everything below runs in
     //    this transaction, after the lock.
@@ -173,35 +191,161 @@ export async function recomputeRunStatus(
     //    waited for it is visible (READ COMMITTED: each statement re-snapshots).
     const input = (await loadRollupInputs(tx, [runId])).get(runId);
     if (!input) throw new Error(`run_not_found:${runId}`);
-    const after = rollupRunStatus(input);
-    const counters = computeRunCounters(input, after);
 
     const [baseline] = await tx
       .select({ id: baselines.id })
       .from(baselines)
       .where(eq(baselines.testRunId, runId))
       .limit(1);
-    const merge = baseline !== undefined;
 
-    // 3. Write, only when something moved: one UPDATE for the status, merge
-    //    and both counters. `updated_at` follows the status and merge only.
-    const statusMoved = after !== run.status || merge !== run.merge;
-    const changed =
-      statusMoved ||
-      counters.pendingSteps !== run.pendingSteps ||
-      counters.failedSteps !== run.failedSteps;
-    if (changed) {
-      await tx
-        .update(testRuns)
-        .set({
-          status: after,
-          merge,
-          pendingSteps: counters.pendingSteps,
-          failedSteps: counters.failedSteps,
-          ...(statusMoved ? { updatedAt: new Date() } : {}),
-        })
-        .where(eq(testRuns.id, runId));
-    }
-    return { before: run.status, after, changed };
+    // 3. Write, only when something moved.
+    return writeRollup(tx, runId, run, input, baseline !== undefined);
   });
+}
+
+/** What {@link recomputeRunStatus} returns. */
+export interface RecomputeResult {
+  before: RunStatus;
+  after: RunStatus;
+  changed: boolean;
+}
+
+/** How {@link recomputeRunStatus} is called. */
+export interface RecomputeOptions {
+  /**
+   * The caller already holds the run's row lock (`FOR NO KEY UPDATE`), taken
+   * in this same transaction, so it is not taken again (see
+   * `recomputeRunStatus`).
+   */
+  lockHeld?: boolean;
+}
+
+/** The run columns a recompute compares its result with. */
+interface StoredRollup {
+  status: RunStatus;
+  merge: boolean;
+  pendingSteps: number;
+  failedSteps: number;
+}
+
+/**
+ * The status and counters of a run from its inputs, written when something
+ * moved: one UPDATE for the status, merge and both counters. `updated_at`
+ * follows the status and merge only.
+ */
+async function writeRollup(
+  db: DB | Tx,
+  runId: string,
+  stored: StoredRollup,
+  input: RunCountersInput,
+  merge: boolean,
+): Promise<RecomputeResult> {
+  const after = rollupRunStatus(input);
+  const counters = computeRunCounters(input, after);
+  const statusMoved = after !== stored.status || merge !== stored.merge;
+  const changed =
+    statusMoved ||
+    counters.pendingSteps !== stored.pendingSteps ||
+    counters.failedSteps !== stored.failedSteps;
+  if (changed) {
+    await db
+      .update(testRuns)
+      .set({
+        status: after,
+        merge,
+        pendingSteps: counters.pendingSteps,
+        failedSteps: counters.failedSteps,
+        ...(statusMoved ? { updatedAt: new Date() } : {}),
+      })
+      .where(eq(testRuns.id, runId));
+  }
+  return { before: stored.status, after, changed };
+}
+
+/** One row of {@link loadHeldRollupState}'s statement. */
+interface HeldRollupRow extends Record<string, unknown> {
+  status: RunStatus;
+  override: RunStatusOverride | null;
+  merge: boolean;
+  pending_steps: number;
+  failed_steps: number;
+  has_baseline: boolean;
+  /** NULL with `n`, when the run has no steps. */
+  verdict: CheckpointVerdict | null;
+  decision: CheckpointDecisionKind | null;
+  diff_failed: boolean | null;
+  n: number | null;
+}
+
+/**
+ * Everything a recompute reads, for a run whose row lock the caller holds, in
+ * ONE statement: the stored columns it compares with, the lifecycle and
+ * override, the run's steps (each with its verdict, its active decision and
+ * whether its diff failed) and whether a `baselines` row exists for the run.
+ *
+ * The same facts as the lock, `loadRollupInputs` and the baseline probe: a
+ * step's active decision is the one with `reverted_at IS NULL` filed under the
+ * step's own run (at most one, by the partial unique index), as
+ * `loadRollupInputs` keys them. Steps come grouped by (verdict, decision,
+ * diff failed) with a count and are expanded back to one entry per step: the
+ * rollup and the counters depend only on that multiset, and a large run sends
+ * a few rows instead of one per step.
+ *
+ * @throws `run_not_found:<runId>` when the run does not exist.
+ */
+async function loadHeldRollupState(
+  db: DB | Tx,
+  runId: string,
+): Promise<{
+  stored: StoredRollup;
+  input: RunCountersInput;
+  hasBaseline: boolean;
+}> {
+  const rows = await db.execute<HeldRollupRow>(sql`
+    SELECT ${testRuns.status} AS status,
+           ${testRuns.statusOverride} AS override,
+           ${testRuns.merge} AS merge,
+           ${testRuns.pendingSteps} AS pending_steps,
+           ${testRuns.failedSteps} AS failed_steps,
+           EXISTS (
+             SELECT 1 FROM ${baselines} WHERE ${baselines.testRunId} = ${runId}
+           ) AS has_baseline,
+           steps.verdict, steps.decision, steps.diff_failed, steps.n
+    FROM ${testRuns}
+    LEFT JOIN LATERAL (
+      SELECT ${screenshots.verdict} AS verdict,
+             ${checkpointDecisions.decision} AS decision,
+             ${screenshots.diffFailedAt} IS NOT NULL AS diff_failed,
+             count(*)::int AS n
+      FROM ${screenshots}
+      LEFT JOIN ${checkpointDecisions}
+        ON ${checkpointDecisions.screenshotId} = ${screenshots.id}
+       AND ${checkpointDecisions.runId} = ${screenshots.runId}
+       AND ${checkpointDecisions.revertedAt} IS NULL
+      WHERE ${screenshots.runId} = ${testRuns.id}
+      GROUP BY 1, 2, 3
+    ) AS steps ON true
+    WHERE ${testRuns.id} = ${runId}`);
+  const run = rows[0];
+  if (!run) throw new Error(`run_not_found:${runId}`);
+  const checkpoints: Array<RunCountersInput["checkpoints"][number]> = [];
+  for (const r of rows) {
+    if (r.n === null) continue;
+    const step = {
+      verdict: r.verdict,
+      decision: r.decision,
+      diffFailed: r.diff_failed === true,
+    };
+    for (let i = 0; i < r.n; i++) checkpoints.push(step);
+  }
+  return {
+    stored: {
+      status: run.status,
+      merge: run.merge,
+      pendingSteps: run.pending_steps,
+      failedSteps: run.failed_steps,
+    },
+    input: { lifecycle: run.status, override: run.override, checkpoints },
+    hasBaseline: run.has_baseline,
+  };
 }

@@ -9,6 +9,7 @@ import {
   eq,
   inArray,
   recomputeRunStatus,
+  screenshots,
   sql,
   testRuns,
   testVariations,
@@ -47,6 +48,7 @@ import { createTestApp, type TestApp } from "./helpers.js";
 import {
   addReviewRun,
   cleanupReviewSeeds,
+  decideDirectly,
   seedReviewRun,
   type ReviewRunSpec,
   type ReviewSeed,
@@ -716,6 +718,129 @@ d("decideCheckpoints", () => {
         },
         "review_decided",
       );
+    });
+
+    test("one action promoting a variation twice: the second promotion starts from what the first wrote", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const r2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "home", verdict: "unresolved" }],
+      });
+      const first = s.shots.home!;
+      const second = r2.shots.home!;
+      const variationId = first.variationId;
+      expect(second.variationId).toBe(variationId);
+      // A reviewer's region and match level on the variation; each step
+      // carries its own SDK-captured region (ADR-067 replaces the SDK set).
+      const reviewer = { x: 1, y: 1, width: 2, height: 2 };
+      const sdk1 = { x: 10, y: 10, width: 5, height: 5, viewport: "1280x720" };
+      const sdk2 = { x: 20, y: 20, width: 5, height: 5, viewport: "1280x720" };
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: [reviewer], matchLevel: "Layout" })
+        .where(eq(testVariations.id, variationId));
+      for (const [id, region] of [
+        [first.id, sdk1],
+        [second.id, sdk2],
+      ] as const) {
+        await h.db
+          .update(screenshots)
+          .set({ ignoreRegions: [region] })
+          .where(eq(screenshots.id, id));
+      }
+      const original = await variationRow(variationId);
+
+      const res = await decide(s, {
+        decision: "approved",
+        targets: [target(r2.runId, second.id), target(s.runId, first.id)],
+      });
+      expect(res.decided.map((x) => x.checkpointId)).toEqual([
+        first.id,
+        second.id,
+      ]);
+
+      // One INSERT writes both rows (one created_at): take them by step.
+      const rows = await decisionsOfAction(res.actionId);
+      const snapshotOf = (stepId: string) =>
+        decisionSnapshotSchema.parse(
+          rows.find((r) => r.screenshotId === stepId)!.before,
+        );
+      const d1 = snapshotOf(first.id);
+      const d2 = snapshotOf(second.id);
+      // The first promotion starts from the variation as it was ...
+      expect(d1.variation).toEqual({
+        id: variationId,
+        baselineName: original.baselineName,
+        matchLevel: "Layout",
+        ignoreRegions: [reviewer],
+        layoutRegions: null,
+        floatingRegions: null,
+        contentRegions: null,
+        accessibilityRegions: null,
+      });
+      expect(d1.variationAfter).toMatchObject({
+        baselineName: first.imageKey,
+        matchLevel: "Strict",
+        ignoreRegions: [reviewer, { ...sdk1, source: "sdk" }],
+      });
+      // ... and the second from exactly what the first wrote.
+      expect(d2.variation).toEqual({ id: variationId, ...d1.variationAfter });
+      expect(d2.variationAfter).toMatchObject({
+        baselineName: second.imageKey,
+        ignoreRegions: [reviewer, { ...sdk2, source: "sdk" }],
+      });
+      // The row holds the second write.
+      const after = await variationRow(variationId);
+      expect(after.baselineName).toBe(second.imageKey);
+      expect(after.ignoreRegions).toEqual(d2.variationAfter!.ignoreRegions);
+    });
+
+    test("only the active decision counts: a step whose decisions were undone is decided again, once", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "unresolved" },
+        ],
+      });
+      const home = s.shots.home!;
+      const cart = s.shots.cart!;
+      // home: two undone decisions. cart: an undone one beside an active reject.
+      await decideDirectly(h, s, [home.id], {
+        reverted: true,
+        decision: "rejected",
+      });
+      await decideDirectly(h, s, [home.id], { reverted: true });
+      await decideDirectly(h, s, [cart.id], { reverted: true });
+      await decideDirectly(h, s, [cart.id], { decision: "rejected" });
+
+      const res = await decide(s, {
+        decision: "approved",
+        targets: [target(s.runId, home.id)],
+      });
+      expect(res.decided).toEqual([
+        { checkpointId: home.id, runId: s.runId, state: "approved" },
+      ]);
+      expect(await baselinesOfRun(s.runId)).toHaveLength(1);
+      expect(
+        (await decisionsFor([home.id])).filter((r) => r.revertedAt === null),
+      ).toHaveLength(1);
+
+      const err = await rejection(
+        decide(s, {
+          decision: "approved",
+          targets: [target(s.runId, cart.id)],
+        }),
+      );
+      expect(refusal(err)).toMatchObject({
+        code: "CONFLICT",
+        message: "already_decided",
+      });
+      expect(refusal(err).details?.reasons).toEqual([
+        { checkpointId: cart.id, reason: "already_decided" },
+      ]);
     });
 
     test("accepts upper- and mixed-case ids, and dedupes them", async () => {

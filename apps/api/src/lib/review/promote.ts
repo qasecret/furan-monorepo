@@ -1,8 +1,10 @@
 import {
   and,
+  asc,
   baselines,
   baselineWriteTime,
   eq,
+  inArray,
   sql,
   testVariations,
   type Tx,
@@ -77,6 +79,47 @@ export interface ApprovableRun {
   branchName: string | null;
 }
 
+/** The variation fields a promotion snapshots, as it reads them. */
+const VARIATION_FIELDS = {
+  id: testVariations.id,
+  baselineName: testVariations.baselineName,
+  matchLevel: testVariations.matchLevel,
+  ignoreRegions: testVariations.ignoreRegions,
+  layoutRegions: testVariations.layoutRegions,
+  floatingRegions: testVariations.floatingRegions,
+  contentRegions: testVariations.contentRegions,
+  accessibilityRegions: testVariations.accessibilityRegions,
+};
+
+/** A variation as a promotion starts from it: locked, with its current fields. */
+export type LockedVariation = Pick<
+  typeof testVariations.$inferSelect,
+  keyof typeof VARIATION_FIELDS
+>;
+
+/**
+ * Locks the variations an approve promotes onto `FOR NO KEY UPDATE`, in
+ * ascending id order (R8), and reads, in the same statement, the fields each
+ * promotion snapshots: `promoteCheckpointInTx` starts from these instead of
+ * reading the variation again. Nothing else can change a variation while this
+ * transaction holds its lock, so they stay current until a promotion writes
+ * the variation; the caller then carries forward what that promotion wrote
+ * (its snapshot's `variationAfter`). Unknown ids are absent.
+ */
+export async function lockVariationsForPromotion(
+  tx: Tx,
+  variationIds: string[],
+): Promise<Map<string, LockedVariation>> {
+  if (variationIds.length === 0) return new Map();
+  const rows = await tx
+    .select(VARIATION_FIELDS)
+    .from(testVariations)
+    .where(inArray(testVariations.id, variationIds))
+    .orderBy(asc(testVariations.id))
+    .for("no key update");
+  return new Map(rows.map((v) => [v.id, v]));
+}
+
 /**
  * A timestamptz as an ISO-8601 UTC string with microseconds. A JS `Date` would
  * truncate to milliseconds, and `created_at` orders baselines at microsecond
@@ -93,10 +136,14 @@ const isoMicros = (
  * spec §4.2). It never writes the run's status: that is `recomputeRunStatus`'s
  * job (spec §4.3).
  *
- * 1. Locks the variation row and any existing (variation, run) `baselines`
- *    row `FOR NO KEY UPDATE` (R8: only non-key columns are written, and FK
- *    inserts of child rows take `FOR KEY SHARE`), and snapshots both before
- *    anything is written.
+ * `v` is the checkpoint's variation as it stands now, already locked by the
+ * caller in this transaction (`lockVariationsForPromotion`, then what earlier
+ * promotions of the same variation wrote); undefined when it does not exist.
+ *
+ * 1. Locks any existing (variation, run) `baselines` row `FOR NO KEY UPDATE`
+ *    (R8: only non-key columns are written, and FK inserts of child rows take
+ *    `FOR KEY SHARE`), and snapshots it and the variation before anything is
+ *    written.
  * 2. Writes the checkpoint's image, regions and match level onto the
  *    variation. Without an override the ignore regions are merged
  *    (`mergeApprovedIgnoreRegions`, ADR-067); `ignoreAreasOverride` (ADR-036)
@@ -114,25 +161,12 @@ const isoMicros = (
 export async function promoteCheckpointInTx(
   tx: Tx,
   s: ApprovableCheckpoint & { id: string },
+  v: LockedVariation | undefined,
   run: ApprovableRun,
   userId: string,
   ignoreAreasOverride?: readonly unknown[],
 ): Promise<DecisionSnapshot> {
-  const [v] = await tx
-    .select({
-      id: testVariations.id,
-      baselineName: testVariations.baselineName,
-      matchLevel: testVariations.matchLevel,
-      ignoreRegions: testVariations.ignoreRegions,
-      layoutRegions: testVariations.layoutRegions,
-      floatingRegions: testVariations.floatingRegions,
-      contentRegions: testVariations.contentRegions,
-      accessibilityRegions: testVariations.accessibilityRegions,
-    })
-    .from(testVariations)
-    .where(eq(testVariations.id, s.testVariationId))
-    .for("no key update");
-  if (!v) {
+  if (!v || v.id !== s.testVariationId) {
     throw new Error(
       `variation_not_found:${s.testVariationId} (checkpoint ${s.id})`,
     );
