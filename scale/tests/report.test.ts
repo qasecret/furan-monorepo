@@ -31,6 +31,7 @@ const sample = (): Row[] => {
   const measurements: Measurement[] = [
     { id: "P1", value: 1 },
     { id: "P2", value: 7421.5, note: "p95 over 50 steps" },
+    { id: "P4", value: 0.41 },
     { id: "R1-solo.worst", value: 61.234 },
     { id: "R7", value: null, error: "approve | threw" },
   ];
@@ -188,12 +189,12 @@ describe("writeReport", () => {
 
   it("renders tracked failures with their owner", async () => {
     const md = await readFile(writeReport(sample(), meta, dir).md, "utf8");
-    // P2 is tracked, owner slice 2, measured 7421.5 > 5000.
-    const p2 = md.split("\n").find((l) => l.startsWith("| P2 "));
-    expect(p2).toBeDefined();
-    expect(p2).toContain("fail (tracked, owner slice 2)");
-    expect(p2).toContain("<= 5000");
-    expect(p2).toContain("7421.5");
+    // P4 is tracked, owner slice 2, measured 0.41 < 0.8.
+    const p4 = md.split("\n").find((l) => l.startsWith("| P4 "));
+    expect(p4).toBeDefined();
+    expect(p4).toContain("fail (tracked, owner slice 2)");
+    expect(p4).toContain(">= 0.8");
+    expect(p4).toContain("0.41");
     // P1 passes plainly.
     const p1 = md.split("\n").find((l) => l.startsWith("| P1 "));
     expect(p1).toMatch(/\| pass \|/);
@@ -201,7 +202,7 @@ describe("writeReport", () => {
   });
 
   it("renders an enforced failure as a plain fail", async () => {
-    // No budget is enforced yet (Ruling R49): enforce one as a slice would.
+    // R1-solo.worst is tracked today: enforce it as an owning slice would.
     const enforced = BUDGETS.map((b) =>
       b.id === "R1-solo.worst" ? { ...b, status: "enforced" as const } : b,
     );

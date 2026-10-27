@@ -69,12 +69,12 @@ describe("BUDGETS", () => {
         `${b.compare} ${b.threshold}`,
       ].join(" | ");
     expect(BUDGETS.map(line)).toEqual([
-      "P1 | pipeline | 2 | tracked | ratio | <= 1",
-      "P2 | pipeline | 2 | tracked | ms | <= 5000",
-      "P3 | pipeline | 2 | tracked | ms | <= 10000",
+      "P1 | pipeline | 2 | enforced | ratio | <= 1",
+      "P2 | pipeline | 2 | enforced | ms | <= 5000",
+      "P3 | pipeline | 2 | enforced | ms | <= 10000",
       "P4 | pipeline | 2 | tracked | ratio | >= 0.8",
       "P5 | pipeline | 2 | tracked | count | <= 0",
-      "P6 | pipeline | 2 | tracked | count | <= 0",
+      "P6 | pipeline | 2 | enforced | count | <= 0",
       "R1 | server | 3 | tracked | ms | <= 50",
       "R1-solo.findNext | server | 3 | tracked | ms | <= 50",
       "R1-solo.reviewNext | server | 3 | tracked | ms | <= 50",
@@ -112,16 +112,30 @@ describe("BUDGETS", () => {
     for (const b of BUDGETS) expect(b.description.length).toBeGreaterThan(0);
   });
 
-  it("enforces what passed the first reference run with headroom (Rulings R49, R51)", () => {
+  it("enforces what passed the two reference runs (slice-1 Rulings R49, R51; slice-2 Ruling R64)", () => {
     const enforced = BUDGETS.filter((b) => b.status === "enforced");
-    expect(enforced.map((b) => b.id)).toEqual([
+    // Slice 1's reference run: five budgets with at least 20% headroom.
+    expect(enforced.filter((b) => b.owner === 1).map((b) => b.id)).toEqual([
       "R2-solo.runsListPending",
       "R8",
       "D1",
       "D2.domMax",
       "D5.next",
     ]);
-    for (const b of enforced) expect(b.owner).toBe(1);
+    // Slice 2's reference run: P2 and P3 on headroom (slice-1 R51), P1 and P6 as
+    // exact counts that met their thresholds exactly (slice-2 R64). P4 and P5
+    // stay tracked (P4 fails; P5 needs repeated runs, slice-1 R40).
+    expect(enforced.filter((b) => b.owner === 2).map((b) => b.id)).toEqual([
+      "P1",
+      "P2",
+      "P3",
+      "P6",
+    ]);
+    expect(enforced).toHaveLength(9);
+    const pipeline = BUDGETS.filter((b) => b.suite === "pipeline");
+    expect(
+      pipeline.filter((b) => b.status === "tracked").map((b) => b.id),
+    ).toEqual(["P4", "P5"]);
     // The other solo budgets stay tracked, owned by slice 3.
     const solo = BUDGETS.filter((b) => b.id.includes("-solo."));
     expect(solo.map((b) => b.id)).toHaveLength(7);
