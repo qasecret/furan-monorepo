@@ -1089,6 +1089,10 @@ desc("the empty-run scan's plan", () => {
     const query = staleEmptyRunsQuery(db, new Date()).toSQL();
     const name = `furan_empty_runs_${randomUUID().replaceAll("-", "")}`;
     const plan = await db.transaction(async (tx) => {
+      // Fresh statistics: the suites before this one (the api suite on the
+      // same database) leave test_runs' stats stale, and a stale estimate can
+      // steer the planner to another index.
+      await tx.execute(sql`ANALYZE test_runs`);
       await tx.execute(sql`SET LOCAL plan_cache_mode = force_generic_plan`);
       // The test table is small: make the planner show what it can use.
       await tx.execute(sql`SET LOCAL enable_seqscan = off`);
