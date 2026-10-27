@@ -315,7 +315,12 @@ test.describe.serial("review: the viewer reads one step", () => {
           ].filter((k): k is string => typeof k === "string"),
         ),
       );
-    // Nor once the page has settled.
+    // Nor once the page has settled: no batch, and still the step and its
+    // two neighbours, each read once, and no other step.
     expect(calledBatch(), "builds.getById was called").toBe(false);
+    expect(
+      [...stepReads()].sort(),
+      "the steps read through runs.getStep once the page settled",
+    ).toEqual([`${run}/${first}`, `${run}/${step}`, `${run}/${last}`].sort());
   });
 });
