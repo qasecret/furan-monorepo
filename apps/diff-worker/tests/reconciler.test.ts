@@ -35,7 +35,11 @@ import {
 import { commitStep } from "../src/commit-step.js";
 import type { StepResult } from "../src/diff-step.js";
 import type { HandlerDeps } from "../src/handler.js";
-import { reconcileStuckSteps, type ReconcileQueue } from "../src/reconciler.js";
+import {
+  reconcileStuckSteps,
+  staleEmptyRunsQuery,
+  type ReconcileQueue,
+} from "../src/reconciler.js";
 
 import { counterValue } from "./helpers/metrics.js";
 
@@ -1054,4 +1058,55 @@ desc("reconcileStuckSteps", () => {
       );
     },
   );
+});
+
+/** A query parameter as a SQL literal, for `EXECUTE` of a prepared statement. */
+function literal(value: unknown): string {
+  const text =
+    value instanceof Date ? value.toISOString() : String(value as string);
+  return `'${text.replaceAll("'", "''")}'`;
+}
+
+desc("the empty-run scan's plan", () => {
+  let db: DB;
+  let closeDb: () => Promise<void>;
+
+  beforeAll(() => {
+    const created = createDb();
+    db = created.db;
+    closeDb = created.close;
+  });
+
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  it("uses test_runs_running_idx under a generic plan", async () => {
+    // The scan as the reconciler sends it. postgres.js prepares it, and after
+    // five executions Postgres may switch to a generic plan, which cannot
+    // prove a partial index's predicate from a bound parameter. Force that
+    // plan and check the partial index is still the one read.
+    const query = staleEmptyRunsQuery(db, new Date()).toSQL();
+    const name = `furan_empty_runs_${randomUUID().replaceAll("-", "")}`;
+    const plan = await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL plan_cache_mode = force_generic_plan`);
+      // The test table is small: make the planner show what it can use.
+      await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+      await tx.execute(sql.raw(`PREPARE ${name} AS ${query.sql}`));
+      try {
+        const args = query.params.map(literal).join(", ");
+        return await tx.execute<{ "QUERY PLAN": string }>(
+          sql.raw(
+            `EXPLAIN EXECUTE ${name}${args.length > 0 ? `(${args})` : ""}`,
+          ),
+        );
+      } finally {
+        await tx.execute(sql.raw(`DEALLOCATE ${name}`));
+      }
+    });
+    const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
+    expect(text).toContain("test_runs_running_idx");
+    // The status is a literal, so the only parameter left is the cutoff.
+    expect(query.params).toHaveLength(1);
+  });
 });
