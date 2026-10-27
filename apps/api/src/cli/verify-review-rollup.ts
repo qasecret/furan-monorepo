@@ -8,6 +8,7 @@ import {
   countersMatch,
   findRollupMismatches,
   listBaselineRepairs,
+  notRepairedLine,
   repairRunCounters,
   type RollupMismatch,
 } from "../lib/review/rollup-verify.js";
@@ -28,8 +29,9 @@ import {
  * `--repair-counters` then fixes the listed runs whose counters are wrong,
  * one at a time under each run's lock (`repairRunCounters`, through
  * `recomputeRunStatus`), so it is safe while the app runs. It never changes a
- * status: a run whose status is wrong too is left for runbook §5. The check
- * then runs again and the exit code is its result.
+ * status: a run whose status is not its rollup is left for runbook §5, and
+ * printed with both (`<run_id>, not repaired: stored <status>, rollup
+ * <status>`). The check then runs again and the exit code is its result.
  *
  * Exit codes: 0 no mismatches (left), 1 mismatches (or an error), 2 usage
  * error.
@@ -140,11 +142,8 @@ async function main(): Promise<number> {
       `repaired the counters of ${repaired.length} run${repaired.length === 1 ? "" : "s"}`,
     );
     for (const o of outcomes) {
-      if (o.outcome === "status_differs") {
-        console.log(
-          `${o.runId}, not repaired: its status is not its rollup (runbook §5)`,
-        );
-      }
+      const line = notRepairedLine(o);
+      if (line !== null) console.log(line);
     }
 
     const left = await findRollupMismatches(db, { projectId });

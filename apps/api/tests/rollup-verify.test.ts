@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   findRollupMismatches,
   listBaselineRepairs,
+  notRepairedLine,
   repairRunCounters,
   type RollupMismatch,
 } from "../src/lib/review/rollup-verify.js";
@@ -84,6 +85,27 @@ function mismatch(
     : [counters, counters];
   return { runId, stored, computed, storedCounters, computedCounters };
 }
+
+describe("notRepairedLine (the CLI's --repair-counters output)", () => {
+  test("names the stored status and the rollup of a run left alone", () => {
+    const runId = "3f2a0000-0000-4000-8000-000000000001";
+    expect(
+      notRepairedLine({
+        runId,
+        outcome: "status_differs",
+        status: { stored: "running", rollup: "unresolved" },
+      }),
+    ).toBe(
+      `${runId}, not repaired: stored running, rollup unresolved (runbook §5)`,
+    );
+  });
+
+  test("prints nothing for a run it repaired, found right, or found gone", () => {
+    for (const outcome of ["repaired", "already_right", "run_gone"] as const) {
+      expect(notRepairedLine({ runId: "r", outcome })).toBeNull();
+    }
+  });
+});
 
 d("findRollupMismatches", () => {
   let h: TestApp;
@@ -379,7 +401,11 @@ d("findRollupMismatches", () => {
         { runId: one.runId, outcome: "repaired" },
         { runId: oneSettled.runId, outcome: "repaired" },
         { runId: two.runId, outcome: "repaired" },
-        { runId: both.runId, outcome: "status_differs" },
+        {
+          runId: both.runId,
+          outcome: "status_differs",
+          status: { stored: "passed", rollup: "new" },
+        },
       ].sort(byRunId),
     );
 
@@ -414,6 +440,34 @@ d("findRollupMismatches", () => {
         .sort()
         .map((runId) => ({ runId, outcome: "already_right" })),
     );
+  });
+
+  test("--repair-counters leaves a stale running run alone and says why: its stored status and its rollup", async () => {
+    // Stored `running` with every step diffed: the check lists it for its
+    // counters alone, with `running` on both sides (a running run's status is
+    // not judged), while its rollup is `unresolved`.
+    const s = await seed(h, {
+      checkpoints: [{ name: "a", verdict: "unresolved" }],
+      lifecycle: "running",
+    });
+    await setCounters(s.runId, c(2));
+    expect(
+      await findRollupMismatches(h.db, { projectId: s.projectId }),
+    ).toEqual([mismatch(s.runId, "running", "running", [c(2), c(0)])]);
+
+    const outcomes = await repairRunCounters(h.db, [s.runId]);
+    expect(outcomes).toEqual([
+      {
+        runId: s.runId,
+        outcome: "status_differs",
+        status: { stored: "running", rollup: "unresolved" },
+      },
+    ]);
+    expect(outcomes.map(notRepairedLine)).toEqual([
+      `${s.runId}, not repaired: stored running, rollup unresolved (runbook §5)`,
+    ]);
+    // Untouched.
+    expect(await storedRun(s.runId)).toEqual({ status: "running", ...c(2) });
   });
 
   test("--repair-counters waits for a writer holding the run, and never overwrites it", async () => {

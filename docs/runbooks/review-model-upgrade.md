@@ -147,18 +147,20 @@ computed counters, as `pending/failed`:
 
 ```
 run_id, stored, computed, stored_counters, computed_counters
-3f2a…, passed, unresolved, 0/0, 0/0
+3f2a…, passed, unresolved, 0/0, 1/0
 1 mismatch
 ```
 
 `--repair-counters` then recomputes each listed run whose counters differ, one
 run at a time under that run's lock, so it is safe while the app is running. It
-never changes a status: a run whose status differs too is listed as
-`<run_id>, not repaired: its status is not its rollup (runbook §5)` and is
-settled through §5 first. The check then runs again (`… mismatches after
-repair`), and the exit code is its result. Do not re-run 0043's backfill
-statement for this while the app is up: it reads one snapshot and can overwrite
-a concurrent writer's counters.
+never changes a status: a run whose stored status is not its rollup is listed
+as `<run_id>, not repaired: stored <status>, rollup <status> (runbook §5)` and
+is settled through §5 first. A run stored `running` can show this too: the
+check lists it for its counters alone, with `running` on both sides, and the
+line gives the status its steps now roll up to. The check then runs again
+(`… mismatches after repair`), and the exit code is its result. Do not re-run
+0043's backfill statement for this while the app is up: it reads one snapshot
+and can overwrite a concurrent writer's counters.
 
 `--repairs` first prints `baseline repairs (migration 0036): <count>`, then one
 line per repaired baseline: its audit id, the time, and `variationId`, `runId`,

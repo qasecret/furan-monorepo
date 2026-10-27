@@ -160,6 +160,17 @@ export type CounterRepairOutcome =
   /** Gone since the scan (retention). */
   | "run_gone";
 
+/** What `repairRunCounters` did for one run, and why when it left it alone. */
+export interface CounterRepair {
+  runId: string;
+  outcome: CounterRepairOutcome;
+  /**
+   * With `status_differs`: the run's stored status and the status its rollup
+   * computes, both read under its lock.
+   */
+  status?: { stored: RunStatus; rollup: RunStatus };
+}
+
 /**
  * The repair of stale pending counters (`--repair-counters`): for each run, in
  * ascending id order and each in its own transaction, takes the run lock
@@ -184,31 +195,50 @@ export type CounterRepairOutcome =
 export async function repairRunCounters(
   db: DB,
   runIds: readonly string[],
-): Promise<Array<{ runId: string; outcome: CounterRepairOutcome }>> {
+): Promise<CounterRepair[]> {
   const ordered = [...new Set(runIds)].sort();
-  const out: Array<{ runId: string; outcome: CounterRepairOutcome }> = [];
+  const out: CounterRepair[] = [];
   for (const runId of ordered) {
-    const outcome = await db.transaction(
-      async (tx): Promise<CounterRepairOutcome> => {
+    const repair = await db.transaction(
+      async (tx): Promise<Omit<CounterRepair, "runId">> => {
         const [locked] = await tx
           .select({ id: testRuns.id })
           .from(testRuns)
           .where(eq(testRuns.id, runId))
           .for("no key update");
-        if (!locked) return "run_gone";
+        if (!locked) return { outcome: "run_gone" };
         // Under the lock: what a concurrent writer committed is seen here.
         const input = (await loadRollupInputs(tx, [runId])).get(runId);
-        if (!input) return "run_gone";
-        if (rollupRunStatus(input) !== input.lifecycle) {
-          return "status_differs";
+        if (!input) return { outcome: "run_gone" };
+        const rollup = rollupRunStatus(input);
+        if (rollup !== input.lifecycle) {
+          return {
+            outcome: "status_differs",
+            status: { stored: input.lifecycle, rollup },
+          };
         }
         const { changed } = await recomputeRunStatus(tx, runId);
-        return changed ? "repaired" : "already_right";
+        return { outcome: changed ? "repaired" : "already_right" };
       },
     );
-    out.push({ runId, outcome });
+    out.push({ runId, ...repair });
   }
   return out;
+}
+
+/**
+ * The CLI's line for a run `repairRunCounters` left alone (`status_differs`),
+ * naming its stored status and its rollup; null for any other outcome. Both
+ * statuses are printed because the check lists a `running` run (whose status
+ * it does not judge) with its stored status on both sides: the rollup is what
+ * says why it was not repaired.
+ */
+export function notRepairedLine(repair: CounterRepair): string | null {
+  if (repair.outcome !== "status_differs" || repair.status === undefined) {
+    return null;
+  }
+  const { stored, rollup } = repair.status;
+  return `${repair.runId}, not repaired: stored ${stored}, rollup ${rollup} (runbook §5)`;
 }
 
 /** One `baseline.repair` audit row written by migration `0036` (spec §4.4). */
