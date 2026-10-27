@@ -1,3 +1,5 @@
+import type { AddressInfo } from "node:net";
+
 import {
   builds,
   eq,

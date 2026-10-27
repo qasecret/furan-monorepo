@@ -93,12 +93,12 @@ async function seed(h: TestApp): Promise<Seeded> {
     .returning();
   await h.db
     .insert(projectMembers)
-    .values({ userId: member.id, projectId: project.id });
+    .values({ userId: member!.id, projectId: project!.id });
 
   return {
-    memberJwt: h.app.jwt.sign({ sub: member.id, role: "editor" }),
-    nonMemberJwt: h.app.jwt.sign({ sub: nonMember.id, role: "editor" }),
-    projectId: project.id,
+    memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    nonMemberJwt: h.app.jwt.sign({ sub: nonMember!.id, role: "editor" }),
+    projectId: project!.id,
   };
 }
 

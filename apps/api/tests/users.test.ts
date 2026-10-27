@@ -50,9 +50,9 @@ describe("admin user CRUD", () => {
         isActive: true,
       })
       .returning();
-    adminId = admin.id;
-    adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
-    editorJwt = h.app.jwt.sign({ sub: editor.id, role: "editor" });
+    adminId = admin!.id;
+    adminJwt = h.app.jwt.sign({ sub: admin!.id, role: "admin" });
+    editorJwt = h.app.jwt.sign({ sub: editor!.id, role: "editor" });
   });
 
   test("GET /users (admin) returns list without hashedPassword", async () => {

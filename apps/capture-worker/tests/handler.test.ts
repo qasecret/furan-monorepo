@@ -98,13 +98,13 @@ desc("handleCaptureJob (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -114,24 +114,23 @@ desc("handleCaptureJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "r",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
       .returning();
 
     job = {
-      runId: r.id,
-      projectId: p.id,
-      buildId: b.id,
-      testVariationId: v.id,
+      runId: r!.id,
+      projectId: p!.id,
+      buildId: b!.id,
+      testVariationId: v!.id,
       url: fixtureUrl,
       viewport: { width: 1280, height: 720 },
       browser: "chromium",
     };
-    seededProjectId = p.id;
+    seededProjectId = p!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -214,13 +213,13 @@ desc("handleCaptureJob (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -230,19 +229,18 @@ desc("handleCaptureJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "r-abort",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
       .returning();
 
     const abortJob: CaptureJob = {
-      runId: r.id,
-      projectId: p.id,
-      buildId: b.id,
-      testVariationId: v.id,
+      runId: r!.id,
+      projectId: p!.id,
+      buildId: b!.id,
+      testVariationId: v!.id,
       // 127.0.0.1:1 — unbound port, connection refused → page.goto throws.
       url: "http://127.0.0.1:1/",
       viewport: { width: 1280, height: 720 },
@@ -255,7 +253,7 @@ desc("handleCaptureJob (integration)", () => {
     // trigger Slack) is observed.
     const events: string[] = [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${r.id}:events`);
+    await sub.subscribe(`run:${r!.id}:events`);
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((res) => setTimeout(res, 100));
 
@@ -265,7 +263,7 @@ desc("handleCaptureJob (integration)", () => {
       ).rejects.toThrow();
 
       const updated = await db.query.testRuns.findFirst({
-        where: eq(testRuns.id, r.id),
+        where: eq(testRuns.id, r!.id),
       });
       expect(updated!.status).toBe("aborted");
 
@@ -275,12 +273,12 @@ desc("handleCaptureJob (integration)", () => {
         .find((e) => e.type === "run.completed");
       expect(runCompleted).toBeDefined();
       expect(runCompleted.status).toBe("aborted");
-      expect(runCompleted.runId).toBe(r.id);
-      expect(runCompleted.projectId).toBe(p.id);
+      expect(runCompleted.runId).toBe(r!.id);
+      expect(runCompleted.projectId).toBe(p!.id);
     } finally {
       sub.disconnect();
       // Per-test scoped cleanup — concurrency=1 leaves no leakage.
-      await db.delete(projects).where(eq(projects.id, p.id));
+      await db.delete(projects).where(eq(projects.id, p!.id));
     }
   }, 60_000);
 
@@ -309,13 +307,13 @@ desc("handleCaptureJob (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -325,19 +323,18 @@ desc("handleCaptureJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "r-empty",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
       .returning();
 
     const emptyJob: CaptureJob = {
-      runId: r.id,
-      projectId: p.id,
-      buildId: b.id,
-      testVariationId: v.id,
+      runId: r!.id,
+      projectId: p!.id,
+      buildId: b!.id,
+      testVariationId: v!.id,
       url: fixtureUrl,
       // Explicit empty viewports list — handler skips the capture loop
       // entirely and lands in the §3.2 `empty` terminal branch.
@@ -347,7 +344,7 @@ desc("handleCaptureJob (integration)", () => {
 
     const events: string[] = [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${r.id}:events`);
+    await sub.subscribe(`run:${r!.id}:events`);
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((res) => setTimeout(res, 100));
 
@@ -355,13 +352,13 @@ desc("handleCaptureJob (integration)", () => {
       await handleCaptureJob(emptyJob, mockLogger, { db, storage, redis });
 
       const updated = await db.query.testRuns.findFirst({
-        where: eq(testRuns.id, r.id),
+        where: eq(testRuns.id, r!.id),
       });
       expect(updated!.status).toBe("empty");
 
       // No screenshots row should have been inserted.
       const shots = await db.query.screenshots.findMany({
-        where: eq(screenshots.runId, r.id),
+        where: eq(screenshots.runId, r!.id),
       });
       expect(shots.length).toBe(0);
 
@@ -371,11 +368,11 @@ desc("handleCaptureJob (integration)", () => {
         .find((e) => e.type === "run.completed");
       expect(runCompleted).toBeDefined();
       expect(runCompleted.status).toBe("empty");
-      expect(runCompleted.runId).toBe(r.id);
-      expect(runCompleted.projectId).toBe(p.id);
+      expect(runCompleted.runId).toBe(r!.id);
+      expect(runCompleted.projectId).toBe(p!.id);
     } finally {
       sub.disconnect();
-      await db.delete(projects).where(eq(projects.id, p.id));
+      await db.delete(projects).where(eq(projects.id, p!.id));
     }
   }, 60_000);
 
@@ -401,13 +398,13 @@ desc("handleCaptureJob (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -417,19 +414,18 @@ desc("handleCaptureJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "r-mv",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
       .returning();
 
     const mvJob: CaptureJob = {
-      runId: r.id,
-      projectId: p.id,
-      buildId: b.id,
-      testVariationId: v.id,
+      runId: r!.id,
+      projectId: p!.id,
+      buildId: b!.id,
+      testVariationId: v!.id,
       // Per-test unique URL so the responsive fixture renders distinct
       // bytes vs the single-viewport test above (image_key is a global
       // UNIQUE constraint).
@@ -443,7 +439,7 @@ desc("handleCaptureJob (integration)", () => {
 
     const events: string[] = [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${r.id}:events`);
+    await sub.subscribe(`run:${r!.id}:events`);
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((res) => setTimeout(res, 100));
 
@@ -451,7 +447,7 @@ desc("handleCaptureJob (integration)", () => {
       await handleCaptureJob(mvJob, mockLogger, { db, storage, redis });
 
       const shots = await db.query.screenshots.findMany({
-        where: eq(screenshots.runId, r.id),
+        where: eq(screenshots.runId, r!.id),
       });
       expect(shots.length).toBe(2);
       const viewports = shots.map((s) => s.viewport).sort();
@@ -477,7 +473,7 @@ desc("handleCaptureJob (integration)", () => {
       sub.disconnect();
       // Per-test scoped cleanup: cascade-delete this single project so
       // the next test starts clean (and concurrency=1 leaves no leakage).
-      await db.delete(projects).where(eq(projects.id, p.id));
+      await db.delete(projects).where(eq(projects.id, p!.id));
     }
   }, 90_000);
 });

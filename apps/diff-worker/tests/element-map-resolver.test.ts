@@ -16,7 +16,7 @@ function makeRegion(
     y: number;
     width: number;
     height: number;
-    selector?: string;
+    selector?: string | undefined;
   }> = {},
 ) {
   return {

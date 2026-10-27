@@ -3,12 +3,13 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   createQueue,
   createWorker,
+  type CaptureJob,
   type Queue,
   type Worker,
 } from "../src/index.js";
 
 describe("@furan/queue", () => {
-  let queue: Queue;
+  let queue: Queue<CaptureJob>;
   let worker: Worker | undefined;
 
   beforeAll(() => {
@@ -51,8 +52,8 @@ describe("@furan/queue", () => {
   });
 
   test("type narrowing rejects wrong job shape (compile-time)", () => {
-    // @ts-expect-error — DiffJob shape on capture queue must be rejected
     void (async () =>
+      // @ts-expect-error — DiffJob shape on capture queue must be rejected
       queue.add("wrong", { baselineKey: "x", candidateKey: "y" }));
   });
 });

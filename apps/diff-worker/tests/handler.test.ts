@@ -80,17 +80,17 @@ desc("handleDiffJob (integration)", () => {
         diffThreshold: 0.001,
       })
       .returning();
-    projectId = p.id;
+    projectId = p!.id;
 
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -102,9 +102,8 @@ desc("handleDiffJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "baseline-run",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "passed",
       })
@@ -115,14 +114,13 @@ desc("handleDiffJob (integration)", () => {
       .insert(testRuns)
       .values({
         name: "candidate-run",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "feature/x",
         status: "running",
       })
       .returning();
-    candidateRunId = candidateRun.id;
+    candidateRunId = candidateRun!.id;
 
     // Upload baseline + candidate PNGs and the candidate DOM to storage at
     // their content-addressed keys. The candidate DOM is used by the axe
@@ -151,18 +149,18 @@ desc("handleDiffJob (integration)", () => {
     // has no domKey (the handler no longer reads it).
     await db.insert(screenshots).values([
       {
-        runId: baselineRun.id,
-        projectId: p.id,
-        testVariationId: v.id,
+        runId: baselineRun!.id,
+        projectId: p!.id,
+        testVariationId: v!.id,
         name: "checkpoint-1",
         imageKey: baselineImageKey,
         viewport: "1280x720",
         browser: "chromium",
       },
       {
-        runId: candidateRun.id,
-        projectId: p.id,
-        testVariationId: v.id,
+        runId: candidateRun!.id,
+        projectId: p!.id,
+        testVariationId: v!.id,
         name: "checkpoint-1",
         imageKey: candidateImageKey,
         domKey: candidateDomKey,
@@ -173,15 +171,15 @@ desc("handleDiffJob (integration)", () => {
 
     // Baselines row pointing at the baseline-run on main.
     await db.insert(baselines).values({
-      testVariationId: v.id,
-      testRunId: baselineRun.id,
+      testVariationId: v!.id,
+      testRunId: baselineRun!.id,
       branchName: "main",
-      userId: u.id,
+      userId: u!.id,
     });
 
     job = {
       runId: candidateRunId,
-      projectId: p.id,
+      projectId: p!.id,
     };
   }, 60_000);
 
@@ -311,17 +309,17 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
         diffThreshold: 0.001,
       })
       .returning();
-    projectId = p.id;
+    projectId = p!.id;
 
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -333,21 +331,20 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "375x812",
       })
       .returning();
-    variation375Id = v375.id;
+    variation375Id = v375!.id;
 
     const [baselineRun] = await db
       .insert(testRuns)
       .values({
         name: "baseline-mv",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "passed",
       })
@@ -356,14 +353,13 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       .insert(testRuns)
       .values({
         name: "candidate-mv",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "feature/mv",
         status: "running",
       })
       .returning();
-    candidateRunId = candidateRun.id;
+    candidateRunId = candidateRun!.id;
 
     // Two viewports on the candidate run: 1280x720 has a paired baseline
     // (diff-heavy fixture pair) and will fail. 375x812 is a variation with NO
@@ -403,9 +399,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
 
     // Baseline run has ONE screenshot: 1280x720 only.
     await db.insert(screenshots).values({
-      runId: baselineRun.id,
-      projectId: p.id,
-      testVariationId: v.id,
+      runId: baselineRun!.id,
+      projectId: p!.id,
+      testVariationId: v!.id,
       name: "checkpoint-1",
       imageKey: key1280Baseline,
       viewport: "1280x720",
@@ -421,9 +417,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     // that, insert the 375x812 row only if its image_key differs.
     if (key375Candidate !== key1280Baseline) {
       await db.insert(screenshots).values({
-        runId: candidateRun.id,
-        projectId: p.id,
-        testVariationId: v375.id,
+        runId: candidateRun!.id,
+        projectId: p!.id,
+        testVariationId: v375!.id,
         name: "checkpoint-1",
         imageKey: key375Candidate,
         viewport: "375x812",
@@ -438,9 +434,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       const suffixedKey = objectKey(suffixed);
       await storage.put(suffixedKey, suffixed, "image/png");
       await db.insert(screenshots).values({
-        runId: candidateRun.id,
-        projectId: p.id,
-        testVariationId: v375.id,
+        runId: candidateRun!.id,
+        projectId: p!.id,
+        testVariationId: v375!.id,
         name: "checkpoint-1",
         imageKey: suffixedKey,
         viewport: "375x812",
@@ -450,9 +446,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
 
     // Candidate's 1280x720 screenshot.
     await db.insert(screenshots).values({
-      runId: candidateRun.id,
-      projectId: p.id,
-      testVariationId: v.id,
+      runId: candidateRun!.id,
+      projectId: p!.id,
+      testVariationId: v!.id,
       name: "checkpoint-2",
       imageKey: key1280Candidate,
       domKey: domCandidateKey,
@@ -461,15 +457,15 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     });
 
     await db.insert(baselines).values({
-      testVariationId: v.id,
-      testRunId: baselineRun.id,
+      testVariationId: v!.id,
+      testRunId: baselineRun!.id,
       branchName: "main",
-      userId: u.id,
+      userId: u!.id,
     });
 
     job = {
       runId: candidateRunId,
-      projectId: p.id,
+      projectId: p!.id,
     };
   }, 60_000);
 
@@ -610,16 +606,16 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
         autoApproveFeature: true,
       })
       .returning();
-    cleanupProjectIds.push(p.id);
+    cleanupProjectIds.push(p!.id);
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -629,9 +625,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .insert(testRuns)
       .values({
         name: "first-run",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
@@ -645,23 +640,23 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     await storage.put(key, fixtureBytes, "image/png");
     await db.delete(screenshots).where(eq(screenshots.imageKey, key));
     await db.insert(screenshots).values({
-      runId: run.id,
-      projectId: p.id,
-      testVariationId: v.id,
+      runId: run!.id,
+      projectId: p!.id,
+      testVariationId: v!.id,
       name: "checkpoint-1",
       imageKey: key,
       viewport: "1280x720",
       browser: "chromium",
     });
 
-    await diffRunPerStep({ runId: run.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: run!.id, projectId: p!.id }, mockLogger, {
       db,
       storage,
       redis,
     });
 
     const updated = await db.query.testRuns.findFirst({
-      where: eq(testRuns.id, run.id),
+      where: eq(testRuns.id, run!.id),
     });
     expect(updated!.status).toBe("new");
     expect(updated!.merge).toBe(true);
@@ -670,11 +665,11 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     const [shot] = await db
       .select({ verdict: screenshots.verdict })
       .from(screenshots)
-      .where(eq(screenshots.runId, run.id));
+      .where(eq(screenshots.runId, run!.id));
     expect(shot!.verdict).toBe("new");
 
     const seededBaselines = await db.query.baselines.findMany({
-      where: eq(baselines.testRunId, run.id),
+      where: eq(baselines.testRunId, run!.id),
     });
     expect(seededBaselines.length).toBe(1);
     expect(seededBaselines[0]!.branchName).toBe("main");
@@ -702,16 +697,16 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
         autoApproveFeature: false,
       })
       .returning();
-    cleanupProjectIds.push(p.id);
+    cleanupProjectIds.push(p!.id);
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -721,9 +716,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .insert(testRuns)
       .values({
         name: "first-run-manual",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "running",
       })
@@ -734,23 +728,23 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     await storage.put(key, fixtureBytes, "image/png");
     await db.delete(screenshots).where(eq(screenshots.imageKey, key));
     await db.insert(screenshots).values({
-      runId: run.id,
-      projectId: p.id,
-      testVariationId: v.id,
+      runId: run!.id,
+      projectId: p!.id,
+      testVariationId: v!.id,
       name: "checkpoint-1",
       imageKey: key,
       viewport: "1280x720",
       browser: "chromium",
     });
 
-    await diffRunPerStep({ runId: run.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: run!.id, projectId: p!.id }, mockLogger, {
       db,
       storage,
       redis,
     });
 
     const updated = await db.query.testRuns.findFirst({
-      where: eq(testRuns.id, run.id),
+      where: eq(testRuns.id, run!.id),
     });
     expect(updated!.status).toBe("new");
     // `merge` means "the run owns a baselines row" (spec §4.3, written by
@@ -761,14 +755,14 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     const [shot] = await db
       .select({ verdict: screenshots.verdict })
       .from(screenshots)
-      .where(eq(screenshots.runId, run.id));
+      .where(eq(screenshots.runId, run!.id));
     expect(shot!.verdict).toBe("new");
 
     // ADR-036: with autoApproveFeature=false, the handler must NOT
     // auto-seed a baseline. The reviewer's approve (`review.approve`) is
     // responsible for materialising the baseline row.
     const seededBaselines = await db.query.baselines.findMany({
-      where: eq(baselines.testRunId, run.id),
+      where: eq(baselines.testRunId, run!.id),
     });
     expect(seededBaselines.length).toBe(0);
   }, 60_000);
@@ -789,16 +783,16 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .insert(projects)
       .values({ name: `dw-abort-${uniq}`, mainBranchName: "main" })
       .returning();
-    cleanupProjectIds.push(p.id);
+    cleanupProjectIds.push(p!.id);
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: true })
       .returning();
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
@@ -808,9 +802,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .insert(testRuns)
       .values({
         name: "baseline-abort",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "passed",
       })
@@ -819,18 +812,17 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .insert(testRuns)
       .values({
         name: "candidate-abort",
-        projectId: p.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: p!.id,
+        buildId: b!.id,
         branchName: "feature/abort",
         status: "running",
       })
       .returning();
     await db.insert(baselines).values({
-      testVariationId: v.id,
-      testRunId: baselineRun.id,
+      testVariationId: v!.id,
+      testRunId: baselineRun!.id,
       branchName: "main",
-      userId: u.id,
+      userId: u!.id,
     });
 
     // Subscribe to the run's event channel BEFORE invoking the handler so
@@ -839,7 +831,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     // Slack) is observed.
     const events: string[] = [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${candidateRun.id}:events`);
+    await sub.subscribe(`run:${candidateRun!.id}:events`);
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((r) => setTimeout(r, 100));
 
@@ -847,7 +839,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     // (the catch block was previously silent on the primary error —
     // a class of bug like odiff GLIBC mismatch would aborted-bucket
     // every run with no clue in dashboards).
-    mockLogger.error.mockClear();
+    vi.mocked(mockLogger.error).mockClear();
 
     // Force the exception: no candidate screenshot rows → handler throws
     // `run_has_no_screenshots:<runId>` (ADR-038: testVariationId is now
@@ -855,7 +847,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     // catch, log diff_job_failed with the original err, write
     // status=aborted, publish run.completed, and re-throw.
     await expect(
-      handleDiffJob({ runId: candidateRun.id, projectId: p.id }, mockLogger, {
+      handleDiffJob({ runId: candidateRun!.id, projectId: p!.id }, mockLogger, {
         db,
         storage,
         redis,
@@ -864,21 +856,21 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
 
     // Loud error log: primary err is logged with diff_job_failed so the
     // BullMQ failedReason isn't the only place the cause lives.
-    const failedLog = mockLogger.error.mock.calls.find(
-      (c) => c[1] === "diff_job_failed",
-    );
+    const failedLog = vi
+      .mocked(mockLogger.error)
+      .mock.calls.find((c) => c[1] === "diff_job_failed");
     expect(failedLog).toBeDefined();
     const failedPayload = failedLog![0] as {
       err: Error;
       runId: string;
       projectId: string;
     };
-    expect(failedPayload.runId).toBe(candidateRun.id);
-    expect(failedPayload.projectId).toBe(p.id);
+    expect(failedPayload.runId).toBe(candidateRun!.id);
+    expect(failedPayload.projectId).toBe(p!.id);
     expect(String(failedPayload.err)).toMatch(/run_has_no_screenshots/);
 
     const updated = await db.query.testRuns.findFirst({
-      where: eq(testRuns.id, candidateRun.id),
+      where: eq(testRuns.id, candidateRun!.id),
     });
     expect(updated!.status).toBe("aborted");
 
@@ -891,8 +883,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       .find((e) => e.type === "run.completed");
     expect(runCompleted).toBeDefined();
     expect(runCompleted.status).toBe("aborted");
-    expect(runCompleted.runId).toBe(candidateRun.id);
-    expect(runCompleted.projectId).toBe(p.id);
+    expect(runCompleted.runId).toBe(candidateRun!.id);
+    expect(runCompleted.projectId).toBe(p!.id);
 
     sub.disconnect();
   }, 60_000);

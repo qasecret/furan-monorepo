@@ -119,34 +119,33 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         diffThreshold: 0.001,
       })
       .returning();
-    candidateProjectIds.push(seedProject.id);
-    projectId = seedProject.id;
+    candidateProjectIds.push(seedProject!.id);
+    projectId = seedProject!.id;
 
     const [b] = await db
       .insert(builds)
-      .values({ projectId: seedProject.id, userId: u.id, isRunning: true })
+      .values({ projectId: seedProject!.id, userId: u!.id, isRunning: true })
       .returning();
-    buildId = b.id;
+    buildId = b!.id;
 
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: seedProject.id,
+        projectId: seedProject!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
       })
       .returning();
-    variationId = v.id;
+    variationId = v!.id;
 
     const [baselineRun] = await db
       .insert(testRuns)
       .values({
         name: "baseline-engines",
-        projectId: seedProject.id,
-        testVariationId: v.id,
-        buildId: b.id,
+        projectId: seedProject!.id,
+        buildId: b!.id,
         branchName: "main",
         status: "passed",
       })
@@ -173,19 +172,19 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
 
     // Insert the shared baseline screenshot + baselines pointer.
     await db.insert(screenshots).values({
-      runId: baselineRun.id,
-      projectId: seedProject.id,
-      testVariationId: v.id,
+      runId: baselineRun!.id,
+      projectId: seedProject!.id,
+      testVariationId: v!.id,
       name: "checkpoint-1",
       imageKey: baselineImageKey,
       viewport: "1280x720",
       browser: "chromium",
     });
     await db.insert(baselines).values({
-      testVariationId: v.id,
-      testRunId: baselineRun.id,
+      testVariationId: v!.id,
+      testRunId: baselineRun!.id,
       branchName: "main",
-      userId: u.id,
+      userId: u!.id,
     });
   }, 60_000);
 
@@ -224,7 +223,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         .values({
           name: `candidate-${engine}`,
           projectId,
-          testVariationId: variationId,
           buildId,
           branchName: "feature/x",
           status: "running",
@@ -238,7 +236,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         .where(eq(screenshots.imageKey, candidateImageKey));
 
       await db.insert(screenshots).values({
-        runId: candidateRun.id,
+        runId: candidateRun!.id,
         projectId,
         testVariationId: variationId,
         name: "checkpoint-1",
@@ -251,14 +249,14 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       // No baseline exists on `feature/x`, so resolveBaseline falls back to
       // the project's default branch (`main`) and finds the shared baseline.
       const job: DiffJob = {
-        runId: candidateRun.id,
+        runId: candidateRun!.id,
         projectId,
       };
 
       await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const updatedRun = await db.query.testRuns.findFirst({
-        where: eq(testRuns.id, candidateRun.id),
+        where: eq(testRuns.id, candidateRun!.id),
       });
       expect(updatedRun).toBeDefined();
       expect(updatedRun!.status).toBe("unresolved");
@@ -288,7 +286,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       .values({
         name: "candidate-malformed",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "feature/malformed",
         status: "running",
@@ -300,7 +297,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       .where(eq(screenshots.imageKey, candidateImageKey));
 
     await db.insert(screenshots).values({
-      runId: candidateRun.id,
+      runId: candidateRun!.id,
       projectId,
       testVariationId: variationId,
       name: "checkpoint-1",
@@ -311,14 +308,14 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
     });
 
     const job: DiffJob = {
-      runId: candidateRun.id,
+      runId: candidateRun!.id,
       projectId,
     };
 
     await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
     const updatedRun = await db.query.testRuns.findFirst({
-      where: eq(testRuns.id, candidateRun.id),
+      where: eq(testRuns.id, candidateRun!.id),
     });
     expect(updatedRun).toBeDefined();
     expect(updatedRun!.status).toBe("unresolved");
@@ -377,36 +374,35 @@ descLayout(
           diffThreshold: 0.001,
         })
         .returning();
-      cleanupProjectIds.push(seedProject.id);
+      cleanupProjectIds.push(seedProject!.id);
       // The candidate run lives here too — baseline resolution is
       // project-scoped (T1).
-      projectId = seedProject.id;
+      projectId = seedProject!.id;
 
       const [b] = await db
         .insert(builds)
-        .values({ projectId: seedProject.id, userId: u.id, isRunning: true })
+        .values({ projectId: seedProject!.id, userId: u!.id, isRunning: true })
         .returning();
-      buildId = b.id;
+      buildId = b!.id;
 
       const [v] = await db
         .insert(testVariations)
         .values({
           name: "v-layout",
-          projectId: seedProject.id,
+          projectId: seedProject!.id,
           branchName: "main",
           browser: "chromium",
           viewport: "1280x720",
         })
         .returning();
-      variationId = v.id;
+      variationId = v!.id;
 
       const [baselineRun] = await db
         .insert(testRuns)
         .values({
           name: "baseline-layout",
-          projectId: seedProject.id,
-          testVariationId: v.id,
-          buildId: b.id,
+          projectId: seedProject!.id,
+          buildId: b!.id,
           branchName: "main",
           status: "passed",
         })
@@ -429,19 +425,19 @@ descLayout(
         );
 
       await db.insert(screenshots).values({
-        runId: baselineRun.id,
-        projectId: seedProject.id,
-        testVariationId: v.id,
+        runId: baselineRun!.id,
+        projectId: seedProject!.id,
+        testVariationId: v!.id,
         name: "checkpoint-layout",
         imageKey: baselineImageKey,
         viewport: "1280x720",
         browser: "chromium",
       });
       await db.insert(baselines).values({
-        testVariationId: v.id,
-        testRunId: baselineRun.id,
+        testVariationId: v!.id,
+        testRunId: baselineRun!.id,
         branchName: "main",
-        userId: u.id,
+        userId: u!.id,
       });
     }, 60_000);
 
@@ -467,7 +463,6 @@ descLayout(
         .values({
           name: `candidate-layout-${uniq}`,
           projectId,
-          testVariationId: variationId,
           buildId,
           branchName: "feature/layout",
           status: "running",
@@ -481,7 +476,7 @@ descLayout(
       // matchLevel:"Layout" on the candidate screenshot — image-first (ADR-047)
       // must route this through runDiff (image compare), not runL2 (DOM-only).
       await db.insert(screenshots).values({
-        runId: candidateRun.id,
+        runId: candidateRun!.id,
         projectId,
         testVariationId: variationId,
         name: "checkpoint-layout",
@@ -493,7 +488,7 @@ descLayout(
       });
 
       const job: DiffJob = {
-        runId: candidateRun.id,
+        runId: candidateRun!.id,
         projectId,
       };
       vi.mocked(mockLogger.info).mockClear();
@@ -501,7 +496,7 @@ descLayout(
 
       // Image diff must have fired — pixel mismatch detected even at Layout level.
       const updatedRun = await db.query.testRuns.findFirst({
-        where: eq(testRuns.id, candidateRun.id),
+        where: eq(testRuns.id, candidateRun!.id),
       });
       expect(updatedRun).toBeDefined();
       expect(updatedRun!.status).toBe("unresolved");
@@ -509,7 +504,7 @@ descLayout(
 
       // No source:"l2" diff_regions — DOM-only path is gone (ADR-047).
       const l2Rows = await db.query.diffRegions.findMany({
-        where: eq(diffRegions.runId, candidateRun.id),
+        where: eq(diffRegions.runId, candidateRun!.id),
       });
       const l2Sources = l2Rows.filter((r) => r.source === "l2");
       expect(l2Sources.length).toBe(0);
@@ -521,7 +516,7 @@ descLayout(
         .mock.calls.find(
           (c) =>
             c[1] === "diff_completed" &&
-            (c[0] as { runId: string }).runId === candidateRun.id,
+            (c[0] as { runId: string }).runId === candidateRun!.id,
         );
       expect(completed).toBeDefined();
       expect((completed![0] as { ranTiers: string[] }).ranTiers).toEqual([

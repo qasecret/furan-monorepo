@@ -1,7 +1,11 @@
 import type { RunStatus } from "@furan/shared-types";
 import { describe, expect, test } from "vitest";
 
-import { buildPayload, isSlackUrl } from "../src/slack/notifier.js";
+import {
+  buildPayload,
+  isSlackUrl,
+  type GenericRunCompletedPayload,
+} from "../src/slack/notifier.js";
 
 describe("isSlackUrl", () => {
   test("returns true for Slack incoming-webhook URLs", () => {
@@ -63,7 +67,7 @@ describe("buildPayload", () => {
       ...baseInput,
       event: { type: "run.completed", runId: "r2" },
       branchName: "",
-    }) as Record<string, unknown>;
+    }) as GenericRunCompletedPayload;
     expect(out.runId).toBe("r2");
     expect(out.status).toBeUndefined();
     expect(out.branchName).toBeUndefined();

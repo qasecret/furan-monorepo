@@ -65,7 +65,6 @@ describe("elementSegment", () => {
     // this test simulates it by spreading a real element's props
     // and clearing tagName via Object.defineProperty.
     const el = parseAndPick(`<div></div>`, "div");
-    // @ts-expect-error — intentional override for the defensive test
     Object.defineProperty(el, "tagName", { value: undefined });
     expect(elementSegment(el)).toBeNull();
   });

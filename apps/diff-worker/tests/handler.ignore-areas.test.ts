@@ -111,19 +111,19 @@ desc(
         .insert(projects)
         .values({ name: `dw-ignore-${uniq}` })
         .returning();
-      projectId = p.id;
+      projectId = p!.id;
 
       const [b] = await db
         .insert(builds)
-        .values({ projectId, userId: u.id, isRunning: false })
+        .values({ projectId, userId: u!.id, isRunning: false })
         .returning();
-      buildId = b.id;
+      buildId = b!.id;
 
       const [v] = await db
         .insert(testVariations)
         .values({ name: "home", projectId })
         .returning();
-      variationId = v.id;
+      variationId = v!.id;
     }, 60_000);
 
     afterAll(async () => {
@@ -142,26 +142,24 @@ desc(
         .values({
           buildId,
           projectId,
-          testVariationId: variationId,
           status: "passed",
           branchName: "main",
           name: "home",
         })
         .returning();
-      baselineRunId = br.id;
+      baselineRunId = br!.id;
 
       const [cr] = await db
         .insert(testRuns)
         .values({
           buildId,
           projectId,
-          testVariationId: variationId,
           status: "new",
           branchName: "main",
           name: "home",
         })
         .returning();
-      candidateRunId = cr.id;
+      candidateRunId = cr!.id;
 
       await db.insert(baselines).values({
         baselineName: "home",
@@ -249,7 +247,7 @@ desc(
       // Per spec §3.2 (run-status-enum) the diff-worker emits "unresolved"
       // (not "failed") on diff-found. Accept either terminal outcome the
       // ignore-merge logic might land on.
-      expect(["passed", "unresolved"]).toContain(row.status);
+      expect(["passed", "unresolved"]).toContain(row!.status);
     }, 60_000);
 
     it("viewport filter: regions tagged with non-matching viewport are skipped", async () => {
@@ -282,7 +280,7 @@ desc(
         .from(testRuns)
         .where(eq(testRuns.id, candidateRunId))
         .limit(1);
-      expect(row.diffPercent).toBeGreaterThan(0);
+      expect(row!.diffPercent).toBeGreaterThan(0);
     }, 60_000);
 
     it("regions without a viewport field apply to all viewports (backward compat)", async () => {
@@ -308,7 +306,7 @@ desc(
         .from(testRuns)
         .where(eq(testRuns.id, candidateRunId))
         .limit(1);
-      expect(row.diffPercent).toBe(0);
+      expect(row!.diffPercent).toBe(0);
     }, 60_000);
 
     it("malformed variation JSON falls back to empty ignoreRegions (no crash)", async () => {
@@ -444,7 +442,6 @@ desc(
         .values({
           buildId,
           projectId,
-          testVariationId: variationId,
           status: "passed",
           branchName: "main",
           name: "home",
@@ -455,7 +452,6 @@ desc(
         .values({
           buildId,
           projectId,
-          testVariationId: variationId,
           status: "new",
           branchName: "main",
           name: "home",
@@ -464,12 +460,12 @@ desc(
       await db.insert(baselines).values({
         baselineName: "home",
         testVariationId: variationId,
-        testRunId: br.id,
+        testRunId: br!.id,
         branchName: "main",
       });
 
-      const bKey = `${objectKey(baselineBytes)}-${br.id}-${VP}`;
-      const cKey = `${objectKey(candidateBytes)}-${cr.id}-${VP}`;
+      const bKey = `${objectKey(baselineBytes)}-${br!.id}-${VP}`;
+      const cKey = `${objectKey(candidateBytes)}-${cr!.id}-${VP}`;
       const elementMapKey = `${cKey}.elements.json`;
 
       await storage.put(bKey, baselineBytes, "image/png");
@@ -488,7 +484,7 @@ desc(
       );
 
       await db.insert(screenshots).values({
-        runId: br.id,
+        runId: br!.id,
         projectId,
         testVariationId: variationId,
         name: "home",
@@ -497,7 +493,7 @@ desc(
         browser: "chromium",
       });
       await db.insert(screenshots).values({
-        runId: cr.id,
+        runId: cr!.id,
         projectId,
         testVariationId: variationId,
         name: "home",
@@ -525,16 +521,16 @@ desc(
         })
         .where(eq(testVariations.id, variationId));
 
-      const job: DiffJob = { runId: cr.id, projectId };
+      const job: DiffJob = { runId: cr!.id, projectId };
       await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const [updated] = await db
         .select()
         .from(testRuns)
-        .where(eq(testRuns.id, cr.id))
+        .where(eq(testRuns.id, cr!.id))
         .limit(1);
-      expect(updated.status).toBe("passed");
-      expect(updated.diffPercent).toBe(0);
+      expect(updated!.status).toBe("passed");
+      expect(updated!.diffPercent).toBe(0);
     }, 60_000);
 
     it("flag off: no dynamic_text audit rows persisted", async () => {

@@ -74,40 +74,34 @@ async function seed(h: TestApp): Promise<Seeded> {
 
   await h.db
     .insert(projectMembers)
-    .values({ userId: member.id, projectId: project.id });
+    .values({ userId: member!.id, projectId: project!.id });
 
   const [build] = await h.db
     .insert(builds)
     .values({
-      projectId: project.id,
-      userId: member.id,
+      projectId: project!.id,
+      userId: member!.id,
       isRunning: true,
     })
-    .returning();
-
-  const [variation] = await h.db
-    .insert(testVariations)
-    .values({ name: "home", projectId: project.id })
     .returning();
 
   const [run] = await h.db
     .insert(testRuns)
     .values({
-      buildId: build.id,
-      projectId: project.id,
-      testVariationId: variation.id,
+      buildId: build!.id,
+      projectId: project!.id,
       name: "home",
       status: "new",
     })
     .returning();
 
   return {
-    memberId: member.id,
-    memberJwt: h.app.jwt.sign({ sub: member.id, role: "editor" }),
-    nonMemberId: nonMember.id,
-    nonMemberJwt: h.app.jwt.sign({ sub: nonMember.id, role: "editor" }),
-    runId: run.id,
-    projectId: project.id,
+    memberId: member!.id,
+    memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    nonMemberId: nonMember!.id,
+    nonMemberJwt: h.app.jwt.sign({ sub: nonMember!.id, role: "editor" }),
+    runId: run!.id,
+    projectId: project!.id,
   };
 }
 

@@ -202,7 +202,7 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     let sharedRunId: string | null = null;
     for (const cp of opts.checkpoints) {
       if (!cp.baseline) continue;
-      let runId = sharedRunId;
+      let runId: string | null = sharedRunId;
       if (runId === null) {
         const [br] = await db
           .insert(testRuns)

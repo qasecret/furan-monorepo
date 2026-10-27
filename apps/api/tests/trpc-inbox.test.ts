@@ -1365,7 +1365,7 @@ d("inbox.list similarity mode", () => {
         { projectId: project.id, branchName: "main" },
         { projectId: project.id, branchName: "main" },
       ])
-      .returning()) as [(typeof builds)[0], (typeof builds)[0]];
+      .returning()) as [typeof builds.$inferSelect, typeof builds.$inferSelect];
 
     // Cluster A: 3 runs with "v1:alpha" across both builds.
     // Cluster B: 2 runs with "v1:beta" across buildA.

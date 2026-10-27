@@ -134,17 +134,17 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       .insert(projects)
       .values({ name: `dw-layout-${uniq}` })
       .returning();
-    projectId = p.id;
+    projectId = p!.id;
     const [b] = await db
       .insert(builds)
-      .values({ projectId, userId: u.id, isRunning: false })
+      .values({ projectId, userId: u!.id, isRunning: false })
       .returning();
-    buildId = b.id;
+    buildId = b!.id;
     const [v] = await db
       .insert(testVariations)
       .values({ name: "home", projectId })
       .returning();
-    variationId = v.id;
+    variationId = v!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -188,25 +188,23 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       .values({
         buildId,
         projectId,
-        testVariationId: variationId,
         status: "passed",
         branchName: "main",
         name: "home",
       })
       .returning();
-    baselineRunId = br.id;
+    baselineRunId = br!.id;
     const [cr] = await db
       .insert(testRuns)
       .values({
         buildId,
         projectId,
-        testVariationId: variationId,
         status: "new",
         branchName: "main",
         name: "home",
       })
       .returning();
-    candidateRunId = cr.id;
+    candidateRunId = cr!.id;
 
     await db.insert(baselines).values({
       baselineName: "home",
@@ -272,7 +270,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       },
     );
 
-    expect((await runRow()).status).toBe("passed");
+    expect((await runRow())!.status).toBe("passed");
     const regions = await regionsFor();
     expect(regions.some((r) => r.source === "layout_suppressed")).toBe(true);
     expect(regions.some((r) => r.source === "layout_kept")).toBe(false);
@@ -298,7 +296,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       },
     );
 
-    expect((await runRow()).status).toBe("unresolved");
+    expect((await runRow())!.status).toBe("unresolved");
     const regions = await regionsFor();
     expect(regions.some((r) => r.source === "layout_kept")).toBe(true);
   }, 60_000);
@@ -322,7 +320,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       },
     );
 
-    expect((await runRow()).status).toBe("unresolved");
+    expect((await runRow())!.status).toBe("unresolved");
     const regions = await regionsFor();
     // Degrade leaves l1_pixel regions (no re-tag) but prefixes the description.
     expect(regions.some((r) => r.source === "layout_suppressed")).toBe(false);
@@ -350,7 +348,7 @@ desc("handleDiffJob — Layout match level (ADR-053, integration)", () => {
       },
     );
 
-    expect((await runRow()).status).toBe("unresolved");
+    expect((await runRow())!.status).toBe("unresolved");
     const regions = await regionsFor();
     expect(
       regions.some(
