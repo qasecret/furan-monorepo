@@ -1101,7 +1101,11 @@ desc("the empty-run scan's plan", () => {
           ),
         );
       } finally {
-        await tx.execute(sql.raw(`DEALLOCATE ${name}`));
+        // Best effort: after a failed EXPLAIN the transaction is aborted and
+        // the DEALLOCATE fails too ("current transaction is aborted"), which
+        // must not replace the EXPLAIN's own error. The name is random and the
+        // connection is closed with the suite, so a leftover costs nothing.
+        await tx.execute(sql.raw(`DEALLOCATE ${name}`)).catch(() => undefined);
       }
     });
     const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
