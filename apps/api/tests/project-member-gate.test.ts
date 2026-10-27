@@ -5,6 +5,7 @@ import {
   auditLog,
   autoRules,
   checkpointDecisions,
+  createDb,
   eq,
   inArray,
   or,
@@ -280,6 +281,13 @@ d("projectMember gate", () => {
 
   /** Statements the API's own connection pool sent, while recording. */
   let wireLog: string[] | null = null;
+  /**
+   * A pool of ONE connection behind a second mount of the probe router, so a
+   * read after a call runs on the very connection the call ran on. The owner
+   * connection (`DATABASE_URL`) in both modes: what it checks is the scope's
+   * settings, which no role changes.
+   */
+  let pinned: { db: DB; close: () => Promise<void> } | undefined;
 
   const headers = (c: Caller) =>
     c.jwt ? { authorization: `Bearer ${c.jwt}` } : {};
@@ -291,6 +299,16 @@ d("projectMember gate", () => {
     createTRPCClient<typeof probeRouter>({
       links: [
         httpLink({ url: `${baseUrl}/trpc/gate-probe`, headers: headers(c) }),
+      ],
+    });
+  /** {@link probe} on the one-connection pool (`pinned`). */
+  const pinnedProbe = (c: Caller) =>
+    createTRPCClient<typeof probeRouter>({
+      links: [
+        httpLink({
+          url: `${baseUrl}/trpc/gate-probe-pinned`,
+          headers: headers(c),
+        }),
       ],
     });
 
@@ -346,21 +364,28 @@ d("projectMember gate", () => {
 
   beforeAll(async () => {
     h = await createTestApp({ skipReady: true });
-    await h.app.register(fastifyTRPCPlugin, {
-      prefix: "/trpc/gate-probe",
-      trpcOptions: {
-        router: probeRouter,
-        createContext: ({ req }) =>
-          buildContext(req, {
-            db: h.app.db,
-            telemetry: h.telemetry,
-            diffQueue: { addBulk: h.diffQueueAddBulk },
-            broadcaster: {
-              publishProjectEvent: h.broadcasterPublish,
-            } as unknown as Broadcaster,
-          }),
-      } satisfies FastifyTRPCPluginOptions<typeof probeRouter>["trpcOptions"],
-    });
+    pinned = createDb({ max: 1 });
+    const mounts: Array<[string, DB]> = [
+      ["/trpc/gate-probe", h.app.db],
+      ["/trpc/gate-probe-pinned", pinned.db],
+    ];
+    for (const [prefix, db] of mounts) {
+      await h.app.register(fastifyTRPCPlugin, {
+        prefix,
+        trpcOptions: {
+          router: probeRouter,
+          createContext: ({ req }) =>
+            buildContext(req, {
+              db,
+              telemetry: h.telemetry,
+              diffQueue: { addBulk: h.diffQueueAddBulk },
+              broadcaster: {
+                publishProjectEvent: h.broadcasterPublish,
+              } as unknown as Broadcaster,
+            }),
+        } satisfies FastifyTRPCPluginOptions<typeof probeRouter>["trpcOptions"],
+      });
+    }
     await h.app.listen({ port: 0, host: "127.0.0.1" });
     baseUrl = `http://127.0.0.1:${(h.app.server.address() as AddressInfo).port}`;
 
@@ -415,6 +440,7 @@ d("projectMember gate", () => {
       }
       await h.close();
     }
+    await pinned?.close();
   });
 
   /** Every caller × [in P, in Q, missing] through `call`. */
@@ -584,35 +610,37 @@ d("projectMember gate", () => {
       }
     });
 
-    test("after the call: no pooled connection keeps a scope setting", async () => {
-      await probe(callers.editorOfP).run.query({ runId: P.runId });
-      await outcomeOf(() =>
-        probe(callers.outsider).run.query({ runId: P.runId }),
-      );
-      await outcomeOf(() =>
-        probe(callers.editorOfP).run.query({ runId: randomUUID() }),
-      );
-      // Concurrent and slow, so they spread over the pool's connections.
-      const seen = await Promise.all(
-        Array.from({ length: 10 }, () =>
-          h.app.db.execute<Scope>(sql`
-            SELECT current_setting('app.user_id', true) AS user_id,
-                   current_setting('app.user_role', true) AS user_role,
-                   current_setting('app.current_project_id', true) AS project_id,
-                   pg_sleep(0.05)::text AS slept`),
+    test("after the call: the connection that ran it keeps no scope setting", async () => {
+      // On the one-connection pool, the read below runs on the connection
+      // each call ran on: one that passed the gate, one it refused, one with
+      // no such run.
+      const c = callers.editorOfP;
+      expect(await pinnedProbe(c).run.query({ runId: P.runId })).toEqual({
+        user_id: c.id,
+        user_role: c.role,
+        project_id: "",
+      });
+      expect(
+        await outcomeOf(() =>
+          pinnedProbe(callers.outsider).run.query({ runId: P.runId }),
         ),
-      );
-      // A setting a committed transaction set locally reads back empty; one
-      // never set on that connection reads back NULL.
-      const unset = (v: string | null) => (v === null ? "" : v);
-      for (const rows of seen) {
-        const { user_id, user_role, project_id } = rows[0]!;
-        expect([unset(user_id), unset(user_role), unset(project_id)]).toEqual([
-          "",
-          "",
-          "",
-        ]);
-      }
+      ).toMatch(/^FORBIDDEN /);
+      expect(
+        await outcomeOf(() =>
+          pinnedProbe(c).run.query({ runId: randomUUID() }),
+        ),
+      ).toMatch(/^NOT_FOUND /);
+
+      const [row] = await pinned!.db.execute<Scope>(sql`
+        SELECT current_setting('app.user_id', true) AS user_id,
+               current_setting('app.user_role', true) AS user_role,
+               current_setting('app.current_project_id', true) AS project_id`);
+      // A setting a finished transaction set locally reads back empty.
+      expect([row!.user_id, row!.user_role, row!.project_id]).toEqual([
+        "",
+        "",
+        "",
+      ]);
     });
   });
 

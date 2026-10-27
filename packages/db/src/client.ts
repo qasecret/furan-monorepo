@@ -30,10 +30,13 @@ export function createDb(opts?: {
   /** Override the connection string (ADR-058: the API passes the `furan_app`
    *  URL so RLS applies). Defaults to the `DATABASE_URL` secret. */
   url?: string;
+  /** Connections in the pool (default 10). A test pins 1 to know that two
+   *  statements ran on the same connection. */
+  max?: number;
 }): { db: DB; close: () => Promise<void> } {
   const url = opts?.url ?? getSecret("DATABASE_URL");
   const queryClient = postgres(url, {
-    max: 10,
+    max: opts?.max ?? 10,
     connect_timeout: CONNECT_TIMEOUT_SEC,
     idle_timeout: IDLE_TIMEOUT_SEC,
     max_lifetime: MAX_LIFETIME_SEC,
