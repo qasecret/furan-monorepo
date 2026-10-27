@@ -8,6 +8,7 @@ import { BUDGETS, type Measurement } from "../budgets.js";
 import { mintJwt, trpc, type TrpcResult } from "../clients/http.js";
 import { readHistogram } from "../clients/metrics.js";
 import { InterruptedError, describeError } from "../errors.js";
+import { railNeighbours } from "../rail.js";
 import { pendingSteps, railsOf, type Seeded } from "../seed/index.js";
 import type { Stack } from "../stack/api.js";
 
@@ -21,11 +22,7 @@ import {
   type CallSample,
 } from "./server-math.js";
 import { runSolo } from "./solo.js";
-import {
-  railNeighbours,
-  type ViewerCall,
-  type ViewerTarget,
-} from "./viewer-calls.js";
+import type { ViewerCall, ViewerTarget } from "./viewer-calls.js";
 
 export {
   FALLBACK_VIEWER_PATHS,

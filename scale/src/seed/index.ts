@@ -19,7 +19,7 @@ import {
 import { objectKey, type Storage } from "@furan/storage";
 import bcrypt from "bcryptjs";
 
-import { railNeighbours } from "../suites/viewer-calls.js";
+import { railNeighbours } from "../rail.js";
 
 import { generateDiffPng, generatePng } from "./images.js";
 import {

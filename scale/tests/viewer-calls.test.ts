@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { railNeighbours } from "../src/rail.js";
 import type { Seeded } from "../src/seed/index.js";
 import {
   FALLBACK_VIEWER_PATHS,
   ViewerCallDriftError,
   loadViewerCalls,
-  railNeighbours,
   viewerTargetOf,
 } from "../src/suites/viewer-calls.js";
 
