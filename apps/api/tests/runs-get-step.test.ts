@@ -613,6 +613,34 @@ d("runs.getStep", () => {
       await h.db.delete(screenshots).where(eq(screenshots.id, stray!.id));
     });
 
+    test("getStep never reports another project's decision on the step", async () => {
+      const s = await seed({ checkpoints: [cp("a", "unresolved")] });
+      const foreign = await seed({ checkpoints: [cp("z", "unresolved")] });
+      // Corrupt data: an active decision of the foreign project on this step.
+      await h.db.insert(checkpointDecisions).values({
+        projectId: foreign.projectId,
+        runId: s.runId,
+        screenshotId: s.shots.a!.id,
+        actionId: randomUUID(),
+        decision: "approved",
+        actorId: foreign.editor.id,
+        source: "viewer",
+        before: null,
+      });
+      // Admins see every project: the pin is in the query, not the role.
+      for (const user of [s.editor, s.admin]) {
+        const v = await as(user).runs.getStep.query({
+          runId: s.runId,
+          checkpointId: s.shots.a!.id,
+        });
+        expect(v.review).toEqual({
+          verdict: "unresolved",
+          state: "unresolved",
+          decision: null,
+        });
+      }
+    });
+
     test("getStep is gated like the neighbouring reads", async () => {
       const s = await seed({ checkpoints: [cp("a", "unresolved")] });
       const input = { runId: s.runId, checkpointId: s.shots.a!.id };
@@ -716,6 +744,7 @@ d("runs.getStep", () => {
           expect(view.review.decision?.undo).toEqual({ allowed: true });
           expect(view.newerCapture).not.toBeNull();
         }
+        expect(a.count).toBeGreaterThan(0);
         expect(b.count).toBe(a.count);
       }
     });
@@ -731,7 +760,12 @@ d("runs.getStep", () => {
     user: ReviewUser;
     runId: string;
     stepId: string;
-    expected: { runId: string; checkpointId: string } | null;
+    /** The run and step named; and the build's name, when the case pins it. */
+    expected: {
+      runId: string;
+      checkpointId: string;
+      buildName?: string;
+    } | null;
   }
 
   async function stampRun(runId: string, sec: number): Promise<void> {
@@ -989,26 +1023,79 @@ d("runs.getStep", () => {
         expected: null,
       }));
     },
+
+    // Not a golden of the old code, which named the foreign build: the build
+    // is read in this project only (as `runByName` never names another
+    // project's build's runner).
+    "a later run in another project's build: that build is never named":
+      async () => {
+        const s = await seed({ checkpoints: [cp("a", "unresolved")] });
+        const foreign = await seed({ checkpoints: [cp("z", "unresolved")] });
+        await h.db
+          .update(builds)
+          .set({ name: "Foreign 9", number: 9, ciBuildId: "ci-foreign-0123" })
+          .where(eq(builds.id, foreign.buildId));
+        const later = await addReviewRun(h, s, {
+          checkpoints: [cp("a", "unresolved")],
+        });
+        // Corrupt data: the later run sits in the foreign project's build.
+        await h.db
+          .update(testRuns)
+          .set({ buildId: foreign.buildId })
+          .where(eq(testRuns.id, later.runId));
+        // Named by its build id alone, as a build the reader cannot see is:
+        // never the foreign build's name, number, CI id or test name.
+        const want = {
+          runId: later.runId,
+          checkpointId: later.shots.a!.id,
+          buildName: foreign.buildId.slice(0, 8),
+        };
+        return [s.editor, s.admin].map((user) => ({
+          user,
+          runId: s.runId,
+          stepId: s.shots.a!.id,
+          expected: want,
+        }));
+      },
   };
 
-  /** `newerCapture` reduced to what the cases pin: the run and its step. */
+  /**
+   * `newerCapture` reduced to what the case pins: the run and its step, and
+   * the build's name when the case names one.
+   */
   const pinned = (
-    n: { runId: string; checkpointId: string } | null | undefined,
-  ) => (n ? { runId: n.runId, checkpointId: n.checkpointId } : null);
+    n:
+      | { runId: string; checkpointId: string; buildName: string }
+      | null
+      | undefined,
+    want: NewerCase["expected"],
+  ) =>
+    n
+      ? {
+          runId: n.runId,
+          checkpointId: n.checkpointId,
+          ...(want?.buildName !== undefined ? { buildName: n.buildName } : {}),
+        }
+      : null;
 
+  // Every scenario but the last is a golden of the old code (green on
+  // 5d23f7f0); the last pins the build lookup to the project.
   describe("the newer capture, as the existing reads report it", () => {
     for (const [name, scenario] of Object.entries(scenarios)) {
-      test(`golden: ${name}`, async () => {
+      test(name, async () => {
         for (const c of await scenario()) {
           const list = await as(c.user).runs.listCheckpoints.query({
             runId: c.runId,
           });
           const run = await as(c.user).runs.getById.query({ runId: c.runId });
           expect(
-            pinned(list.items.find((i) => i.id === c.stepId)!.newerCapture),
+            pinned(
+              list.items.find((i) => i.id === c.stepId)!.newerCapture,
+              c.expected,
+            ),
           ).toEqual(c.expected);
           expect(
-            pinned(run.checkpointContexts[c.stepId]!.newerCapture),
+            pinned(run.checkpointContexts[c.stepId]!.newerCapture, c.expected),
           ).toEqual(c.expected);
         }
       });
@@ -1023,7 +1110,7 @@ d("runs.getStep", () => {
             runId: c.runId,
             checkpointId: c.stepId,
           });
-          expect(pinned(v.newerCapture)).toEqual(c.expected);
+          expect(pinned(v.newerCapture, c.expected)).toEqual(c.expected);
         }
       });
     }

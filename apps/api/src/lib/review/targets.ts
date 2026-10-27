@@ -316,12 +316,15 @@ export interface ActiveDecision {
 /**
  * The active decision (`reverted_at IS NULL`; at most one per checkpoint, by
  * the partial unique index) of each checkpoint, either the given ones or every
- * one of a run. Decisions always carry their screenshot's run
- * (`decideCheckpoints`, backfill), so the run form reads the same rows.
+ * one of a run, only `projectId`'s when it is given. Decisions always carry
+ * their screenshot's run (`decideCheckpoints`, backfill), so the run form
+ * reads the same rows.
  */
 export async function loadActiveDecisionDetails(
   db: DB | Tx,
-  by: { screenshotIds: string[] } | { runId: string },
+  by: ({ screenshotIds: string[] } | { runId: string }) & {
+    projectId?: string;
+  },
 ): Promise<Map<string, ActiveDecision>> {
   if ("screenshotIds" in by && by.screenshotIds.length === 0) return new Map();
   const rows = await db
@@ -347,6 +350,9 @@ export async function loadActiveDecisionDetails(
           ? inArray(checkpointDecisions.screenshotId, by.screenshotIds)
           : eq(checkpointDecisions.runId, by.runId),
         isNull(checkpointDecisions.revertedAt),
+        by.projectId === undefined
+          ? undefined
+          : eq(checkpointDecisions.projectId, by.projectId),
       ),
     );
   return new Map(

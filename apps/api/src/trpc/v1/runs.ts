@@ -669,7 +669,9 @@ export const runsRouter = t.router({
   /**
    * The run, every one of its steps with each step's baseline context and
    * review, and its regions. `runByName` is its build's runner, named like
-   * `builds.getById` names them. The viewer reads one step through `getStep`.
+   * `builds.getById` names them. One step's context is `getStep`'s to serve:
+   * the viewer moves to it (spec 2026-10-27 §5), and this read then becomes
+   * the run header.
    */
   getById: publicProcedure
     .input(runIdInput)
