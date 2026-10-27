@@ -42,15 +42,23 @@ function loadedSteps(
     .filter((e): e is [QueryKey, StepDetail] => e[1] !== undefined);
 }
 
-/** Stops answers already on their way from landing on top of a patch. */
+/**
+ * Stops answers already on their way from landing on top of a patch of the
+ * steps `checkpointIds` of run `runId`. Of the steps read on their own, only
+ * those: a neighbour or the review loop's next step, fetched ahead and still
+ * on its way, is not touched by the patch and keeps coming.
+ */
 export async function cancelRun(
-  { utils, queryClient }: Caches,
+  { utils }: Caches,
   runId: string,
+  checkpointIds: readonly string[],
 ): Promise<void> {
   await Promise.all([
     utils.runs.listCheckpoints.cancel({ runId }),
     utils.runs.getById.cancel({ runId }),
-    queryClient.cancelQueries({ queryKey: stepsKey(runId) }),
+    ...checkpointIds.map((checkpointId) =>
+      utils.runs.getStep.cancel({ runId, checkpointId }),
+    ),
     utils.runs.list.cancel(),
     utils.builds.getById.cancel(),
   ]);

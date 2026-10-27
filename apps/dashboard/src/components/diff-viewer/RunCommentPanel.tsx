@@ -23,10 +23,10 @@ interface Props {
  * Collapsible per-run comment editor.
  *
  * Reads the current value from the run header's query cache
- * (`runs.getById`, no extra fetch). Writes via `runs.setComment`. Save triggers: click the Save
- * button, or press Cmd/Ctrl+Enter inside the textarea. Empty/whitespace
- * input is normalized to `null` so saving an emptied textarea clears the
- * column.
+ * (`runs.getById`, no extra fetch). Writes via `runs.setComment`. Save
+ * triggers: click the Save button, or press Cmd/Ctrl+Enter inside the
+ * textarea. Empty/whitespace input is normalized to `null` so saving an
+ * emptied textarea clears the column.
  *
  * Keystrokes inside the textarea have their propagation stopped so the
  * dashboard's key dispatcher (e.g. the viewer's `A`/`R`/`C` commands from

@@ -463,7 +463,6 @@ describe("useReviewMutations: optimistic decide", () => {
     seed();
     const pending = deferred();
     server.approve.mockReturnValueOnce(pending.promise);
-    const cancelSteps = vi.spyOn(qc, "cancelQueries");
     const { result, run } = setup();
 
     await run(() =>
@@ -505,10 +504,11 @@ describe("useReviewMutations: optimistic decide", () => {
       runId: RUN,
     });
     expect(utils.runs.getById.cancel).toHaveBeenCalledWith({ runId: RUN });
-    expect(cancelSteps).toHaveBeenCalledWith({
-      queryKey: keyOf(["runs", "getStep"], { runId: RUN }),
-    });
-    cancelSteps.mockRestore();
+    // Of the steps read on their own, only the one the decision reaches: a
+    // neighbour fetched ahead keeps coming.
+    expect(utils.runs.getStep.cancel.mock.calls).toEqual([
+      [{ runId: RUN, checkpointId: A }],
+    ]);
 
     pending.resolve(decided());
     await run();

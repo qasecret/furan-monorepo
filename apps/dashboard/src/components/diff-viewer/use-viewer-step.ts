@@ -49,16 +49,24 @@ export function useStep(runId: string, checkpointId: string | undefined) {
 }
 
 /**
- * A step of `runId` as the cache holds it, never read for itself: a
- * neighbour `usePrefetchSteps` fetched ahead, once it is in.
+ * A neighbour of the step on screen, which `usePrefetchSteps` fetches ahead:
+ * watched like the step on screen, so an event that makes it stale (the run's
+ * events, a decision, an ignore-region or sensitivity save) reads it again at
+ * once, and a move to it never shows what it was before the event. Watching
+ * it asks for nothing beyond the read fetched ahead (`refetchOnMount: false`:
+ * one already in the cache is not asked for again until an event says).
  */
-export function useCachedStep(
+export function useNeighbourStep(
   runId: string,
   checkpointId: string | undefined,
 ): StepView | undefined {
   return trpc.runs.getStep.useQuery(
     { runId, checkpointId: checkpointId ?? "" },
-    { ...stepOptions, enabled: false },
+    {
+      ...stepOptions,
+      enabled: checkpointId !== undefined,
+      refetchOnMount: false,
+    },
   ).data;
 }
 
@@ -95,6 +103,7 @@ export function usePrefetchSteps(
 
 /** What the step list says of a step's review (a `listCheckpoints` item). */
 interface ListedStep {
+  verdict: StepView["review"]["verdict"];
   state: StepView["review"]["state"];
   decision: { actionId: string; undo: { allowed: boolean } } | null;
   newerCapture: { buildName: string } | null;
@@ -105,6 +114,7 @@ interface ListedStep {
 function agree(listed: ListedStep, view: StepView): boolean {
   const { review, newerCapture, step } = view;
   return (
+    listed.verdict === review.verdict &&
     listed.state === review.state &&
     (listed.decision?.actionId ?? null) ===
       (review.decision?.actionId ?? null) &&
@@ -140,4 +150,49 @@ export function useStepAgreesWithList(
       void utils.runs.getStep.invalidate({ runId, checkpointId });
     }
   }, [stale, utils, runId, checkpointId]);
+}
+
+/** Viewers on screen, by run. */
+const viewersOf = new Map<string, number>();
+/** Runs no viewer shows any more, waiting out `LEAVE_GRACE_MS`. */
+const leaving = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * How long a run's step reads are kept as they are after its last viewer
+ * goes. The route remounts the viewer on every step, in the same commit or
+ * just after: a remount on another step of the run is no leaving.
+ */
+const LEAVE_GRACE_MS = 1_000;
+
+/**
+ * Marks the run's step reads stale once no viewer shows the run any more.
+ * Away from it, its events reach no viewer; a step read kept fresh for
+ * `STEP_STALE_MS` could miss a re-diff (its regions, its numbers) made
+ * meanwhile, so coming back reads the steps again. Nothing is read now.
+ */
+export function useStepsStaleWhenLeft(runId: string): void {
+  const utils = trpc.useUtils();
+  useEffect(() => {
+    clearTimeout(leaving.get(runId));
+    leaving.delete(runId);
+    viewersOf.set(runId, (viewersOf.get(runId) ?? 0) + 1);
+    return () => {
+      const left = (viewersOf.get(runId) ?? 1) - 1;
+      if (left > 0) {
+        viewersOf.set(runId, left);
+        return;
+      }
+      viewersOf.delete(runId);
+      leaving.set(
+        runId,
+        setTimeout(() => {
+          leaving.delete(runId);
+          void utils.runs.getStep.invalidate(
+            { runId },
+            { refetchType: "none" },
+          );
+        }, LEAVE_GRACE_MS),
+      );
+    };
+  }, [utils, runId]);
 }
