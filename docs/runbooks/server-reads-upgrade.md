@@ -42,19 +42,22 @@ calls it. The release before `0043` has no such code: it writes no counters.
 ## 2. Before you upgrade
 
 1. **Snapshot the database.** See [`restore-from-backup.md`](./restore-from-backup.md).
-2. **Measure the tables** so you can read §3's figures for your install:
+2. **Set `P` and measure the tables** so you can read §3's figures for your
+   install. `P` is the Compose command every step below uses:
 
    ```bash
+   P="docker compose -p docker --env-file infra/docker/.env -f infra/docker/compose.yml"
+   # For the one-file install instead:
+   # P="docker compose -f furan-compose.yml"
    $P exec postgres psql -U "$POSTGRES_USER" "$POSTGRES_DB" -c \
      "SELECT (SELECT count(*) FROM screenshots) AS steps, (SELECT count(*) FROM test_runs) AS runs;"
    ```
 
-   (`P` as in step 3.)
-
 3. **Stop the app services (api, capture-worker, diff-worker) while the
-   migrations run (required).** On a plain `docker compose up -d` the previous
-   release keeps serving while `migrate` runs. Here that is unsafe, for four
-   reasons:
+   migrations run (required).** The previous release can keep serving while
+   `migrate` runs: on a second host, when `migrate` is run by hand with the
+   app up, or under another orchestrator. Here that is unsafe, for four
+   reasons, which is why the services are stopped first:
    - **Index builds block writes.** Each `CREATE INDEX` in `0043` and `0044`
      holds a SHARE lock on its table while it builds: every upload, diff and
      decision that writes `test_runs`, `screenshots` or `baselines` waits for
@@ -85,18 +88,16 @@ calls it. The release before `0043` has no such code: it writes no counters.
    [`production-deploy.md` §0](./production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep).
 
    ```bash
-   P="docker compose -p docker --env-file infra/docker/.env -f infra/docker/compose.yml"
    $P stop api capture-worker diff-worker integrations
    $P pull
    $P run --rm migrate
    $P up -d
    ```
 
-   For the one-file install, set `P="docker compose -f furan-compose.yml"`.
+   Then verify (§4) and take the steps of §5, which every upgrade takes.
    Stopping `integrations` too is optional: it writes none of the tables
-   these migrations change. Let in-flight
-   capture and diff jobs finish before stopping if you can (the queue checks
-   are in
+   these migrations change. Let in-flight capture and diff jobs finish before
+   stopping if you can (the queue checks are in
    [`migration-deploy-order.md` §2](./migration-deploy-order.md#2-procedure--single-host-compose-default-install),
    step 3).
 
@@ -112,14 +113,14 @@ Measured on a database of 1.09 million steps in 230,000 runs, where the image
 and diff keys repeat about 24 times each (the same page captured again). The
 figures for a different install are estimates and are marked as such.
 
-| Work                                                         | Figure                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0044`'s four `screenshots` key indexes                      | **Measured:** built in 1.4 s, 0.2 s, 0.8 s and 0.6 s (`image_key`, `dom_key`, `element_map_key`, `diff_image_key`); **18.1 MB** together (8.2, 0.9, 5.3 and 3.7 MB).                                                                                                                                                                                                                                 |
-| `0044`'s two `test_runs` key indexes                         | **Measured:** 0.04 s and 0.1 s; `test_runs_diff_name_idx` 816 kB, `test_runs_image_name_idx` 8 kB (nothing writes `image_name` any more, so it holds only old rows).                                                                                                                                                                                                                                 |
-| The same key indexes when every capture is a different image | **Estimate:** about **120 MB** at 1.2 million steps. Repeated keys are stored once per index page (btree deduplication), so shared images keep them far smaller, as measured above.                                                                                                                                                                                                                  |
-| Key indexes built twice                                      | `0043` builds the five key indexes on the key alone, then `0044` drops them and builds them again as `(key, project_id)`. On an upgrade across both files, count the key-index build time **twice**. The disk is not needed twice: each is dropped before its replacement is built.                                                                                                                  |
-| `0043`'s other indexes                                       | **Estimate** (not measured; about 50 to 70 bytes an entry): `screenshots_variation_created_idx` about 70 MB at 1.2 million steps; `test_runs_build_created_idx` and `test_runs_build_status_idx` about 10 to 20 MB each at 230,000 runs. `test_runs_pending_idx` and `test_runs_running_idx` hold only runs with pending steps or in flight: small. The three dropped indexes give their space back. |
-| `0043`'s backfill                                            | **Estimate** (not measured): it reads every run once and the open steps once, and writes only the runs that have pending steps, usually a small share. Expect seconds per million steps, less than the index builds.                                                                                                                                                                                 |
+| Work                                                         | Figure                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0044`'s four `screenshots` key indexes                      | **Measured:** built in 1.4 s, 0.2 s, 0.8 s and 0.6 s (`image_key`, `dom_key`, `element_map_key`, `diff_image_key`); **18.1 MB** together (8.2, 0.9, 5.3 and 3.7 MB).                                                                                                                                                                                                                                                                                                                                                                          |
+| `0044`'s two `test_runs` key indexes                         | **Measured:** 0.04 s and 0.1 s; `test_runs_diff_name_idx` 816 kB, `test_runs_image_name_idx` 8 kB (nothing writes `image_name` any more, so it holds only old rows).                                                                                                                                                                                                                                                                                                                                                                          |
+| The same key indexes when every capture is a different image | **Estimate:** about **120 MB** at 1.2 million steps for the keys alone (the spec's figure, not measured). The `(key, project_id)` form adds about 16 bytes an entry (the project's uuid) where keys are distinct, so about 16 MB more per million such entries. Repeated keys are stored once per index page (btree deduplication), so shared images keep them far smaller, as measured above.                                                                                                                                                |
+| Key indexes built twice                                      | `0043` builds the five key indexes on the key alone, then `0044` drops them and builds them again as `(key, project_id)`. On an upgrade across both files, count the key-index build time **twice**. Under the compose runner the disk is not needed twice: each statement commits on its own, so an index's file is gone before its replacement is built. Under `drizzle-kit migrate` (one transaction) a dropped index's file is removed only at commit, so both versions of each key index occupy disk until then: count their size twice. |
+| `0043`'s other indexes                                       | **Estimate** (not measured; about 50 to 70 bytes an entry): `screenshots_variation_created_idx` about 70 MB at 1.2 million steps; `test_runs_build_created_idx` and `test_runs_build_status_idx` about 10 to 20 MB each at 230,000 runs. `test_runs_pending_idx` and `test_runs_running_idx` hold only runs with pending steps or in flight: small. The three dropped indexes give their space back.                                                                                                                                          |
+| `0043`'s backfill                                            | **Estimate** (not measured): it reads every run once and the open steps once, and writes only the runs that have pending steps, usually a small share. Its time has not been measured, nor compared with the index builds': time it on the restored copy (below).                                                                                                                                                                                                                                                                             |
 
 Each index build reads its whole table once and sorts it, so time grows a
 little faster than the table. On a large install, run the migrations once on a
@@ -139,7 +140,8 @@ From a source checkout, with `DATABASE_URL` set (the owner connection):
 
 Healthy output is `0 mismatches`, exit code `0`. Each mismatch is a line
 `run_id, stored, computed, stored_counters, computed_counters`, the counters as
-`pending/failed`. The CLI is described in full in
+`pending/failed`; a counter mismatch is what §5's repair fixes. The CLI is
+described in full in
 [`review-model-upgrade.md` §4](./review-model-upgrade.md#4-verify-verify-review-rollup);
 never point it at the api's `DATABASE_URL_APP` role.
 
@@ -177,29 +179,44 @@ $P exec postgres psql -U "$POSTGRES_USER" "$POSTGRES_DB" -c \
    ORDER BY 1;"
 ```
 
-## 5. If a writer ran on the older release
+## 5. After the upgrade (every time)
 
-The counters are exact when nothing wrote during the migrations. If any writer
-of the previous release ran **during or after** them (the services were not
-stopped, a node kept an old image, or you rolled back for a while and then
-upgraded again), repair the counters:
+1. **Repair the counters**, on every upgrade, whether or not you think
+   anything wrote during the migrations:
 
-```bash
-$P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js --repair-counters
-```
+   ```bash
+   $P run --rm --no-deps api apps/api/dist/cli/verify-review-rollup.js --repair-counters
+   ```
 
-From a source checkout, with `DATABASE_URL` set:
+   From a source checkout, with `DATABASE_URL` set:
 
-```bash
-pnpm --filter @furan/api exec tsx src/cli/verify-review-rollup.ts --repair-counters
-```
+   ```bash
+   pnpm --filter @furan/api exec tsx src/cli/verify-review-rollup.ts --repair-counters
+   ```
 
-It recomputes each run whose counters are wrong, one run at a time under that
-run's lock, so it is safe while the app is running. It never changes a status:
-a run whose status is wrong too is listed as not repaired and settled through
-[`review-model-upgrade.md` §5](./review-model-upgrade.md#5-if-the-cli-reports-mismatches).
-It then checks again (`… mismatches after repair`); the exit code is that
-result.
+   The counters are exact when nothing wrote during the migrations, but you
+   cannot always know that: a writer of the previous release may have run
+   **during or after** them (a service not stopped, a node that kept an old
+   image, a rollback for a while before upgrading again), and a run it changed
+   keeps a wrong count, so its steps are missing from the badge, the "Needs
+   review" filter and the review queue. Running the repair anyway costs
+   little and is safe:
+   - it is **idempotent**: a run whose counters are right is not written, so
+     a second run finds nothing to do;
+   - it **locks one run at a time**, each in its own short transaction, and
+     reads that run's steps under the lock, so it never overwrites a writer
+     and is **safe while the app is up**;
+   - it is **cheap**: it reads every run once, in pages, and writes only the
+     runs whose counters are wrong.
+
+   It never changes a status: a run whose status is wrong too is listed as
+   not repaired and settled through
+   [`review-model-upgrade.md` §5](./review-model-upgrade.md#5-if-the-cli-reports-mismatches).
+   It then checks again (`… mismatches after repair`); the exit code is that
+   result.
+
+2. **Reload open dashboard tabs.** A tab left open across the upgrade runs
+   the previous bundle, and its diff viewer fails until reloaded.
 
 Do not re-run `0043`'s backfill statement while the app is up: it computes
 from one snapshot and can overwrite counters a writer has just set.
@@ -219,8 +236,8 @@ schema they leave:
 So rolling back is the image tags alone: stop the services, put the previous
 tags back, and `up -d`. No schema change is needed. While the previous release
 runs, it leaves the counters of every run it changes wrong. When you upgrade
-again, the migrations are already applied and do not run again, so run
-`--repair-counters` (§5) after that upgrade.
+again, the migrations are already applied and do not run again; §5's repair,
+which every upgrade runs, fixes those counters.
 
 To return to the schema from before the upgrade, restore the snapshot from
 §2 ([`migration-deploy-order.md` §4](./migration-deploy-order.md#4-rollback)).

@@ -165,6 +165,22 @@ Boot order is enforced by `depends_on`: data plane (`minio-perms` → `minio`) �
 `migrate` (one-shot, `service_completed_successfully`) → app services. The
 api auto-seeds the bootstrap admin when the `users` table is empty.
 
+### Upgrading an existing install
+
+Refreshing an install that already holds data is more than `pull` and
+`up -d` when the new release carries migrations with their own procedure.
+Before you pull, read the runbook of every such release you are crossing:
+
+- [`server-reads-upgrade.md`](server-reads-upgrade.md) (migrations `0043`
+  and `0044`, the stored review counters and read indexes): stop the app
+  services while `migrate` runs, then run
+  `verify-review-rollup --repair-counters` and reload open dashboard tabs.
+- [`review-model-upgrade.md`](review-model-upgrade.md) (migrations
+  `0035`–`0037`, the per-checkpoint review model).
+
+The general order (snapshot, stop the writers, migrate, start) is in
+[`migration-deploy-order.md`](migration-deploy-order.md).
+
 ## 4. Verify
 
 ```bash
@@ -249,6 +265,7 @@ docker compose -p docker ... down -v --remove-orphans
 - [reverse-proxy-tls.md](reverse-proxy-tls.md) — expose the stack on a domain with HTTPS (the dashboard-URL constraint + a worked TLS proxy)
 - [install/quickstart.md](../install/quickstart.md) — dev (`pnpm dev`) path + first-capture walkthrough
 - [migration-deploy-order.md](migration-deploy-order.md) — schema-narrowing deploys
+- [server-reads-upgrade.md](server-reads-upgrade.md) and [review-model-upgrade.md](review-model-upgrade.md) — release-specific upgrade steps (§3, "Upgrading an existing install")
 - [storage-backends.md](storage-backends.md) — S3 vs HDD
 - [restore-from-backup.md](restore-from-backup.md) — snapshot/restore details
 - `infra/docker/compose.main-images.yml` — the local main-SHA image overlay you create per §0 (not committed; delete after a semver bump catches up)
