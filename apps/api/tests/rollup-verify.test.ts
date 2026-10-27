@@ -40,7 +40,7 @@ import {
  * verdicts, active decisions and override, and reports each run whose stored
  * status differs; for every run it also checks the stored pending counters
  * against their definition (spec 2026-10-27 §3.3). `repairRunCounters` backs
- * its `--repair` flag, `listBaselineRepairs` its `--repairs` flag.
+ * its `--repair-counters` flag, `listBaselineRepairs` its `--repairs` flag.
  *
  * Everything is asserted on this file's own seeds (the functions also scan
  * whatever else the shared test database holds). The seeds start with
@@ -333,7 +333,7 @@ d("findRollupMismatches", () => {
     );
   });
 
-  test("--repair recomputes each run with stale counters, across projects, and never changes a status", async () => {
+  test("--repair-counters recomputes each run with stale counters, across projects, and never changes a status", async () => {
     const one = await seed(h, {
       checkpoints: [
         { name: "a", verdict: "unresolved" },
@@ -416,7 +416,7 @@ d("findRollupMismatches", () => {
     );
   });
 
-  test("--repair waits for a writer holding the run, and never overwrites it", async () => {
+  test("--repair-counters waits for a writer holding the run, and never overwrites it", async () => {
     const s = await seed(h, {
       checkpoints: [
         { name: "a", verdict: "unresolved" },

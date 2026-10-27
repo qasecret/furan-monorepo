@@ -13,7 +13,7 @@ import {
 } from "../lib/review/rollup-verify.js";
 
 /**
- * verify-review-rollup [--project <uuid>] [--repairs] [--repair]
+ * verify-review-rollup [--project <uuid>] [--repairs] [--repair-counters]
  *
  * Check after the review-model upgrade (spec §4.6, runbook
  * docs/runbooks/review-model-upgrade.md) and the server-reads upgrade (spec
@@ -23,10 +23,10 @@ import {
  * as `run_id, stored, computed, stored_counters, computed_counters` (counters
  * as `pending/failed`), then the count.
  * `--repairs` first lists the baselines migration 0036 repaired (its
- * `baseline.repair` audit rows). Without `--repair` it never writes.
+ * `baseline.repair` audit rows). Without `--repair-counters` it never writes.
  *
- * `--repair` then fixes the listed runs whose counters are wrong, one at a
- * time under each run's lock (`repairRunCounters`, through
+ * `--repair-counters` then fixes the listed runs whose counters are wrong,
+ * one at a time under each run's lock (`repairRunCounters`, through
  * `recomputeRunStatus`), so it is safe while the app runs. It never changes a
  * status: a run whose status is wrong too is left for runbook §5. The check
  * then runs again and the exit code is its result.
@@ -36,7 +36,8 @@ import {
  */
 
 const USAGE =
-  "Usage: verify-review-rollup [--project <uuid>] [--repairs] [--repair]";
+  "Usage: verify-review-rollup [--project <uuid>] [--repairs]" +
+  " [--repair-counters]";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usageError(message: string): number {
@@ -70,13 +71,17 @@ function report(mismatches: RollupMismatch[], suffix = ""): void {
 }
 
 async function main(): Promise<number> {
-  let values: { project?: string; repairs?: boolean; repair?: boolean };
+  let values: {
+    project?: string;
+    repairs?: boolean;
+    "repair-counters"?: boolean;
+  };
   try {
     ({ values } = parseArgs({
       options: {
         project: { type: "string" },
         repairs: { type: "boolean", default: false },
-        repair: { type: "boolean", default: false },
+        "repair-counters": { type: "boolean", default: false },
       },
       strict: true,
       allowPositionals: false,
@@ -123,7 +128,7 @@ async function main(): Promise<number> {
 
     const mismatches = await findRollupMismatches(db, { projectId });
     report(mismatches);
-    if (!values.repair) return mismatches.length === 0 ? 0 : 1;
+    if (!values["repair-counters"]) return mismatches.length === 0 ? 0 : 1;
 
     const stale = mismatches.filter((m) => !countersMatch(m));
     const outcomes = await repairRunCounters(

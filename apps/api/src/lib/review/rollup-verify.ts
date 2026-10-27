@@ -16,10 +16,11 @@ import { rollupRunStatus, type RunStatus } from "@furan/shared-types";
 
 /**
  * The checks behind the `verify-review-rollup` operator CLI (spec §4.6,
- * runbook `docs/runbooks/review-model-upgrade.md`), and its `--repair` of the
- * stored pending counters (spec 2026-10-27 server reads §3.3). The checks
- * never write: every read runs in a READ ONLY transaction. The repair writes
- * only through `recomputeRunStatus`, one run at a time, under the run lock.
+ * runbook `docs/runbooks/review-model-upgrade.md`), and its
+ * `--repair-counters` of the stored pending counters (spec 2026-10-27 server
+ * reads §3.3). The checks never write: every read runs in a READ ONLY
+ * transaction. The repair writes only through `recomputeRunStatus`, one run
+ * at a time, under the run lock.
  *
  * Both run on the connection they are given, which must see every project's
  * rows: the CLI passes the OWNER connection (`DATABASE_URL`), which row-level
@@ -160,7 +161,7 @@ export type CounterRepairOutcome =
   | "run_gone";
 
 /**
- * The repair of stale pending counters (`--repair`): for each run, in
+ * The repair of stale pending counters (`--repair-counters`): for each run, in
  * ascending id order and each in its own transaction, takes the run lock
  * (`FOR NO KEY UPDATE`, the first lock of every write path), re-reads the
  * run's inputs and, when its stored status is its rollup, calls

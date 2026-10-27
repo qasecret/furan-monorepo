@@ -109,8 +109,8 @@ export function computeRunCounters(
  * that commits a run's new counters while it runs can be overwritten with the
  * counters from before that commit, so it is for migration time (writers
  * stopped) only. The repair against a live database is per run, under each
- * run's lock: `verify-review-rollup --repair` (`apps/api`), which calls
- * `recomputeRunStatus` for each run whose counters it finds wrong.
+ * run's lock: `verify-review-rollup --repair-counters` (`apps/api`), which
+ * calls `recomputeRunStatus` for each run whose counters it finds wrong.
  */
 export const COUNTERS_BACKFILL_SQL = `UPDATE "test_runs" AS r
    SET "pending_steps" = c."pending",

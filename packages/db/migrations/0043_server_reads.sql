@@ -126,10 +126,10 @@
 --   run until their replacements start, after `migrate` completes). A run it
 --   changes after the backfill has read it keeps counters that are stale until
 --   the run's next write recomputes them, or until the repair fixes them:
---   `verify-review-rollup --repair` (apps/api), which recomputes each such run
---   under its own run lock. Do not re-run the backfill itself while any writer
---   is up: it computes from one snapshot and can overwrite a concurrent
---   writer's counters. For exact counters at the upgrade, stop the writers
+--   `verify-review-rollup --repair-counters` (apps/api), which recomputes
+--   each such run under its own run lock. Do not re-run the backfill itself
+--   while any writer is up: it computes from one snapshot and can overwrite a
+--   concurrent writer's counters. For exact counters at the upgrade, stop the writers
 --   first (api, capture-worker, diff-worker), as
 --   docs/runbooks/migration-deploy-order.md describes.
 --

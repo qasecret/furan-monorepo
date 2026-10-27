@@ -9,10 +9,12 @@ import {
   or,
   projectMembers,
   projects,
+  recomputeRunStatus,
   screenshots,
   testRuns,
   testVariations,
   users,
+  type DB,
 } from "@furan/db";
 import {
   rollupRunStatus,
@@ -465,6 +467,29 @@ export async function addReviewBuild(
   );
   seed.extraBuilds.push({ buildId, branch, runIds: [run.runId] });
   return { ...run, buildId };
+}
+
+/**
+ * Brings the stored pending counters (`test_runs.pending_steps` /
+ * `failed_steps`, spec 2026-10-27 §3) of `runIds` in line with their rows, by
+ * recomputing each run through `recomputeRunStatus`, the app's one writer:
+ * one transaction per run, in ascending id order (the lock order of every
+ * multi-run writer).
+ *
+ * The seeds start with consistent counters, and every API write keeps them
+ * so. A test that writes a run's inputs directly by SQL (a verdict or
+ * `diff_failed_at`, a decision, an override, a step) and then reads anything
+ * served from the counters must call this first. Like the app, it writes the
+ * rollup status too, so a run seeded with a status that is not its rollup
+ * gets the rollup.
+ */
+export async function syncRunCounters(
+  db: DB,
+  runIds: readonly string[],
+): Promise<void> {
+  for (const runId of [...new Set(runIds)].sort()) {
+    await recomputeRunStatus(db, runId);
+  }
 }
 
 /**
