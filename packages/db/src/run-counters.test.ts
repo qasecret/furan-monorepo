@@ -41,7 +41,11 @@ const cp = (
   over: Partial<Omit<Checkpoint, "verdict">> = {},
 ): Checkpoint => ({ verdict, decision: null, diffFailed: false, ...over });
 
-/** A run's input; `lifecycle` mirrors `after` unless the case sets it. */
+/**
+ * A run's input. Its `lifecycle` is `"unresolved"` unless the case sets it,
+ * whatever the case's `after`: `computeRunCounters` reads `after`, never
+ * `lifecycle` (the "judges the run by `after`" test below pins that).
+ */
 const input = (
   checkpoints: Checkpoint[],
   over: Partial<Omit<RunCountersInput, "checkpoints">> = {},

@@ -343,9 +343,36 @@ d("run counters: every writer leaves stored = computed", () => {
         ),
       );
     expect(merged).toHaveLength(2);
+    // The merge's own write: a new run whose copies have no verdict yet, so
+    // its counters are 0 whatever the writer does, and this half alone could
+    // not fail. It guards a change that would copy the source's verdicts:
+    // stored 0 would then differ from what the copies give.
     for (const { id } of merged) {
       expect((await stored(id)).status).toBe("running");
       await expectCounters(id, { pendingSteps: 0, failedSteps: 0 });
+    }
+
+    // The half that can fail: the copies' diffs land, as the diff-worker
+    // commits them (one changed, the rest passed), and the merged run becomes
+    // reviewable with that one step pending. A merged run is counted like any
+    // other.
+    for (const { id } of merged) {
+      const copies = await h.db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(
+          and(
+            eq(screenshots.runId, id),
+            eq(screenshots.projectId, s.projectId),
+          ),
+        )
+        .orderBy(screenshots.name);
+      expect(copies.length).toBeGreaterThan(0);
+      for (const [i, copy] of copies.entries()) {
+        await commitVerdict(s, id, copy.id, i === 0 ? "unresolved" : "passed");
+      }
+      expect((await stored(id)).status).toBe("unresolved");
+      await expectCounters(id, { pendingSteps: 1, failedSteps: 0 });
     }
   });
 
