@@ -211,6 +211,27 @@ describe.runIf(RUN_INTEGRATION)(
       expect(await keyDefs()).toEqual(KEY_INDEXES);
     });
 
+    it("re-applied as the compose runner re-applies both after an edit of each (0043, then 0044, one statement at a time), it ends on the composite indexes", async () => {
+      // The compose runner (`migrate.sh`) records a file by its hash, so an
+      // edit of a file applies it again, each statement its own transaction
+      // (`psql -f`). Starting from a database that ran both:
+      await run(MIGRATION_0044);
+      expect(await keyDefs()).toEqual(KEY_INDEXES);
+
+      // 0043 alone, applied again after 0044, puts the key-only indexes back
+      // (0044's own sixth index is not 0043's): why an edit of 0043 must ship
+      // with an edit of 0044.
+      for (const stmt of MIGRATION_0043) await run([stmt]);
+      expect(await keyDefs()).toEqual({
+        ...KEY_INDEXES_0043,
+        test_runs_image_name_idx: KEY_INDEXES.test_runs_image_name_idx,
+      });
+
+      // 0044, applied again after it, as the runner does once both changed.
+      for (const stmt of MIGRATION_0044) await run([stmt]);
+      expect(await keyDefs()).toEqual(KEY_INDEXES);
+    });
+
     it("a lookup by the key alone still uses the leading column of each index", async () => {
       await run(MIGRATION_0044);
       // The retention sweep reads `image_key IN (...)` with no project. The
