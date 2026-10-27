@@ -638,7 +638,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   //
   // SDK clients that poll for a run's terminal status (capture-completed,
   // diff-done, autoApproved) want a thin REST equivalent of the tRPC
-  // `runs.getById` procedure. Returns the run row's columns PLUS the
+  // `runs.getById` procedure. Returns the run row's columns, except the
+  // stored review counters (the dashboard's), PLUS the
   // derived `autoApproved` flag (true iff a baselines row with a NULL
   // userId exists for this run — same derivation as ADR-032 and the
   // tRPC procedure). The richer dashboard payload (screenshots,
@@ -697,8 +698,16 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           .where(and(eq(baselines.testRunId, runId), isNull(baselines.userId)))
           .limit(1);
         const autoApproved = autoApprovedRows.length > 0;
+        // The stored review counters (`pending_steps`, `failed_steps`,
+        // migration 0043) are the dashboard's reads, not the SDK's: the REST
+        // shape stays the run's columns from before them, plus autoApproved.
+        const {
+          pendingSteps: _pendingSteps,
+          failedSteps: _failedSteps,
+          ...run
+        } = row;
         reply.code(200);
-        return { ...row, autoApproved };
+        return { ...run, autoApproved };
       });
     },
   );

@@ -377,6 +377,68 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(body.autoApproved).toBe(false);
   });
 
+  test("GET /runs/:id returns exactly the SDK's keys: the run's columns from before migration 0043, and autoApproved", async () => {
+    // The SDK REST API is unchanged by the stored review counters
+    // (`pending_steps`, `failed_steps`): they stay out of this response.
+    const createRes = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "rest-get-keys",
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body) as { runId: string };
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/runs/${created.runId}`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const body = JSON.parse(getRes.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "id",
+        "imageName",
+        "diffName",
+        "diffPercent",
+        "diffTollerancePercent",
+        "diffThresholdOverride",
+        "pixelMisMatchCount",
+        "status",
+        "statusOverride",
+        "abortedByDiff",
+        "buildId",
+        "projectId",
+        "merge",
+        "name",
+        "customTags",
+        "baselineName",
+        "comment",
+        "vlmDescription",
+        "branchName",
+        "parentBranchName",
+        "baselineBranchName",
+        "tempIgnoreAreas",
+        "environment",
+        "baselineSource",
+        "resolutionSource",
+        "thumbnailUrl",
+        "checkpointCount",
+        "completedAt",
+        "primarySignature",
+        "createdAt",
+        "updatedAt",
+        "autoApproved",
+      ].sort(),
+    );
+  });
+
   test("GET /runs/:id sets autoApproved=true when an auto-baseline row exists", async () => {
     // ADR-038: baselines are now tied to screenshots/variations.
     // Seed the run + a variation + baselines row manually.
