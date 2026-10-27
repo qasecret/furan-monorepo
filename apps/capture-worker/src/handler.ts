@@ -2,6 +2,7 @@ import {
   and,
   eq,
   isNull,
+  recomputeRunStatus,
   screenshots,
   testRuns,
   withProjectScope,
@@ -74,10 +75,15 @@ export async function handleCaptureJob(
     // only an abort the diff pipeline wrote (Ruling R46).
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
-        await tx
+        const written = await tx
           .update(testRuns)
           .set({ status: "aborted", abortedByDiff: false })
-          .where(eq(testRuns.id, data.runId));
+          .where(eq(testRuns.id, data.runId))
+          .returning({ id: testRuns.id });
+        // A lifecycle write: the run's stored pending counters follow it
+        // (spec 2026-10-27 §3.2), under the run lock the UPDATE took. An
+        // aborted run is not reviewable, so they go to 0.
+        if (written.length > 0) await recomputeRunStatus(tx, data.runId);
       });
     } catch (statusErr) {
       logger.error(
@@ -190,6 +196,14 @@ async function handleCaptureJobInner(
       }
 
       await withProjectScope(deps.db, data.projectId, async (tx) => {
+        // The run first, as every write path locks it (run -> step ->
+        // variation): the new step changes the run's status and its stored
+        // pending counters, recomputed below in this transaction.
+        await tx
+          .select({ id: testRuns.id })
+          .from(testRuns)
+          .where(eq(testRuns.id, data.runId))
+          .for("no key update");
         if (thumbnailKey !== null) {
           await tx
             .update(testRuns)
@@ -204,7 +218,7 @@ async function handleCaptureJobInner(
         // ADR-038: screenshots now require name + testVariationId.
         // The capture-worker uses the viewport string as the checkpoint name
         // (one checkpoint per viewport) and the job's testVariationId.
-        await tx
+        const inserted = await tx
           .insert(screenshots)
           .values({
             runId: data.runId,
@@ -218,7 +232,13 @@ async function handleCaptureJobInner(
           })
           .onConflictDoNothing({
             target: [screenshots.runId, screenshots.name, screenshots.viewport],
-          });
+          })
+          .returning({ id: screenshots.id });
+        // The new step has no verdict yet: the run is `running` and not
+        // reviewable until its diff lands, so its counters are 0 (spec
+        // 2026-10-27 §3.2), as an SDK upload leaves them. A duplicate
+        // (nothing inserted) changes nothing.
+        if (inserted.length > 0) await recomputeRunStatus(tx, data.runId);
       });
 
       imageKeys.push(imageKey);
@@ -245,10 +265,14 @@ async function handleCaptureJobInner(
   // up a check-less run.
   if (imageKeys.length === 0) {
     await withProjectScope(deps.db, data.projectId, async (tx) => {
-      await tx
+      const written = await tx
         .update(testRuns)
         .set({ status: "empty" })
-        .where(eq(testRuns.id, data.runId));
+        .where(eq(testRuns.id, data.runId))
+        .returning({ id: testRuns.id });
+      // A lifecycle write: the stored pending counters follow it (spec
+      // 2026-10-27 §3.2); an empty run is not reviewable, so they are 0.
+      if (written.length > 0) await recomputeRunStatus(tx, data.runId);
     });
     // Best-effort `run.completed` publish so the integrations subscriber
     // (GitHub commit-status, Slack notifier, outbound webhooks) reacts to

@@ -1,12 +1,11 @@
 import {
   rollupRunStatus,
   type CheckpointDecisionKind,
-  type CheckpointVerdict,
-  type RollupInput,
 } from "@furan/shared-types";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { DB } from "./client.js";
+import { computeRunCounters, type RunCountersInput } from "./run-counters.js";
 import type { RunStatus } from "./schema/enums.js";
 import {
   baselines,
@@ -19,10 +18,12 @@ import {
 export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
 
 /**
- * Loads everything `rollupRunStatus` needs for each run in `runIds`, in three
- * queries however many runs there are: the runs (lifecycle + override), their
- * checkpoints (`screenshots.verdict`) and their **active** decisions
- * (`reverted_at IS NULL`). Runs that don't exist are absent from the map.
+ * Loads everything `rollupRunStatus` and `computeRunCounters` need for each
+ * run in `runIds`, in three queries however many runs there are: the runs
+ * (lifecycle + override), their checkpoints (`screenshots.verdict` and whether
+ * the step's diff failed for good, `diff_failed_at IS NOT NULL`) and their
+ * **active** decisions (`reverted_at IS NULL`). Runs that don't exist are
+ * absent from the map. Each value is a `RollupInput` too.
  *
  * This only reads. Callers that go on to write the result must hold the run's
  * row lock first (`recomputeRunStatus` does).
@@ -30,8 +31,8 @@ export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
 export async function loadRollupInputs(
   db: DB | Tx,
   runIds: string[],
-): Promise<Map<string, RollupInput>> {
-  const inputs = new Map<string, RollupInput>();
+): Promise<Map<string, RunCountersInput>> {
+  const inputs = new Map<string, RunCountersInput>();
   if (runIds.length === 0) return inputs;
 
   const runs = await db
@@ -50,6 +51,7 @@ export async function loadRollupInputs(
       id: screenshots.id,
       runId: screenshots.runId,
       verdict: screenshots.verdict,
+      diffFailedAt: screenshots.diffFailedAt,
     })
     .from(screenshots)
     .where(inArray(screenshots.runId, foundIds));
@@ -74,15 +76,13 @@ export async function loadRollupInputs(
 
   const checkpointsByRun = new Map<
     string,
-    Array<{
-      verdict: CheckpointVerdict | null;
-      decision: CheckpointDecisionKind | null;
-    }>
+    Array<RunCountersInput["checkpoints"][number]>
   >(foundIds.map((id) => [id, []]));
   for (const s of shots) {
     checkpointsByRun.get(s.runId)!.push({
       verdict: s.verdict,
       decision: decisionByShot.get(s.id) ?? null,
+      diffFailed: s.diffFailedAt !== null,
     });
   }
 
@@ -101,6 +101,15 @@ export async function loadRollupInputs(
  * the run's status from its checkpoints' verdicts, their active decisions and
  * the run override via `rollupRunStatus`, and persists it together with
  * `merge` (true iff a `baselines` row exists for the run).
+ *
+ * It is also the one writer of the run's pending counters, `pending_steps` and
+ * `failed_steps` (spec 2026-10-27 server reads §3.2): `computeRunCounters`
+ * over the same inputs, judged by the status being written (`after`), since
+ * that is the status `reviewableRunCondition` reads once this commits. They
+ * cost no extra statement and are written in the same UPDATE as the status.
+ * Every write path that changes one of their inputs (a step's verdict or
+ * `diff_failed_at`, an active decision, the lifecycle status, the override,
+ * or the run's steps) calls this in its transaction.
  *
  * Concurrent writers serialize on the run row: it is locked before anything is
  * read, and the lock is held until the surrounding transaction commits. A lock
@@ -129,12 +138,15 @@ export async function loadRollupInputs(
  *   lock must see a writer that committed while we waited. A REPEATABLE READ
  *   or SERIALIZABLE caller gets a serialization failure (40001) instead of
  *   seeing the other writer's committed decision.
- * - `changed` is also true when only `merge` moved (`before === after`).
- *   Callers that emit a status-change event must compare `before !== after`.
+ * - `changed` is also true when only `merge` or a counter moved
+ *   (`before === after`). Callers that emit a status-change event must
+ *   compare `before !== after`.
  *
- * Nothing is written, and `updated_at` is left alone, when neither `status`
- * nor `merge` changed. `aborted` and `empty` are lifecycle states the rollup
- * returns unchanged; this function does not "fix" them.
+ * Nothing is written when neither `status`, `merge` nor a counter changed.
+ * `updated_at` moves only with `status` or `merge`, as before the counters: a
+ * decision that leaves the status as it was (one of two pending steps
+ * approved) writes the counters alone. `aborted` and `empty` are lifecycle
+ * states the rollup returns unchanged; this function does not "fix" them.
  *
  * @throws `run_not_found:<runId>` when the run does not exist.
  */
@@ -146,7 +158,12 @@ export async function recomputeRunStatus(
     // 1. Lock (FOR NO KEY UPDATE; see above). Everything below runs in
     //    this transaction, after the lock.
     const [run] = await tx
-      .select({ status: testRuns.status, merge: testRuns.merge })
+      .select({
+        status: testRuns.status,
+        merge: testRuns.merge,
+        pendingSteps: testRuns.pendingSteps,
+        failedSteps: testRuns.failedSteps,
+      })
       .from(testRuns)
       .where(eq(testRuns.id, runId))
       .for("no key update");
@@ -157,6 +174,7 @@ export async function recomputeRunStatus(
     const input = (await loadRollupInputs(tx, [runId])).get(runId);
     if (!input) throw new Error(`run_not_found:${runId}`);
     const after = rollupRunStatus(input);
+    const counters = computeRunCounters(input, after);
 
     const [baseline] = await tx
       .select({ id: baselines.id })
@@ -165,12 +183,23 @@ export async function recomputeRunStatus(
       .limit(1);
     const merge = baseline !== undefined;
 
-    // 3. Write, only when something moved.
-    const changed = after !== run.status || merge !== run.merge;
+    // 3. Write, only when something moved: one UPDATE for the status, merge
+    //    and both counters. `updated_at` follows the status and merge only.
+    const statusMoved = after !== run.status || merge !== run.merge;
+    const changed =
+      statusMoved ||
+      counters.pendingSteps !== run.pendingSteps ||
+      counters.failedSteps !== run.failedSteps;
     if (changed) {
       await tx
         .update(testRuns)
-        .set({ status: after, merge, updatedAt: new Date() })
+        .set({
+          status: after,
+          merge,
+          pendingSteps: counters.pendingSteps,
+          failedSteps: counters.failedSteps,
+          ...(statusMoved ? { updatedAt: new Date() } : {}),
+        })
         .where(eq(testRuns.id, runId));
     }
     return { before: run.status, after, changed };

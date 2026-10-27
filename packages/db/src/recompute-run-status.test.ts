@@ -8,6 +8,7 @@ import {
   baselines,
   builds,
   checkpointDecisions,
+  computeRunCounters,
   createDb,
   eq,
   loadRollupInputs,
@@ -91,8 +92,15 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
   interface SeedOpts {
     status?: RunStatus;
     override?: "passed" | "failed" | null;
-    /** One entry per checkpoint: its verdict and optional active decision. */
-    checkpoints?: Array<{ verdict: Verdict; decision?: Decision }>;
+    /**
+     * One entry per checkpoint: its verdict, optional active decision, and
+     * whether its diff failed for good.
+     */
+    checkpoints?: Array<{
+      verdict: Verdict;
+      decision?: Decision;
+      diffFailed?: boolean;
+    }>;
   }
 
   /** A run with one screenshot per `checkpoints` entry, verdicts and decisions
@@ -125,6 +133,8 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
           browser: "chromium",
           imageKey: randomUUID(),
           verdict: c.verdict,
+          diffFailedAt: c.diffFailed ? new Date() : null,
+          diffError: c.diffFailed ? "engine_error" : null,
         })
         .returning();
       shots.push(s!.id);
@@ -132,6 +142,17 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
         await addDecision(runId, s!.id, c.decision, target);
       }
     }
+    // The counters a writer would have left for these rows (spec 2026-10-27
+    // §3.1), so a test sees only what its own recompute moves.
+    const seeded = (await loadRollupInputs(target, [runId])).get(runId)!;
+    const counters = computeRunCounters(seeded, seeded.lifecycle);
+    await target
+      .update(testRuns)
+      .set({
+        pendingSteps: counters.pendingSteps,
+        failedSteps: counters.failedSteps,
+      })
+      .where(eq(testRuns.id, runId));
     return { runId, shots };
   }
 
@@ -159,6 +180,8 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
         status: testRuns.status,
         merge: testRuns.merge,
         updatedAt: testRuns.updatedAt,
+        pendingSteps: testRuns.pendingSteps,
+        failedSteps: testRuns.failedSteps,
       })
       .from(testRuns)
       .where(eq(testRuns.id, runId));
@@ -455,6 +478,205 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
     });
   });
 
+  describe("the stored pending counters (spec 2026-10-27 §3.2)", () => {
+    /** Overwrites the run's stored counters, as a stale write would leave them. */
+    async function setCounters(
+      runId: string,
+      pendingSteps: number,
+      failedSteps: number,
+    ): Promise<void> {
+      await db
+        .update(testRuns)
+        .set({ pendingSteps, failedSteps })
+        .where(eq(testRuns.id, runId));
+    }
+
+    it("writes pending_steps and failed_steps with the status, in the one UPDATE and with no extra statement", async () => {
+      // Stored `running` (counters 0) with every step diffed: the rollup makes
+      // it reviewable.
+      const { runId } = await seedRun({
+        status: "running",
+        checkpoints: [
+          { verdict: "unresolved" },
+          { verdict: "new" },
+          { verdict: "unresolved", diffFailed: true },
+          { verdict: "passed" },
+          { verdict: "unresolved", decision: "approved" },
+        ],
+      });
+      expect(await storedRun(runId)).toMatchObject({
+        status: "running",
+        pendingSteps: 0,
+        failedSteps: 0,
+      });
+
+      const queries: string[] = [];
+      const client = postgres(process.env.DATABASE_URL!, { max: 1 });
+      const counting = drizzle(client, {
+        schema,
+        logger: { logQuery: (q) => void queries.push(q) },
+      });
+      try {
+        expect(await recomputeRunStatus(counting, runId)).toEqual({
+          before: "running",
+          after: "unresolved",
+          changed: true,
+        });
+      } finally {
+        await client.end();
+      }
+
+      expect(await storedRun(runId)).toMatchObject({
+        status: "unresolved",
+        pendingSteps: 3,
+        failedSteps: 1,
+      });
+      // The lock, the three input reads, the baseline probe, and one UPDATE
+      // that carries the status and both counters.
+      expect(queries).toHaveLength(6);
+      const updates = queries.filter((q) => /^update /i.test(q));
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatch(/"status"/);
+      expect(updates[0]).toMatch(/"pending_steps"/);
+      expect(updates[0]).toMatch(/"failed_steps"/);
+    });
+
+    it("a counter-only change is a change: written, without bumping updated_at", async () => {
+      const { runId, shots } = await seedRun({
+        status: "unresolved",
+        checkpoints: [{ verdict: "unresolved" }, { verdict: "unresolved" }],
+      });
+      expect((await storedRun(runId)).pendingSteps).toBe(2);
+      const stale = new Date("2026-01-01T00:00:00.000Z");
+      await db
+        .update(testRuns)
+        .set({ updatedAt: stale })
+        .where(eq(testRuns.id, runId));
+
+      // Approving one of the two leaves the run unresolved.
+      await addDecision(runId, shots[0]!, "approved");
+      expect(await recomputeRunStatus(db, runId)).toEqual({
+        before: "unresolved",
+        after: "unresolved",
+        changed: true,
+      });
+      const row = await storedRun(runId);
+      expect(row).toMatchObject({
+        status: "unresolved",
+        pendingSteps: 1,
+        failedSteps: 0,
+      });
+      // `updated_at` follows the status (and merge) only, as before.
+      expect(row.updatedAt.toISOString()).toBe(stale.toISOString());
+    });
+
+    it("writes nothing when the status and the counters are already right", async () => {
+      const { runId } = await seedRun({
+        status: "unresolved",
+        checkpoints: [
+          { verdict: "unresolved" },
+          { verdict: "unresolved", diffFailed: true },
+        ],
+      });
+      expect(await storedRun(runId)).toMatchObject({
+        pendingSteps: 2,
+        failedSteps: 1,
+      });
+      const xminBefore = await xminOf(runId);
+      expect(await recomputeRunStatus(db, runId)).toEqual({
+        before: "unresolved",
+        after: "unresolved",
+        changed: false,
+      });
+      expect(await xminOf(runId)).toBe(xminBefore);
+    });
+
+    it("repairs stale counters in both directions", async () => {
+      const settled = await seedRun({
+        status: "passed",
+        checkpoints: [{ verdict: "passed" }],
+      });
+      const open = await seedRun({
+        status: "new",
+        checkpoints: [{ verdict: "new" }, { verdict: "new" }],
+      });
+      await setCounters(settled.runId, 5, 3);
+      await setCounters(open.runId, 0, 0);
+
+      expect((await recomputeRunStatus(db, settled.runId)).changed).toBe(true);
+      expect((await recomputeRunStatus(db, open.runId)).changed).toBe(true);
+      expect(await storedRun(settled.runId)).toMatchObject({
+        status: "passed",
+        pendingSteps: 0,
+        failedSteps: 0,
+      });
+      expect(await storedRun(open.runId)).toMatchObject({
+        status: "new",
+        pendingSteps: 2,
+        failedSteps: 0,
+      });
+    });
+
+    it("are 0 for a run that is not reviewable, whatever was stored", async () => {
+      const open = [
+        { verdict: "unresolved" as const },
+        { verdict: "unresolved" as const, diffFailed: true },
+      ];
+      const runs = [
+        await seedRun({ status: "aborted", checkpoints: open }),
+        await seedRun({ status: "empty", checkpoints: open }),
+        await seedRun({
+          status: "unresolved",
+          override: "failed",
+          checkpoints: open,
+        }),
+        await seedRun({
+          status: "unresolved",
+          checkpoints: [...open, { verdict: null }],
+        }),
+        await seedRun({ status: "running", checkpoints: [] }),
+      ];
+      for (const { runId } of runs) {
+        await setCounters(runId, 2, 1);
+        await recomputeRunStatus(db, runId);
+        expect(await storedRun(runId)).toMatchObject({
+          pendingSteps: 0,
+          failedSteps: 0,
+        });
+      }
+    });
+
+    it("judges reviewability by the status it writes: an override set, then cleared", async () => {
+      const { runId } = await seedRun({
+        status: "unresolved",
+        checkpoints: [{ verdict: "unresolved" }, { verdict: "new" }],
+      });
+      expect((await storedRun(runId)).pendingSteps).toBe(2);
+
+      await db
+        .update(testRuns)
+        .set({ statusOverride: "passed" })
+        .where(eq(testRuns.id, runId));
+      await recomputeRunStatus(db, runId);
+      expect(await storedRun(runId)).toMatchObject({
+        status: "passed",
+        pendingSteps: 0,
+        failedSteps: 0,
+      });
+
+      await db
+        .update(testRuns)
+        .set({ statusOverride: null })
+        .where(eq(testRuns.id, runId));
+      await recomputeRunStatus(db, runId);
+      expect(await storedRun(runId)).toMatchObject({
+        status: "unresolved",
+        pendingSteps: 2,
+        failedSteps: 0,
+      });
+    });
+  });
+
   describe("no-op and updated_at", () => {
     it("writes nothing and leaves updated_at alone when nothing changed", async () => {
       const { runId } = await seedRun({
@@ -588,16 +810,20 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
       expect(ia.checkpoints).toContainEqual({
         verdict: "unresolved",
         decision: "approved",
+        diffFailed: false,
       });
       expect(ia.checkpoints).toContainEqual({
         verdict: "passed",
         decision: null,
+        diffFailed: false,
       });
 
       const ib = inputs.get(b.runId)!;
       expect(ib.lifecycle).toBe("new");
       expect(ib.override).toBeNull();
-      expect(ib.checkpoints).toEqual([{ verdict: null, decision: null }]);
+      expect(ib.checkpoints).toEqual([
+        { verdict: null, decision: null, diffFailed: false },
+      ]);
     });
 
     it("leaves out unknown runs and handles an empty list", async () => {
@@ -617,7 +843,7 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
       });
       const inputs = await loadRollupInputs(db, [runId]);
       expect(inputs.get(runId)!.checkpoints).toEqual([
-        { verdict: "unresolved", decision: null },
+        { verdict: "unresolved", decision: null, diffFailed: false },
       ]);
     });
 

@@ -1,4 +1,11 @@
-import { type DB, eq, screenshots, testRuns, type Tx } from "@furan/db";
+import {
+  type DB,
+  eq,
+  recomputeRunStatus,
+  screenshots,
+  testRuns,
+  type Tx,
+} from "@furan/db";
 import { humanizeErrorCode, type ApiErrorEnvelope } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -115,17 +122,25 @@ export async function registerRunLifecycleRoutes(
 
         let status: string;
         if (checkpointCount === 0) {
-          await db
+          const emptied = await db
             .update(testRuns)
             .set({
               status: "empty",
               checkpointCount,
               completedAt: new Date(),
             })
-            .where(eq(testRuns.id, params.data.id));
+            .where(eq(testRuns.id, params.data.id))
+            .returning({ id: testRuns.id });
+          // A lifecycle write: the stored pending counters follow it (spec
+          // 2026-10-27 §3.2), in this transaction and under the run lock the
+          // UPDATE just took. `empty` is never reviewable, so they are 0.
+          if (emptied.length > 0) {
+            await recomputeRunStatus(db, params.data.id);
+          }
           status = "empty";
         } else {
-          // Stamp completion only — the diff pipeline owns `status`.
+          // Stamp completion only — the diff pipeline owns `status`. No
+          // input of the stored pending counters changes, so no recompute.
           await db
             .update(testRuns)
             .set({
@@ -194,14 +209,22 @@ export async function registerRunLifecycleRoutes(
       return withRequestScope(app, req, async (db, onCommit) => {
         // `abortedByDiff: false`: the SDK's abort is final. A later diff job
         // heals only an abort the diff pipeline wrote (Ruling R46).
-        await db
+        const aborted = await db
           .update(testRuns)
           .set({
             status: "aborted",
             abortedByDiff: false,
             completedAt: new Date(),
           })
-          .where(eq(testRuns.id, params.data.id));
+          .where(eq(testRuns.id, params.data.id))
+          .returning({ id: testRuns.id });
+        // A lifecycle write: the stored pending counters follow it (spec
+        // 2026-10-27 §3.2). The UPDATE above took the run's row lock first,
+        // and the recompute runs in this transaction: an aborted run is not
+        // reviewable, so both counters go to 0 with the status.
+        if (aborted.length > 0) {
+          await recomputeRunStatus(db, params.data.id);
+        }
 
         onCommit(() =>
           app.broadcaster.publishRunEvent?.({
