@@ -78,8 +78,11 @@ interface Props {
   isRefreshing: boolean;
   /** The reader may review: shows the approve control. */
   canApprovePending: boolean;
-  /** Steps in the build that still need a reviewer. */
-  pendingCount: number;
+  /**
+   * The build's pending steps approve-pending would act on: those whose diff
+   * did not fail (`builds.getById.approvableCheckpoints`).
+   */
+  approvableCount: number;
   /** Opens the confirmation; nothing is approved before it is answered. */
   onApprovePending: () => void;
   /** The approve button, for the confirmation to return focus to. */
@@ -193,7 +196,7 @@ export function ContextualToolbar({
   onRefresh,
   isRefreshing,
   canApprovePending,
-  pendingCount,
+  approvableCount,
   onApprovePending,
   approveRef,
   start,
@@ -333,12 +336,12 @@ export function ContextualToolbar({
               variant="secondary"
               className="h-7 gap-1.5 px-3 text-xs"
               testId="batch-approve-all"
-              disabled={pendingCount === 0}
+              disabled={approvableCount === 0}
               reason={describeRefusal("nothing_to_approve")}
               onClick={onApprovePending}
             >
               <CheckCheck className="h-3.5 w-3.5" aria-hidden />
-              {`Approve pending (${pendingCount})`}
+              {`Approve pending (${approvableCount})`}
             </DisabledAwareButton>
           </Segment>
         </>

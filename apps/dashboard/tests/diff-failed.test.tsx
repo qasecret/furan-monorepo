@@ -494,6 +494,8 @@ describe("a retry that takes its run out of the filtered list", () => {
     newCount: 0,
     stepsTotal: 2,
     pendingCheckpoints: 2,
+    // r1's failed step is pending, not approvable.
+    approvableCheckpoints: 1,
     runByName: "Jane Doe",
     aggregateStatus: "unresolved",
     createdAt: FAILED_AT,

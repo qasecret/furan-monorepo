@@ -14,7 +14,7 @@ const baseProps = {
   onRefresh: vi.fn(),
   isRefreshing: false,
   canApprovePending: true,
-  pendingCount: 37,
+  approvableCount: 37,
   onApprovePending: vi.fn(),
 };
 
@@ -113,8 +113,8 @@ describe("ContextualToolbar", () => {
     expect(screen.getByTestId("env-slot")).toBeDefined();
   });
 
-  test("names the number of pending steps on the approve button", () => {
-    render(<ContextualToolbar {...baseProps} pendingCount={37} />);
+  test("names the number of approvable steps on the approve button", () => {
+    render(<ContextualToolbar {...baseProps} approvableCount={37} />);
     const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
     expect(button.textContent).toContain("Approve pending (37)");
     expect(button.disabled).toBe(false);
@@ -127,7 +127,7 @@ describe("ContextualToolbar", () => {
     render(
       <ContextualToolbar
         {...baseProps}
-        pendingCount={0}
+        approvableCount={0}
         onApprovePending={onApprovePending}
       />,
     );
@@ -146,7 +146,7 @@ describe("ContextualToolbar", () => {
   });
 
   test("the approve button is available while steps are pending", () => {
-    render(<ContextualToolbar {...baseProps} pendingCount={3} />);
+    render(<ContextualToolbar {...baseProps} approvableCount={3} />);
     const button = screen.getByTestId("batch-approve-all");
     expect(button.hasAttribute("aria-disabled")).toBe(false);
     expect(button.hasAttribute("aria-describedby")).toBe(false);

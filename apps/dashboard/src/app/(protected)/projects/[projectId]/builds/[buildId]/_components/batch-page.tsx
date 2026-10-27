@@ -311,7 +311,9 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
         }}
         isRefreshing={list.isFetching || buildQ.isFetching}
         canApprovePending={canReview}
-        pendingCount={build?.pendingCheckpoints ?? 0}
+        // What approve-pending acts on: a pending step whose diff failed is
+        // left out until it is retried.
+        approvableCount={build?.approvableCheckpoints ?? 0}
         onApprovePending={() => setApproveOpen(true)}
         approveRef={approveButton}
         environment={

@@ -357,9 +357,12 @@ export const buildsRouter = t.router({
    * that `list` returns, in one statement whatever the build's size (spec
    * 2026-10-27 §4, "`builds.getById`"; budget R5): the counts are sums of its
    * runs' columns, `pendingCheckpoints` the stored counters (the number the
-   * list shows) and `stepsTotal` the step counts. Every run read is the
-   * build's project's. Uses a resolve-then-gate auth pattern (mirrors
-   * `runs.getById`) because the input is a bare `buildId` with no `projectId`.
+   * list shows) and `stepsTotal` the step counts. `approvableCheckpoints` is
+   * what "approve pending" acts on: the pending steps less those whose diff
+   * failed (`pending_steps - failed_steps`, spec §3.1), so it gates and labels
+   * that action. Every run read is the build's project's. Uses a
+   * resolve-then-gate auth pattern (mirrors `runs.getById`) because the input
+   * is a bare `buildId` with no `projectId`.
    */
   getById: publicProcedure
     .input(getByIdInput)
@@ -403,6 +406,7 @@ export const buildsRouter = t.router({
         empty_count: number;
         steps_total: number;
         pending_checkpoints: number;
+        approvable_checkpoints: number;
         run_by_first_name: string | null;
         run_by_last_name: string | null;
         test_name: string | null;
@@ -414,7 +418,7 @@ export const buildsRouter = t.router({
           b.created_at, b.updated_at,
           r.run_count, r.running_count, r.unresolved_count, r.failed_count,
           r.aborted_count, r.passed_count, r.new_count, r.empty_count,
-          r.steps_total, r.pending_checkpoints,
+          r.steps_total, r.pending_checkpoints, r.approvable_checkpoints,
           u.first_name                     AS run_by_first_name,
           u.last_name                      AS run_by_last_name,
           r.test_name                      AS test_name,
@@ -423,6 +427,9 @@ export const buildsRouter = t.router({
         LEFT JOIN LATERAL (
           SELECT ${RUN_AGGREGATE},
             count(*) FILTER (WHERE r.status = 'new')     AS new_count,
+            -- The pending steps approve can act on: less the failed diffs.
+            coalesce(sum(r.pending_steps - r.failed_steps), 0)
+                                                         AS approvable_checkpoints,
             -- Every step of the build, by the runs' step counts (upload,
             -- complete, merge and the capture worker's step insert keep
             -- checkpoint_count).
@@ -464,6 +471,7 @@ export const buildsRouter = t.router({
         emptyCount: Number(r.empty_count),
         stepsTotal: Number(r.steps_total),
         pendingCheckpoints: Number(r.pending_checkpoints),
+        approvableCheckpoints: Number(r.approvable_checkpoints),
         runByName:
           r.run_by_first_name || r.run_by_last_name
             ? `${r.run_by_first_name ?? ""} ${r.run_by_last_name ?? ""}`.trim()

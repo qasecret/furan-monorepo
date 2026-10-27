@@ -345,13 +345,20 @@ describe("pending counts", () => {
     expect(pendingDelta(after, before)).toBe(1);
   });
 
-  it("never lets the build count go below zero", () => {
-    const build = { pendingCheckpoints: 1 } as Parameters<
-      typeof withPendingDelta
-    >[0];
+  it("moves the pending and approvable counts together, never below zero", () => {
+    const build = {
+      pendingCheckpoints: 3,
+      approvableCheckpoints: 1,
+    } as Parameters<typeof withPendingDelta>[0];
 
-    expect(withPendingDelta(build, -3).pendingCheckpoints).toBe(0);
-    expect(withPendingDelta(build, 2).pendingCheckpoints).toBe(3);
+    expect(withPendingDelta(build, -3)).toMatchObject({
+      pendingCheckpoints: 0,
+      approvableCheckpoints: 0,
+    });
+    expect(withPendingDelta(build, 2)).toMatchObject({
+      pendingCheckpoints: 5,
+      approvableCheckpoints: 3,
+    });
   });
 });
 

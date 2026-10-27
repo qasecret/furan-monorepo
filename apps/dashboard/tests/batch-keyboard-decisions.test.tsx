@@ -62,6 +62,7 @@ const BUILD = {
   newCount: 0,
   stepsTotal: 2,
   pendingCheckpoints: 2,
+  approvableCheckpoints: 2,
   runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),

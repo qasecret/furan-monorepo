@@ -256,6 +256,7 @@ const build = {
   newCount: 0,
   stepsTotal: 4,
   pendingCheckpoints: 2,
+  approvableCheckpoints: 2,
   runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
@@ -526,9 +527,9 @@ describe("BatchPage", () => {
     expect(screen.getByText("Page1Card")).toBeDefined(); // page 1 still present
   });
 
-  test("the toolbar counts the build's pending steps", () => {
+  test("the toolbar counts the build's approvable steps", () => {
     getByIdMock.mockReturnValue({
-      data: { ...build, pendingCheckpoints: 37 },
+      data: { ...build, pendingCheckpoints: 37, approvableCheckpoints: 37 },
       isLoading: false,
       isError: false,
     });
@@ -546,7 +547,32 @@ describe("BatchPage", () => {
 
   test("Approve pending is disabled when no step of the build is pending", () => {
     getByIdMock.mockReturnValue({
-      data: { ...build, pendingCheckpoints: 0, unresolvedCount: 3 },
+      data: {
+        ...build,
+        pendingCheckpoints: 0,
+        approvableCheckpoints: 0,
+        unresolvedCount: 3,
+      },
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(batchPage());
+    const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
+    expect(button.textContent).toContain("Approve pending (0)");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  test("Approve pending counts only what it can approve: failed diffs leave it unavailable", () => {
+    // Two pending steps, both with a failed diff: still pending (the batch
+    // needs review), but approve-pending would act on none of them.
+    getByIdMock.mockReturnValue({
+      data: { ...build, pendingCheckpoints: 2, approvableCheckpoints: 0 },
       isLoading: false,
       isError: false,
     });
@@ -671,7 +697,7 @@ describe("BatchPage", () => {
 
   test("after the last pending step is approved the toolbar button keeps focus and reports itself unavailable", async () => {
     const withPending = (n: number) => ({
-      data: { ...build, pendingCheckpoints: n },
+      data: { ...build, pendingCheckpoints: n, approvableCheckpoints: n },
       isLoading: false,
       isError: false,
     });
