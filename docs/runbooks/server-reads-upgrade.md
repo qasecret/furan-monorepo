@@ -206,8 +206,9 @@ $P exec postgres psql -U "$POSTGRES_USER" "$POSTGRES_DB" -c \
    - it **locks one run at a time**, each in its own short transaction, and
      reads that run's steps under the lock, so it never overwrites a writer
      and is **safe while the app is up**;
-   - it is **cheap**: it reads every run once, in pages, and writes only the
-     runs whose counters are wrong.
+   - it is **cheap**: it reads every run in pages twice (to find the
+     mismatches, then to confirm the repair) and writes only the runs whose
+     counters are wrong.
 
    It never changes a status: a run whose status is wrong too is listed as
    not repaired and settled through
