@@ -13,8 +13,8 @@ import {
 } from "../src/seed/shape.js";
 
 describe("shapes", () => {
-  it("is version 2 (v2 added diff images)", () => {
-    expect(SHAPE_VERSION).toBe(2);
+  it("is version 3 (v2 added diff images, v3 the stored pending counters)", () => {
+    expect(SHAPE_VERSION).toBe(3);
   });
 
   it("large carries the table's values", () => {

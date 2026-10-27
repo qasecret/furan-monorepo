@@ -5,7 +5,9 @@
  * `--reuse` run reseeds a scratch database whose stored version differs, so a
  * stale seed is never measured as it is.
  */
-export const SHAPE_VERSION = 2; // v2: diff images on `unresolved` steps
+// v2: diff images on `unresolved` steps; v3: the runs' stored pending
+// counters (migration 0043) are backfilled.
+export const SHAPE_VERSION = 3;
 
 export const PIPELINE_SETS = [
   "pipeline-50",

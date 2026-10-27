@@ -1,6 +1,7 @@
 import { buildHasPendingStep, pendingStepCondition } from "@furan/api/scale";
 import {
   builds,
+  COUNTERS_BACKFILL_SQL,
   screenshots,
   sql,
   testRuns,
@@ -105,6 +106,24 @@ export async function vacuumAnalyze(db: DB): Promise<void> {
       conn.release();
     }
   }
+}
+
+/**
+ * Every run's stored pending counters (`pending_steps` / `failed_steps`, spec
+ * 2026-10-27 server reads §3.1), written once after the seed's last write. The
+ * seed writes runs, steps and decisions in bulk SQL, not through
+ * `recomputeRunStatus` (their one writer in the app), so until then they hold
+ * the columns' default 0 and every counter read would see no pending work.
+ *
+ * It is migration 0043's backfill, `COUNTERS_BACKFILL_SQL`, as one statement
+ * over the whole scratch database. That is right here, though never against a
+ * live install: the seed is offline, and the app's stack starts only after it,
+ * so no writer can race the statement's snapshot.
+ */
+export async function backfillRunCounters(db: DB): Promise<void> {
+  await inTx(db, async (tx) => {
+    await tx.execute(sql.raw(COUNTERS_BACKFILL_SQL));
+  });
 }
 
 /** Empties every table of the scratch database (a previous seed included). */

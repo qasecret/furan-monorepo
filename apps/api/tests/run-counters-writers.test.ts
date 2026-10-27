@@ -37,6 +37,7 @@ import {
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
   type ReviewUser,
@@ -480,6 +481,54 @@ d("run counters: every writer leaves stored = computed", () => {
     await expectCounters(s.runId, { pendingSteps: 5, failedSteps: 2 });
   });
 
+  test("syncRunCounters (test helper) brings counters in line after direct SQL writes", async () => {
+    const s = await seed({
+      checkpoints: [
+        { name: "a", verdict: "unresolved" },
+        { name: "b", verdict: "new" },
+        { name: "c", verdict: "passed" },
+      ],
+    });
+    const other = await addReviewRun(h, s, {
+      checkpoints: [{ name: "d", verdict: "new" }],
+    });
+    await expectCounters(s.runId, { pendingSteps: 2, failedSteps: 0 });
+
+    // Writes no API path made: a decision, a failed diff and an override.
+    await h.db.insert(checkpointDecisions).values({
+      projectId: s.projectId,
+      runId: s.runId,
+      screenshotId: s.shots.a!.id,
+      actionId: randomUUID(),
+      decision: "approved",
+      actorId: s.editor.id,
+      source: "viewer",
+    });
+    await h.db
+      .update(screenshots)
+      .set({
+        verdict: "unresolved",
+        diffFailedAt: new Date(),
+        diffError: "engine_error",
+      })
+      .where(eq(screenshots.id, s.shots.c!.id));
+    await h.db
+      .update(testRuns)
+      .set({ statusOverride: "failed" })
+      .where(eq(testRuns.id, other.runId));
+    // The stored counters are stale until synced.
+    expect(await stored(s.runId)).toMatchObject({
+      pendingSteps: 2,
+      failedSteps: 0,
+    });
+    expect(await stored(other.runId)).toMatchObject({ pendingSteps: 1 });
+
+    await syncRunCounters(h.db, [other.runId, s.runId, s.runId]);
+    await expectCounters(s.runId, { pendingSteps: 2, failedSteps: 1 });
+    await expectCounters(other.runId, { pendingSteps: 0, failedSteps: 0 });
+    expect((await stored(other.runId)).status).toBe("failed");
+  });
+
   describe("the stored definition is the API's (Ruling R4)", () => {
     /**
      * Per run, the API's own counts: `pendingStepCondition()` (no facets)
@@ -588,7 +637,7 @@ d("run counters: every writer leaves stored = computed", () => {
         actorId: s.editor.id,
         source: "viewer",
       });
-      await recomputeRunStatus(h.db, s.runId);
+      await syncRunCounters(h.db, [s.runId]);
 
       const runIds = [
         s.runId,

@@ -34,6 +34,7 @@ import {
 } from "./shape.js";
 import {
   UPLOAD_CHUNK,
+  backfillRunCounters,
   inChunks,
   loadProject,
   resolveAllButOldest,
@@ -178,9 +179,11 @@ export async function markSeedUsed(db: DB): Promise<void> {
  *
  * Order: images (the pool, the diff images, the pipeline baselines), users
  * and projects, the main project, the worst-case
- * project, `vacuum analyze`, the worst case's resolution, `verifyStatuses` on
- * both projects, the spots, `scale_meta` (last, so an interrupted seed never
- * looks complete), and a final `vacuum analyze`.
+ * project, `vacuum analyze`, the worst case's resolution, the runs' stored
+ * pending counters (`backfillRunCounters`, after the last write of a run's
+ * steps, decisions or status), `verifyStatuses` on both projects (statuses,
+ * `merge` and counters), the spots, `scale_meta` (last, so an interrupted
+ * seed never looks complete), and a final `vacuum analyze`.
  */
 export async function seed(
   db: DB,
@@ -247,6 +250,8 @@ export async function seed(
     ids.adminId,
     keptPendingBatches(shape),
   );
+  // The seed's last write of a run's inputs is above: now the counters.
+  await backfillRunCounters(db);
 
   await verifyStatuses(db, ids.projectId);
   await verifyStatuses(db, ids.resolvedProjectId);
