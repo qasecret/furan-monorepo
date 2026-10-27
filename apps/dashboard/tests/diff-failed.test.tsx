@@ -618,14 +618,18 @@ describe("a retry that takes its run out of the filtered list", () => {
 });
 
 describe("useRetryDiff", () => {
-  test("reads the run's steps, the run and the run lists again after a retry", async () => {
+  test("reads the run's steps, the run, the step and the run lists again after a retry", async () => {
     const server = runServer([failed()]);
     let hook!: ReturnType<typeof useRetryDiff>;
     function Probe() {
       hook = useRetryDiff("r1");
-      // The three views a retry changes, each with an observer to refetch.
+      // The views a retry changes, each with an observer to refetch: the
+      // retried step's own read among them, and another step's, which the
+      // retry leaves alone.
       trpc.runs.listCheckpoints.useQuery({ runId: "r1" });
       trpc.runs.getById.useQuery({ runId: "r1" });
+      trpc.runs.getStep.useQuery({ runId: "r1", checkpointId: "c1" });
+      trpc.runs.getStep.useQuery({ runId: "r1", checkpointId: "c2" });
       trpc.runs.list.useQuery({ projectId: "p1" } as never);
       return null;
     }
@@ -634,7 +638,7 @@ describe("useRetryDiff", () => {
         <Probe />
       </TrpcBackend>,
     );
-    await waitFor(() => expect(server.backend.calls).toHaveLength(3));
+    await waitFor(() => expect(server.backend.calls).toHaveLength(5));
     expect(hook.pending).toBe(false);
     server.backend.calls.length = 0;
 
@@ -645,9 +649,13 @@ describe("useRetryDiff", () => {
     const paths = server.backend.calls.map((c) => c.path).sort();
     expect(paths).toEqual([
       "runs.getById",
+      "runs.getStep",
       "runs.list",
       "runs.listCheckpoints",
       "runs.retryDiff",
+    ]);
+    expect(callsTo(server.backend, "runs.getStep")).toEqual([
+      { runId: "r1", checkpointId: "c1" },
     ]);
     expect(hook.pending).toBe(false);
   });

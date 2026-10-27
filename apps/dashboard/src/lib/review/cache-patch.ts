@@ -3,15 +3,16 @@ import { getQueryKey } from "@trpc/react-query";
 
 import {
   decidedBy,
+  fieldsOf,
   patchListedRun,
   pendingDelta,
   runStatusFor,
   withPendingDelta,
   type CheckpointItem,
-  type Review,
   type ReviewChange,
   type ReviewFields,
   type RunsListPage,
+  type StepDetail,
 } from "./optimistic";
 
 import { trpc } from "@/lib/trpc";
@@ -27,44 +28,74 @@ export interface Caches {
   queryClient: QueryClient;
 }
 
+/** The cache key of every `runs.getStep` read of run `runId`, whatever step. */
+const stepsKey = (runId: string): QueryKey =>
+  getQueryKey(trpc.runs.getStep, { runId }, "query");
+
+/** Every loaded step read of run `runId`, with its cache key. */
+function loadedSteps(
+  { queryClient }: Caches,
+  runId: string,
+): Array<[QueryKey, StepDetail]> {
+  return queryClient
+    .getQueriesData<StepDetail>({ queryKey: stepsKey(runId) })
+    .filter((e): e is [QueryKey, StepDetail] => e[1] !== undefined);
+}
+
 /** Stops answers already on their way from landing on top of a patch. */
 export async function cancelRun(
-  { utils }: Caches,
+  { utils, queryClient }: Caches,
   runId: string,
 ): Promise<void> {
   await Promise.all([
     utils.runs.listCheckpoints.cancel({ runId }),
     utils.runs.getById.cancel({ runId }),
+    queryClient.cancelQueries({ queryKey: stepsKey(runId) }),
     utils.runs.list.cancel(),
     utils.builds.getById.cancel(),
   ]);
 }
 
 /**
- * Applies `change` to the loaded caches of run `runId`: its checkpoints and
- * detail, its row on every `runs.list` page, and the pending count of its
- * build. A cache that is not loaded, or that the change does not reach, is left
- * alone. The run's status is recomputed from the new values.
+ * Applies `change` to the loaded caches of run `runId`: its step list and
+ * every step of it read on its own, its header's status, its row on every
+ * `runs.list` page, and the pending count of its build. A cache that is not
+ * loaded, or that the change does not reach, is left alone. The run's status
+ * is recomputed from the patched step list.
  */
 export function patchRun(
-  { utils, queryClient }: Caches,
+  caches: Caches,
   runId: string,
   change: ReviewChange,
 ): void {
+  const { utils, queryClient } = caches;
   const list = utils.runs.listCheckpoints.getData({ runId });
   const items = list && change.items(list.items);
   const nextList =
     list && items && items !== list.items ? { ...list, items } : undefined;
   if (nextList) utils.runs.listCheckpoints.setData({ runId }, nextList);
 
-  // The run's status comes from the patched checkpoint list when that changed,
-  // otherwise from the patched contexts of the run itself.
-  const run = utils.runs.getById.getData({ runId });
-  const patched = run && change.run(run, nextList?.items);
-  const nextRun = patched !== run ? patched : undefined;
-  if (nextRun) utils.runs.getById.setData({ runId }, nextRun);
+  // Each step read on its own (the one on screen, the neighbours fetched
+  // ahead) shows the same decision as the list.
+  const steps = loadedSteps(caches, runId);
+  const patchedSteps = steps.map(([key, view]) => {
+    const next = change.step(view);
+    if (next !== view) queryClient.setQueryData(key, next);
+    return next;
+  });
+  const stepsChanged = patchedSteps.some((v, k) => v !== steps[k]?.[1]);
 
-  if (!nextList && !nextRun) return;
+  if (!nextList && !stepsChanged) return;
+
+  // The header's status, from the patched step list: the run's own rollup.
+  const run = utils.runs.getById.getData({ runId });
+  const status =
+    run && nextList
+      ? runStatusFor(nextList.items, run.status, run.statusOverride)
+      : undefined;
+  if (run && status !== undefined && status !== run.status) {
+    utils.runs.getById.setData({ runId }, { ...run, status });
+  }
 
   // `runs.list` is cached once per filter and cursor: patch every page.
   let buildId = run?.buildId;
@@ -74,28 +105,23 @@ export function patchRun(
   for (const [key, page] of pages) {
     if (!page?.items) continue;
     buildId ??= page.items.find((r) => r.id === runId)?.buildId;
-    const next = patchListedRun(
-      page,
-      runId,
-      (row) =>
-        nextRun?.status ??
-        (nextList
-          ? runStatusFor(nextList.items, row.status, row.statusOverride)
-          : row.status),
+    const next = patchListedRun(page, runId, (row) =>
+      nextList
+        ? runStatusFor(nextList.items, row.status, row.statusOverride)
+        : row.status,
     );
     if (next !== page) queryClient.setQueryData(key, next);
   }
 
-  // Steps that stopped (or started) needing a reviewer move the build's count.
+  // Steps that stopped (or started) needing a reviewer move the build's count:
+  // counted on the step list, else on the steps read on their own.
   const delta =
     list && nextList
       ? pendingDelta(list.items, nextList.items)
-      : run && nextRun
-        ? pendingDelta(
-            Object.values(run.checkpointContexts),
-            Object.values(nextRun.checkpointContexts),
-          )
-        : 0;
+      : pendingDelta(
+          steps.map(([, v]) => v.review),
+          patchedSteps.map((v) => v.review),
+        );
   if (delta === 0 || !buildId) return;
   const build = utils.builds.getById.getData({ buildId });
   if (build) {
@@ -103,49 +129,46 @@ export function patchRun(
   }
 }
 
-/** The review fields of every loaded checkpoint of `runIds`, from both views of it. */
-function loadedRows(
-  { utils }: Caches,
+/** The loaded step lists and step reads of `runIds`. */
+function loadedViews(
+  caches: Caches,
   runIds: readonly string[],
-): Array<readonly [string, Review]> {
-  const rows: Array<readonly [string, Review]> = [];
+): { items: CheckpointItem[]; steps: StepDetail[] } {
+  const items: CheckpointItem[] = [];
+  const steps: StepDetail[] = [];
   for (const runId of runIds) {
-    const items = utils.runs.listCheckpoints.getData({ runId })?.items ?? [];
-    const contexts = utils.runs.getById.getData({ runId })?.checkpointContexts;
-    rows.push(
-      ...items.map((i) => [i.id, i] as const),
-      ...Object.entries(contexts ?? {}),
+    items.push(
+      ...(caches.utils.runs.listCheckpoints.getData({ runId })?.items ?? []),
     );
+    steps.push(...loadedSteps(caches, runId).map(([, v]) => v));
   }
-  return rows;
+  return { items, steps };
 }
 
 /**
- * The state and decision of every loaded checkpoint of `runIds` that was
- * decided under `actionId`, by checkpoint id: what an undo of it would clear.
+ * The state and decision of every loaded step of `runIds` that was decided
+ * under `actionId`, in each view of it: what an undo of it would clear.
  */
 export function loadedDecisions(
   caches: Caches,
   runIds: readonly string[],
   actionId: string,
-): Map<string, ReviewFields> {
-  return decidedBy(loadedRows(caches, runIds), actionId);
+): ReviewFields {
+  const { items, steps } = loadedViews(caches, runIds);
+  return decidedBy(items, steps, actionId);
 }
 
 /**
- * The state and decision the loaded caches hold for the checkpoints `ids`,
- * decided or not: what a decision on them would overwrite.
+ * The state and decision the loaded caches hold for the steps `ids`, decided
+ * or not, in each view of them: what a decision on them would overwrite.
  */
 export function loadedFields(
   caches: Caches,
   runIds: readonly string[],
   ids: ReadonlySet<string>,
-): Map<string, ReviewFields> {
-  const found = new Map<string, ReviewFields>();
-  for (const [id, { state, decision }] of loadedRows(caches, runIds)) {
-    if (ids.has(id)) found.set(id, { state, decision });
-  }
-  return found;
+): ReviewFields {
+  const { items, steps } = loadedViews(caches, runIds);
+  return fieldsOf(items, steps, (_decision, id) => ids.has(id));
 }
 
 const runIdOf = (key: QueryKey): string | undefined => {

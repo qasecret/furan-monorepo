@@ -282,18 +282,43 @@ d("tRPC runs router", () => {
     s = await seed(h);
   });
 
-  test("getById: member can fetch run with screenshots + diffRegions", async () => {
+  test("getById: a member gets the run header; a step's baseline context is getStep's", async () => {
+    const [step] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "e".repeat(64),
+      })
+      .returning({ id: screenshots.id });
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
     expect(data.id).toBe(s.runId);
-    expect(Array.isArray(data.screenshots)).toBe(true);
-    expect(Array.isArray(data.diffRegions)).toBe(true);
-    // T9: baseline lookup is included; null for a run with no prior baseline.
-    expect(data.baselineScreenshot).toBeNull();
-    expect(data.baselineSource).toBeNull();
+    // Spec 2026-10-27 §5: the header carries none of the run's steps.
+    for (const gone of [
+      "screenshots",
+      "diffRegions",
+      "checkpointContexts",
+      "baselineScreenshot",
+      "variationIgnoreAreas",
+      "ignoreAreas",
+    ]) {
+      expect(data).not.toHaveProperty(gone);
+    }
+    // T9: baseline lookup is getStep's; null for a step with no prior baseline.
+    const view = await client.runs.getStep.query({
+      runId: s.runId,
+      checkpointId: step!.id,
+    });
+    expect(view.baselineContext.baselineScreenshot).toBeNull();
+    expect(view.baselineContext.baselineSource).toBeNull();
   });
 
-  test("getById: returns baselineScreenshot when a prior baseline exists", async () => {
+  test("getStep: returns baselineScreenshot when a prior baseline exists", async () => {
     // Seed an older run on the SAME variation+branch and snapshot it as the
     // baseline; resolveBaseline should pick it up via the this_branch tier.
     const [olderRun] = await h.db
@@ -335,26 +360,32 @@ d("tRPC runs router", () => {
       .returning();
     expect(bl.id).toBeDefined();
 
-    // Link the current run to the same variation so getById can resolve
-    // the baseline via the first checkpoint's testVariationId.
-    await h.db.insert(screenshots).values({
-      runId: s.runId,
-      projectId: s.projectId,
-      testVariationId: s.variationId,
-      name: "current",
-      imageKey: "b".repeat(64),
-      viewport: "1280x720",
-      browser: "chromium",
-    });
+    // A step of the current run on the same variation, so getStep can
+    // resolve the baseline via its testVariationId.
+    const [current] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "current",
+        imageKey: "b".repeat(64),
+        viewport: "1280x720",
+        browser: "chromium",
+      })
+      .returning({ id: screenshots.id });
 
     const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
+    const { baselineContext: data } = await client.runs.getStep.query({
+      runId: s.runId,
+      checkpointId: current!.id,
+    });
     expect(data.baselineScreenshot).not.toBeNull();
     expect(data.baselineScreenshot?.imageKey).toBe("a".repeat(64));
     expect(data.baselineSource).toBe("this_branch");
   });
 
-  test("getById: baselineSource is parent_pr when the baseline lives only on the parent branch (ADR-055)", async () => {
+  test("getStep: baselineSource is parent_pr when the baseline lives only on the parent branch (ADR-055)", async () => {
     // Current run is on feature/x with parent=develop; the only baseline is
     // on develop. this_branch (feature/x) + default (main) both miss, so the
     // parent_pr tier must resolve it — proving runs.ts threads the parent.
@@ -413,19 +444,26 @@ d("tRPC runs router", () => {
       branchName: "develop",
     });
 
-    // Link the current run to the candidate variation so getById resolves it.
-    await h.db.insert(screenshots).values({
-      runId: s.runId,
-      projectId: s.projectId,
-      testVariationId: s.variationId,
-      name: "current",
-      imageKey: "c".repeat(64),
-      viewport: candidateVar!.viewport ?? "1280x720",
-      browser: candidateVar!.browser ?? "chromium",
-    });
+    // A step of the current run on the candidate variation, for getStep to
+    // resolve.
+    const [current] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "current",
+        imageKey: "c".repeat(64),
+        viewport: candidateVar!.viewport ?? "1280x720",
+        browser: candidateVar!.browser ?? "chromium",
+      })
+      .returning({ id: screenshots.id });
 
     const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
+    const { baselineContext: data } = await client.runs.getStep.query({
+      runId: s.runId,
+      checkpointId: current!.id,
+    });
     expect(data.baselineSource).toBe("parent_pr");
     // The baseline screenshot must resolve under the SIBLING (develop)
     // variation the baseline actually lives on — keying off the candidate's
@@ -436,10 +474,10 @@ d("tRPC runs router", () => {
     expect(data.baselineScreenshot?.testVariationId).toBe(devVar!.id);
   });
 
-  test("getById: returns variationIgnoreAreas from the run's variation", async () => {
-    // ADR-038: variationIgnoreAreas comes from the first checkpoint's
-    // variation (test_variations.ignore_regions). Seed a screenshot linking
-    // the run to the variation, then set ignore_regions on that variation.
+  test("getStep: returns variationIgnoreAreas from the step's variation", async () => {
+    // ADR-038: variationIgnoreAreas comes from the step's variation
+    // (test_variations.ignore_regions). Seed a step on the variation, then
+    // set ignore_regions on that variation.
     const region = {
       x: 10,
       y: 20,
@@ -447,59 +485,33 @@ d("tRPC runs router", () => {
       height: 40,
       viewport: "1280x720",
     };
-    await h.db.insert(screenshots).values({
-      runId: s.runId,
-      projectId: s.projectId,
-      testVariationId: s.variationId,
-      name: "home",
-      viewport: "1280x720",
-      browser: "chromium",
-      imageKey: "aaaa",
-    });
+    const [step] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "aaaa",
+      })
+      .returning({ id: screenshots.id });
+    const client = makeClient(baseUrl, s.memberJwt);
+    const read = async () =>
+      (
+        await client.runs.getStep.query({
+          runId: s.runId,
+          checkpointId: step!.id,
+        })
+      ).baselineContext.variationIgnoreAreas;
+    // ADR-038: ignore_regions is jsonb; null when no regions are set.
+    expect(await read()).toBeNull();
     await h.db
       .update(testVariations)
       .set({ ignoreRegions: [region] })
       .where(eq(testVariations.id, s.variationId));
-
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.variationIgnoreAreas).toEqual([region]);
-  });
-
-  test("getById: variationIgnoreAreas is null when variation column is null", async () => {
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.variationIgnoreAreas).toBeNull();
-  });
-
-  test("getById: variationIgnoreAreas is null when column holds malformed JSON", async () => {
-    // ADR-038: ignore_regions is jsonb; null is normal when no regions are set.
-    // The "malformed JSON" case doesn't apply to jsonb columns. Test that
-    // variationIgnoreAreas is null when no screenshot links the run to a variation.
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.variationIgnoreAreas).toBeNull();
-  });
-
-  test("getById: returns ignoreAreas as a parsed array (not raw JSON string)", async () => {
-    // ADR-038: run-level ignoreAreas removed from test_runs; getById always
-    // returns null. This test validates the null behavior.
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.ignoreAreas).toBeNull();
-  });
-
-  test("getById: ignoreAreas is null when test_runs.ignore_areas column is null", async () => {
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.ignoreAreas).toBeNull();
-  });
-
-  test("getById: ignoreAreas is null when test_runs.ignore_areas holds malformed JSON", async () => {
-    // ADR-038: run-level ignoreAreas removed; always null.
-    const client = makeClient(baseUrl, s.memberJwt);
-    const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.ignoreAreas).toBeNull();
+    expect(await read()).toEqual([region]);
   });
 
   test("getById: non-member receives FORBIDDEN", async () => {
@@ -2386,7 +2398,7 @@ d("tRPC runs router", () => {
   });
 
   describe("listCheckpoints", () => {
-    test("happy path: returns items ordered by createdAt asc with all required fields", async () => {
+    test("happy path: returns items ordered by createdAt asc with what the rail draws", async () => {
       // Seed 3 checkpoints across 2 viewports.
       const [v1] = await h.db
         .insert(testVariations)
@@ -2418,41 +2430,51 @@ d("tRPC runs router", () => {
         },
       ];
 
+      const insertedIds: string[] = [];
       for (const d of chkData) {
-        await h.db.insert(screenshots).values({
-          runId: s.runId,
-          projectId: s.projectId,
-          testVariationId: d.testVariationId,
-          name: d.name,
-          viewport: d.viewport,
-          browser: "chromium",
-          imageKey: d.imageKey,
-        });
+        const [row] = await h.db
+          .insert(screenshots)
+          .values({
+            runId: s.runId,
+            projectId: s.projectId,
+            testVariationId: d.testVariationId,
+            name: d.name,
+            viewport: d.viewport,
+            browser: "chromium",
+            imageKey: d.imageKey,
+          })
+          .returning({ id: screenshots.id });
+        insertedIds.push(row!.id);
       }
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.listCheckpoints.query({ runId: s.runId });
 
-      expect(res.items.length).toBe(3);
-
       // Ordered by createdAt asc — first inserted comes first.
-      for (let i = 0; i < res.items.length - 1; i++) {
-        expect(new Date(res.items[i]!.createdAt).getTime()).toBeLessThanOrEqual(
-          new Date(res.items[i + 1]!.createdAt).getTime(),
-        );
-      }
+      expect(res.items.map((i) => i.id)).toEqual(insertedIds);
 
-      // Each item has all required fields.
-      for (const item of res.items) {
-        expect(item.id).toBeDefined();
-        expect(item.name).toBeDefined();
-        expect(item.viewport).toBeDefined();
-        expect(item.browser).toBeDefined();
-        expect(item.matchLevel).toBeDefined();
-        expect(item.imageKey).toBeDefined();
-        expect(item.testVariationId).toBeDefined();
-        expect(item.createdAt).toBeDefined();
-      }
+      // Each item has what the rail and the step cards draw.
+      res.items.forEach((item, i) => {
+        expect(item).toMatchObject({
+          name: chkData[i]!.name,
+          viewport: chkData[i]!.viewport,
+          browser: "chromium",
+          imageKey: chkData[i]!.imageKey,
+        });
+        // The rest of a step (its match level, variation, capture time and
+        // numbers) is getStep's (spec 2026-10-27 §5).
+        for (const gone of ["matchLevel", "testVariationId", "createdAt"]) {
+          expect(item).not.toHaveProperty(gone);
+        }
+      });
+      const { step } = await client.runs.getStep.query({
+        runId: s.runId,
+        checkpointId: insertedIds[1]!,
+      });
+      expect(step).toMatchObject({
+        matchLevel: expect.any(String),
+        testVariationId: v2!.id,
+      });
     });
 
     test("non-member receives FORBIDDEN", async () => {

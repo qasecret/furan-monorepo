@@ -117,6 +117,7 @@ const {
       runs: {
         getById: procedure(),
         listCheckpoints: procedure(),
+        getStep: procedure(),
         list: procedure(),
         facets: procedure(),
         getCheckpointGroup: procedure(),
@@ -295,8 +296,11 @@ vi.mock("next/link", async () => {
   return { default: Link };
 });
 
-// ADR-032: tests override fields on this object (e.g., autoApproved)
-// per-test via mockGetByIdData = { ...defaultMockData, autoApproved: true }.
+// The run as the server holds it: its own fields, its steps with their
+// regions and baseline contexts. The mocked reads below serve it the way the
+// API does (spec 2026-10-27 §5): `runs.getById` its header, `runs.getStep`
+// one step. Tests override fields on this object (e.g., autoApproved)
+// per-test via mockRun = { ...defaultMockData, autoApproved: true }.
 type RunStatusLite = "unresolved" | "empty" | "passed" | "failed" | "running";
 interface MockData {
   id: string;
@@ -316,6 +320,8 @@ interface MockData {
   checkpointContexts?: Record<string, unknown>;
   diffPercent?: number | null;
   vlmDescription?: string | null;
+  runByName?: string | null;
+  checkpointCount?: number;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -335,7 +341,7 @@ const defaultMockData: MockData = {
   // embedded ApprovalBar is in its canonical reviewable state.
   status: "unresolved",
 };
-let mockGetByIdData: MockData = { ...defaultMockData };
+let mockRun: MockData = { ...defaultMockData };
 // `runs.getById` failing (e.g. a shared link to a run that is gone).
 let mockGetByIdError: { message: string; data?: { code: string } } | null =
   null;
@@ -344,15 +350,86 @@ let mockGetByIdKeepsData = false;
 // ADR-038 checkpoint list — configurable per-test so the side step-arrows
 // (which need total > 1) can be exercised. Empty by default.
 let mockCheckpoints: { items: unknown[] } = { items: [] };
+// Steps whose own read (`runs.getStep`) is still on its way; none by default.
+let pendingStepReads = new Set<string>();
+// Steps whose own read fails, and how; none by default.
+let failingStepReads = new Map<
+  string,
+  { message: string; data: { code: string } }
+>();
 // The step's same-change group (ADR-042), for the group-approval callout;
 // none by default.
 let mockGroup: unknown = undefined;
 
+/** The fields of `mockRun` that are its steps', which the header leaves out. */
+const STEP_FIELDS = [
+  "screenshots",
+  "diffRegions",
+  "baselineScreenshot",
+  "baselineSource",
+  "variationIgnoreAreas",
+  "checkpointContexts",
+  "ignoreAreas",
+] as const;
+
+/** `runs.getById`: the run header, its own fields and its build's runner. */
+function runHeader(run: MockData) {
+  const header: Record<string, unknown> = { runByName: null, ...run };
+  for (const key of STEP_FIELDS) delete header[key];
+  return header;
+}
+
+/**
+ * `runs.getStep` for one step of `mockRun`, as the API answers it: the step's
+ * row (what the step list says of it, under its screenshot row), its baseline
+ * context (its own, else the run's first-step one the fixture names), its
+ * regions and those on no step, and its review (the list's, else its
+ * context's). Undefined for a step the run does not have (`NOT_FOUND`).
+ */
+function stepViewOf(checkpointId: string) {
+  const run = mockRun;
+  const item = (mockCheckpoints.items as Array<Record<string, unknown>>).find(
+    (i) => i.id === checkpointId,
+  );
+  const shot = (run.screenshots as Array<Record<string, unknown>>).find(
+    (x) => x.id === checkpointId,
+  );
+  if (!item && !shot) return undefined;
+  const ctx = run.checkpointContexts?.[checkpointId] as
+    Record<string, unknown> | undefined;
+  const { state, decision, newerCapture, verdict, ...row } = item ?? {};
+  const review = {
+    verdict: verdict ?? state ?? ctx?.verdict ?? null,
+    state: state ?? ctx?.state ?? null,
+    decision: decision ?? ctx?.decision ?? null,
+  };
+  return {
+    step: { id: checkpointId, diffImageKey: null, ...row, ...shot },
+    baselineContext: {
+      baselineScreenshot: ctx
+        ? (ctx.baselineScreenshot ?? null)
+        : (run.baselineScreenshot ?? null),
+      baselineSource: ctx
+        ? (ctx.baselineSource ?? null)
+        : (run.baselineSource ?? null),
+      variationIgnoreAreas: ctx
+        ? (ctx.variationIgnoreAreas ?? null)
+        : (run.variationIgnoreAreas ?? null),
+    },
+    regions: (
+      run.diffRegions as Array<{ screenshotId?: string | null }>
+    ).filter((r) => !r.screenshotId || r.screenshotId === checkpointId),
+    review,
+    newerCapture: newerCapture ?? ctx?.newerCapture ?? null,
+  };
+}
+
 // Mock the tRPC client.
-// T9: getById response includes baselineScreenshot + diffName.
+// T9: getStep's baseline context + the header's diffName.
 // T11: DiffViewer uses trpc.useUtils() for query invalidation; its review
 // actions (keyboard shortcuts and the embedded <ApprovalBar>) read the same
-// two queries and make their decisions through the mocked review hook.
+// queries and make their decisions through the mocked review hook. The
+// viewer never asks for `builds.getById`: "Run by" is the header's.
 vi.mock("../src/lib/trpc", () => {
   const noopMutation = () => ({ mutate: () => undefined, isPending: false });
   return {
@@ -364,10 +441,34 @@ vi.mock("../src/lib/trpc", () => {
             data:
               mockGetByIdError && !mockGetByIdKeepsData
                 ? undefined
-                : mockGetByIdData,
+                : runHeader(mockRun),
             isLoading: false,
             error: mockGetByIdError,
           }),
+        },
+        // The review hook's cache patch reads the steps' own reads by key.
+        getStep: {
+          _def: () => ({ path: ["runs", "getStep"] }),
+          useQuery: (input: { checkpointId: string }) => {
+            if (pendingStepReads.has(input.checkpointId)) {
+              return { data: undefined, isLoading: true, error: null };
+            }
+            const failure = failingStepReads.get(input.checkpointId);
+            if (failure) {
+              return { data: undefined, isLoading: false, error: failure };
+            }
+            const view = input.checkpointId
+              ? stepViewOf(input.checkpointId)
+              : undefined;
+            return {
+              data: view,
+              isLoading: false,
+              error:
+                view || !input.checkpointId
+                  ? null
+                  : { message: "NOT_FOUND", data: { code: "NOT_FOUND" } },
+            };
+          },
         },
         // ADR-038: checkpoint list — configurable via mockCheckpoints.
         listCheckpoints: {
@@ -408,16 +509,7 @@ vi.mock("../src/lib/trpc", () => {
           }),
         },
       },
-      // INFO sidebar reads runByName off the build sibling query.
-      builds: {
-        getById: {
-          useQuery: () => ({
-            data: { runByName: null },
-            isLoading: false,
-            error: null,
-          }),
-        },
-      },
+
       baselines: {
         listForVariation: {
           useQuery: () => ({ data: { items: [] }, isLoading: false }),
@@ -610,6 +702,8 @@ function resetLoop() {
   realReview.on = false;
   mockGetByIdError = null;
   mockGetByIdKeepsData = false;
+  pendingStepReads = new Set();
+  failingStepReads = new Map();
   vi.mocked(toast.error).mockReset();
   vi.mocked(toast.success).mockReset();
   useLoopCue.setState({ cue: null });
@@ -624,7 +718,7 @@ describe("DiffViewer", () => {
   beforeEach(() => {
     pixiInitCount = 0;
     StubEventSource.instances = [];
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = { items: [] };
     resetLoop();
     useViewerStore.setState({ viewport: "" });
@@ -638,18 +732,19 @@ describe("DiffViewer", () => {
   });
 
   /**
-   * A run whose step has a baseline, so every mode is available (R2). Its
-   * images are never answered: nothing reaches the network.
+   * A run whose step (`d1`, the one these tests open) has a baseline, so
+   * every mode is available (R2). Its images are never answered: nothing
+   * reaches the network.
    */
   function withBaseline() {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise<Response>(() => {})),
     );
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       baselineScreenshot: { id: "base", imageKey: "base-img" },
-      screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+      screenshots: [{ id: "d1", imageKey: "img-1", diffImageKey: null }],
     };
   }
 
@@ -670,9 +765,13 @@ describe("DiffViewer", () => {
     render(<DiffViewer runId={runId} diffId="d1" />);
     const es = StubEventSource.instances.at(-1)!;
     const getById = utilsMock.runs.getById.invalidate;
+    // The steps read on their own (the one on screen, the neighbours fetched
+    // ahead) go stale with the same events.
+    const getStep = utilsMock.runs.getStep.invalidate;
 
     act(() => es.emit({ type: "capture.started", runId }));
     expect(getById).not.toHaveBeenCalled();
+    expect(getStep).not.toHaveBeenCalled();
 
     act(() =>
       es.emit({
@@ -685,9 +784,14 @@ describe("DiffViewer", () => {
     );
     expect(getById).toHaveBeenCalledTimes(1);
     expect(getById).toHaveBeenLastCalledWith({ runId });
+    // The step that settled.
+    expect(getStep).toHaveBeenCalledTimes(1);
+    expect(getStep).toHaveBeenLastCalledWith({ runId, checkpointId: "s1" });
 
     act(() => es.emit({ type: "run.completed", runId }));
     expect(getById).toHaveBeenCalledTimes(2);
+    expect(getStep).toHaveBeenCalledTimes(2);
+    expect(getStep).toHaveBeenLastCalledWith({ runId });
   });
 
   test("diff.started and diff.completed are retired: the worker no longer sends them, and the viewer does not wait on them", () => {
@@ -699,6 +803,7 @@ describe("DiffViewer", () => {
     act(() => es.emit({ type: "diff.completed", runId, passed: true }));
     expect(utilsMock.runs.getById.invalidate).not.toHaveBeenCalled();
     expect(utilsMock.runs.listCheckpoints.invalidate).not.toHaveBeenCalled();
+    expect(utilsMock.runs.getStep.invalidate).not.toHaveBeenCalled();
   });
 
   test("clicking a tab sets the mode preference", () => {
@@ -932,11 +1037,18 @@ describe("DiffViewer", () => {
     });
 
     test("a viewport switch resets the view", () => {
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         screenshots: [
           { id: "c1", viewport: "1280x720" },
           { id: "c2", viewport: "375x812" },
+        ],
+      };
+      // The run's viewports are its steps' in the step list.
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved", viewport: "1280x720" },
+          { id: "c2", name: "Home", state: "unresolved", viewport: "375x812" },
         ],
       };
       const r = render(
@@ -959,7 +1071,7 @@ describe("DiffViewer", () => {
         { id: "c1", viewport: "1280x720" },
         { id: "c2", viewport: "1280x720" },
       ];
-      mockGetByIdData = { ...defaultMockData, screenshots: shots() };
+      mockRun = { ...defaultMockData, screenshots: shots() };
       const viewer = (
         <DiffViewer
           runId="00000000-0000-0000-0000-000000000000"
@@ -970,7 +1082,7 @@ describe("DiffViewer", () => {
       const r = render(viewer);
       leaveAView();
       // What an SSE refresh brings: fresh objects, new regions, same step.
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         screenshots: shots(),
         diffRegions: [
@@ -1032,9 +1144,15 @@ describe("DiffViewer", () => {
     // region, and the API requires it non-empty. The ViewportSwitcher only
     // renders for multi-viewport runs, so without the init effect a single-
     // viewport run would leave viewport "" and "Save regions" would 400.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       screenshots: [{ id: "cp1", viewport: "1280x720" }],
+    };
+    // The run's viewports are its steps' in the step list.
+    mockCheckpoints = {
+      items: [
+        { id: "cp1", name: "Home", state: "unresolved", viewport: "1280x720" },
+      ],
     };
     render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
@@ -1043,11 +1161,17 @@ describe("DiffViewer", () => {
   });
 
   test("does not clobber an explicit viewport selection valid for the run", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       screenshots: [
         { id: "cp1", viewport: "1280x720" },
         { id: "cp2", viewport: "375x812" },
+      ],
+    };
+    mockCheckpoints = {
+      items: [
+        { id: "cp1", name: "Home", state: "unresolved", viewport: "1280x720" },
+        { id: "cp2", name: "Home", state: "unresolved", viewport: "375x812" },
       ],
     };
     // Simulate the user having picked the second viewport via the switcher.
@@ -1059,7 +1183,7 @@ describe("DiffViewer", () => {
   });
 
   test("renders the Auto-approved badge when data.autoApproved is true", () => {
-    mockGetByIdData = { ...defaultMockData, autoApproved: true };
+    mockRun = { ...defaultMockData, autoApproved: true };
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -1067,7 +1191,7 @@ describe("DiffViewer", () => {
   });
 
   test("does not render the Auto-approved badge when data.autoApproved is false", () => {
-    mockGetByIdData = { ...defaultMockData, autoApproved: false };
+    mockRun = { ...defaultMockData, autoApproved: false };
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -1078,7 +1202,7 @@ describe("DiffViewer", () => {
     // Default mock: single/no extra viewport, matching sizes, this-branch
     // baseline, not auto-approved → the strip carries nothing, so it's gone
     // (viewport already lives in the INFO sidebar).
-    mockGetByIdData = { ...defaultMockData, autoApproved: false };
+    mockRun = { ...defaultMockData, autoApproved: false };
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -1086,7 +1210,7 @@ describe("DiffViewer", () => {
   });
 
   test("shows the metadata strip when there is a signal (e.g. auto-approved)", () => {
-    mockGetByIdData = { ...defaultMockData, autoApproved: true };
+    mockRun = { ...defaultMockData, autoApproved: true };
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -1153,7 +1277,7 @@ describe("DiffViewer", () => {
 
     test("uses the step's own diff image, not the run's", async () => {
       // The run's `diffName` is its worst step's (step 1); step 2 has its own.
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         diffName: "diff-of-step-1",
         screenshots: [
@@ -1189,9 +1313,12 @@ describe("DiffViewer", () => {
 
     test("a step of a multi-step run with no image of its own is not given the run's", async () => {
       // A run diffed before steps kept their own images: `diffName` is the
-      // worst step's, so showing it on step 2 would draw step 1's diff.
-      mockGetByIdData = {
+      // worst step's, so showing it on step 2 would draw step 1's diff. The
+      // run's step count is the rail's: `checkpoint_count` is 0 on a run
+      // from before it was kept, and would read as no steps at all.
+      mockRun = {
         ...defaultMockData,
+        checkpointCount: 0,
         diffName: "diff-of-step-1",
         screenshots: [
           { id: "c1", imageKey: "img-1", diffImageKey: null },
@@ -1233,7 +1360,7 @@ describe("DiffViewer", () => {
         baselineSource: null,
         variationIgnoreAreas: null,
       });
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         diffName: "pf-diff-of-the-run",
         screenshots: [
@@ -1305,8 +1432,11 @@ describe("DiffViewer", () => {
     });
 
     test("a legacy single-step run still shows the run's diff image", async () => {
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
+        // As on a run from before `checkpoint_count` was kept: the rail
+        // counts its one step.
+        checkpointCount: 0,
         diffName: "diff-of-the-run",
         screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
       };
@@ -1387,7 +1517,7 @@ describe("DiffViewer", () => {
      * the run's diff % and diff image are its worst step's (step 1's).
      */
     function legacyRun(regions: unknown[]) {
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         diffName: "diff-of-step-1",
         diffPercent: 5,
@@ -1481,7 +1611,7 @@ describe("DiffViewer", () => {
     test("Diff on a one-step run with only audit rows and no diff image: no pixel changes (I1)", async () => {
       loadingStorage();
       inDiff();
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         diffName: null,
         baselineScreenshot: { id: "base", imageKey: fresh("base") },
@@ -1517,7 +1647,7 @@ describe("DiffViewer", () => {
     ) {
       loadingStorage();
       inDiff();
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         diffName: null,
         diffPercent: runPercent,
@@ -1760,7 +1890,7 @@ describe("DiffViewer", () => {
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "empty" as const,
       projectId: "test-project-id",
@@ -1778,7 +1908,7 @@ describe("DiffViewer", () => {
   });
 
   test("non-empty status (e.g. unresolved) renders viewer + region list normally", () => {
-    mockGetByIdData = { ...defaultMockData, status: "unresolved" as const };
+    mockRun = { ...defaultMockData, status: "unresolved" as const };
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.queryByTestId("empty-run-card")).toBeNull();
   });
@@ -1798,7 +1928,7 @@ describe("DiffViewer", () => {
       ...over,
     });
     function openStep(items: unknown[], at = "c1") {
-      mockGetByIdData = { ...defaultMockData, ...WORST };
+      mockRun = { ...defaultMockData, ...WORST };
       mockCheckpoints = { items };
       return render(
         <DiffViewer runId={RUN} projectId="p1" initialCheckpointId={at} />,
@@ -1965,9 +2095,11 @@ describe("DiffViewer", () => {
   });
 
   test("diff stepper renders counter and advances on next click", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "unresolved" as const,
+      // The step the viewer opens: its read carries the run's regions.
+      screenshots: [{ id: "d1" }],
       diffRegions: [
         {
           id: "region-1",
@@ -2015,9 +2147,11 @@ describe("DiffViewer", () => {
 
   test("toggling highlight does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
     // Render with regions so the shading layer has something to mount.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "unresolved" as const,
+      // The step the viewer opens: its read carries the run's regions.
+      screenshots: [{ id: "d1" }],
       diffRegions: [
         {
           id: "region-1",
@@ -2060,9 +2194,11 @@ describe("DiffViewer", () => {
   });
 
   test("hide-displacement-toggle reduces stepper count when layout regions present", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "unresolved" as const,
+      // The step the viewer opens: its read carries the run's regions.
+      screenshots: [{ id: "d1" }],
       diffRegions: [
         {
           id: "region-visual",
@@ -2156,7 +2292,7 @@ function resetReviewSpies() {
 
 describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
     resetReviewSpies();
     useViewerStore.setState({
@@ -2235,7 +2371,7 @@ describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
   test.each(["running", "empty"] as const)(
     "A and R do nothing while the run is %s (not reviewable — buttons are disabled)",
     (status) => {
-      mockGetByIdData = { ...defaultMockData, status };
+      mockRun = { ...defaultMockData, status };
       render(
         <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
       );
@@ -2246,7 +2382,7 @@ describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
   );
 
   test("A and R do nothing while the run is overridden", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "failed",
       statusOverride: "failed",
@@ -2339,7 +2475,7 @@ describe("DiffViewer stale-capture guard", () => {
     buildName: "#42",
   };
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = {
       items: [stepFixture("cp-1", "unresolved", { newerCapture: NEWER })],
     };
@@ -2404,7 +2540,7 @@ describe("DiffViewer stale-capture guard", () => {
   });
 
   test("shows the callout, linking to the newer capture's own step, in the same filters", () => {
-    mockGetByIdData = { ...defaultMockData, projectId: "proj-1" };
+    mockRun = { ...defaultMockData, projectId: "proj-1" };
     const r = render(
       <DiffViewer
         runId={RUN_ID}
@@ -2425,7 +2561,7 @@ describe("DiffViewer stale-capture guard", () => {
   });
 
   test("the newer capture's link keeps the comparison mode (spec §6.3)", () => {
-    mockGetByIdData = { ...defaultMockData, projectId: "proj-1" };
+    mockRun = { ...defaultMockData, projectId: "proj-1" };
     const r = render(
       <DiffViewer
         runId={RUN_ID}
@@ -2546,7 +2682,7 @@ describe("DiffViewer: the review loop", () => {
     });
 
   beforeEach(() => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       projectId: PROJECT,
       buildId: BUILD,
@@ -2847,7 +2983,7 @@ describe("DiffViewer: the review loop", () => {
     // the step in the toast) and the run.
     utilsMock.runs.listCheckpoints.getData.mockReturnValue(mockCheckpoints);
     utilsMock.runs.getById.getData.mockReturnValue({
-      ...mockGetByIdData,
+      ...mockRun,
       name: "Checkout",
       statusOverride: null,
       checkpointContexts: {},
@@ -2909,7 +3045,7 @@ describe("DiffViewer: the review loop", () => {
     });
     utilsMock.runs.listCheckpoints.getData.mockReturnValue(mockCheckpoints);
     utilsMock.runs.getById.getData.mockReturnValue({
-      ...mockGetByIdData,
+      ...mockRun,
       name: "Checkout",
       statusOverride: null,
       checkpointContexts: {},
@@ -2958,6 +3094,25 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(RUN_ID, "c1", QUERY));
   });
 
+  test("a step whose own read fails (not a missing step) says so, as the header's would", () => {
+    mockCheckpoints = { items: [stepFixture("c1", "unresolved")] };
+    failingStepReads = new Map([
+      [
+        "c1",
+        { message: "Server error", data: { code: "INTERNAL_SERVER_ERROR" } },
+      ],
+    ]);
+    const r = render(
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId="c1"
+      />,
+    );
+    expect(r.getByText("Error: Server error")).toBeDefined();
+    expect(r.queryByTestId("diff-viewer-canvas")).toBeNull();
+  });
+
   test("run not found: loop affordances hidden, review.next not called", async () => {
     mockGetByIdError = {
       message: "Run not found",
@@ -2996,7 +3151,7 @@ describe("DiffViewer: the review loop", () => {
     ];
     for (const over of readOnly) {
       resetReviewSpies();
-      mockGetByIdData = {
+      mockRun = {
         ...defaultMockData,
         projectId: PROJECT,
         buildId: BUILD,
@@ -3105,8 +3260,8 @@ describe("DiffViewer: the review loop", () => {
         "fetch",
         vi.fn(() => new Promise<Response>(() => {})),
       );
-      mockGetByIdData = {
-        ...mockGetByIdData,
+      mockRun = {
+        ...mockRun,
         baselineScreenshot: { id: "base", imageKey: "r20-base" },
       };
     });
@@ -3415,7 +3570,7 @@ describe("DiffViewer: the review loop", () => {
   });
 
   test("the empty run's View build link keeps the context and anchors the run", () => {
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       projectId: PROJECT,
       buildId: BUILD,
@@ -3430,7 +3585,7 @@ describe("DiffViewer: the review loop", () => {
   });
 
   test("a run with no batch offers no Next pending, and J / K do nothing", async () => {
-    mockGetByIdData = { ...defaultMockData, projectId: PROJECT, buildId: "" };
+    mockRun = { ...defaultMockData, projectId: PROJECT, buildId: "" };
     nextQuery.data = answer();
     utilsMock.review.next.fetch.mockResolvedValue(answer());
     const r = renderViewer();
@@ -3721,7 +3876,7 @@ describe("DiffViewer: the review loop", () => {
 
   test("J at the boundary on a read-only step shows the card", () => {
     // Overridden by hand: its steps take no decisions, but the loop walks on.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       projectId: PROJECT,
       buildId: BUILD,
@@ -3848,11 +4003,11 @@ describe("DiffViewer: the review loop", () => {
   test("Approve pending / an override with a dismissed card: no card", () => {
     const { r, again } = cardThenUndo();
     // The run is overridden by hand: the step is settled, by no decision.
-    mockGetByIdData = { ...mockGetByIdData, statusOverride: "failed" };
+    mockRun = { ...mockRun, statusOverride: "failed" };
     again();
     expect(card(r)).toBeNull();
     // Approve pending decides it, and calls no loop.
-    mockGetByIdData = { ...mockGetByIdData, statusOverride: null };
+    mockRun = { ...mockRun, statusOverride: null };
     c1Decided(again);
     expect(card(r)).toBeNull();
     expect(canvas()).not.toBeNull();
@@ -3980,7 +4135,7 @@ describe("DiffViewer: the review loop", () => {
       () => mockCheckpoints,
     );
     utilsMock.runs.getById.getData.mockReturnValue({
-      ...mockGetByIdData,
+      ...mockRun,
       name: "Checkout",
       statusOverride: null,
       checkpointContexts: {},
@@ -4151,7 +4306,7 @@ describe("DiffViewer undo shortcut and hint", () => {
     });
 
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
     resetReviewSpies();
     useUndoStore.setState({ stack: [] });
@@ -4251,7 +4406,7 @@ describe("DiffViewer undo shortcut and hint", () => {
 // keys that work.
 describe("DiffViewer key hints come from the registry", () => {
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
     resetReviewSpies();
     // An action to take back: ⌘Z is due.
@@ -4406,7 +4561,7 @@ describe("DiffViewer decision buttons follow canReview", () => {
     undo: { allowed: true, reason: null },
   };
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     resetReviewSpies();
   });
   afterEach(() => cleanup());
@@ -4483,7 +4638,7 @@ describe("DiffViewer decision buttons follow canReview", () => {
     cleanup();
 
     // A run overridden by hand: the override reads, with no Reset.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "failed",
       statusOverride: "failed",
@@ -4536,7 +4691,7 @@ describe("DiffViewer decision buttons follow canReview", () => {
     ).toBeDefined();
     cleanup();
 
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       status: "failed",
       statusOverride: "failed",
@@ -4567,7 +4722,7 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
     kind: "ignore" as const,
   };
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = {
       items: [
         stepFixture("cp-1", "unresolved"),
@@ -4593,7 +4748,7 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
 
   test("Save on step 2 sends step 2's checkpoint id", () => {
     // The run payload carries step 2's own context, as the server sends it.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       checkpointContexts: {
         "cp-2": {
@@ -4619,20 +4774,19 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
     );
   });
 
-  // The hydration window: the selected step is in the list, but the run
-  // payload carries no context for it yet. Its saved regions must not fall
-  // back to step 1's (the run-level fields), and Save waits for its own.
-  test("a step without its own context hydrates no step-1 regions and holds Save", () => {
-    const step1Region = {
-      x: 5,
-      y: 5,
-      width: 10,
-      height: 10,
-      viewport: "1280x720",
-      paddingPx: 0,
-      kind: "ignore",
-    };
-    mockGetByIdData = {
+  // The run's first step has saved regions of its own, which must never be
+  // hydrated for another step (the old run-level fields were step 1's).
+  const step1Region = {
+    x: 5,
+    y: 5,
+    width: 10,
+    height: 10,
+    viewport: "1280x720",
+    paddingPx: 0,
+    kind: "ignore",
+  };
+  function withStep1Regions() {
+    mockRun = {
       ...defaultMockData,
       screenshots: [
         { id: "cp-1", viewport: "1280x720" },
@@ -4651,8 +4805,16 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
       savedRunIgnoreAreas: [],
       savedVariationIgnoreAreas: [],
     });
+  }
+
+  // The window the viewer still has: the step on screen is not the selected
+  // step's own read (an id the run lacks, shown as its first step). Its saved
+  // regions must not be hydrated as the selected step's, and Save has no step
+  // to write to.
+  test("a step shown without its own read hydrates no step-1 regions and holds Save", () => {
+    withStep1Regions();
     const r = render(
-      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-9" />,
     );
     expect(useViewerStore.getState().savedVariationIgnoreAreas).toEqual([]);
     act(() => {
@@ -4664,6 +4826,21 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
     const save = r.getByTestId("ignore-save-button") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.click(save);
+    expect(setIgnoreAreasSpy).not.toHaveBeenCalled();
+  });
+
+  // The hydration window of old (the step listed, its context not in yet) is
+  // now the step's own read on its way: the viewer waits for it, so nothing
+  // of step 1 is hydrated and there is no Save to press meanwhile.
+  test("while the selected step's own read is on its way, no step-1 regions are hydrated and there is no Save", () => {
+    withStep1Regions();
+    pendingStepReads = new Set(["cp-2"]);
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+    );
+    expect(useViewerStore.getState().savedVariationIgnoreAreas).toEqual([]);
+    expect(r.getByText("Loading…")).toBeDefined();
+    expect(r.queryByTestId("ignore-save-button")).toBeNull();
     expect(setIgnoreAreasSpy).not.toHaveBeenCalled();
   });
 
@@ -4711,7 +4888,7 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
       vi.fn(() => new Promise<Response>(() => {})),
     );
     // Step 1 is a new test (no baseline); step 2 has one.
-    mockGetByIdData = {
+    mockRun = {
       ...defaultMockData,
       projectId: PROJECT,
       buildId: "build-1",
@@ -5124,7 +5301,7 @@ describe("DiffViewer: a step whose diff failed (spec 2026-10-23 §10)", () => {
     render(<DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId={id} />);
 
   beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData };
+    mockRun = { ...defaultMockData };
     mockCheckpoints = { items: [failedStep("cp-1")] };
     resetReviewSpies();
     retryDiffSpy.mockReset();
@@ -5205,13 +5382,18 @@ describe("DiffViewer: a step whose diff failed (spec 2026-10-23 §10)", () => {
     fireEvent.click(button);
     await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
     expect(retryOffered()).toBe(false);
-    // The step list, the run and the run lists are read again once it lands.
+    // The step list, the run, the step's own read and the run lists are read
+    // again once it lands.
     await act(async () => settle());
     expect(utilsMock.runs.listCheckpoints.invalidate).toHaveBeenCalledWith({
       runId: RUN_ID,
     });
     expect(utilsMock.runs.getById.invalidate).toHaveBeenCalledWith({
       runId: RUN_ID,
+    });
+    expect(utilsMock.runs.getStep.invalidate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
     });
     expect(utilsMock.runs.list.invalidate).toHaveBeenCalled();
   });

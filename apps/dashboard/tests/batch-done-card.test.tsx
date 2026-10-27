@@ -22,6 +22,7 @@ const utils = vi.hoisted(() => ({
   runs: {
     getById: { prefetch: vi.fn(), getData: vi.fn(), fetch: vi.fn() },
     listCheckpoints: { prefetch: vi.fn() },
+    getStep: { prefetch: vi.fn() },
   },
 }));
 vi.mock("@/lib/trpc", () => ({

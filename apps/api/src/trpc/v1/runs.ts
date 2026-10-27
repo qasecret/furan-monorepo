@@ -4,7 +4,6 @@ import {
   baselines,
   builds,
   desc,
-  diffRegions,
   eq,
   exists,
   ilike,
@@ -12,7 +11,6 @@ import {
   isNull,
   ne,
   or,
-  projects,
   recomputeRunStatus,
   recomputeRunTotals,
   screenshots,
@@ -57,16 +55,11 @@ import {
   type StepFacets,
 } from "../../lib/review/pending.js";
 import {
+  listedReview,
   loadCheckpointReview,
   NO_REVIEW,
-  type CheckpointReviewView,
 } from "../../lib/review/reads.js";
-import {
-  loadStep,
-  resolveCheckpointContext,
-  type CheckpointContext,
-  type IgnoreRegion,
-} from "../../lib/review/step-view.js";
+import { loadStep, type IgnoreRegion } from "../../lib/review/step-view.js";
 import { lockRuns, selectGroupTargets } from "../../lib/review/targets.js";
 import { runByDisplayName } from "../../lib/run-by-name.js";
 import type { Context } from "../context.js";
@@ -667,11 +660,11 @@ export const runsRouter = t.router({
     }),
 
   /**
-   * The run, every one of its steps with each step's baseline context and
-   * review, and its regions. `runByName` is its build's runner, named like
-   * `builds.getById` names them. One step's context is `getStep`'s to serve:
-   * the viewer moves to it (spec 2026-10-27 §5), and this read then becomes
-   * the run header.
+   * The run header (spec 2026-10-27 §5): the run's own fields, its build's
+   * runner (`runByName`, named like `builds.getById` names them) and whether
+   * the system approved a baseline of it (`autoApproved`). Nothing of its
+   * steps: the step list is `listCheckpoints`', and one step as the viewer
+   * shows it is `getStep`'s.
    */
   getById: publicProcedure
     .input(runIdInput)
@@ -704,19 +697,6 @@ export const runsRouter = t.router({
         .limit(1);
       const runRow = runRows[0];
       if (!runRow) throw new TRPCError({ code: "NOT_FOUND" });
-      const run = runRow.run;
-
-      const shots = await ctx.db
-        .select()
-        .from(screenshots)
-        .where(eq(screenshots.runId, input.runId));
-      const regions = await ctx.db
-        .select()
-        .from(diffRegions)
-        .where(eq(diffRegions.runId, input.runId));
-
-      // ADR-038: run-level ignoreAreas removed from test_runs. Return null.
-      const runIgnoreAreas: IgnoreRegion[] | null = null;
 
       // ADR-032: autoApproved is true iff at least one baselines row
       // exists for this run with userId IS NULL (the system-approved
@@ -728,81 +708,24 @@ export const runsRouter = t.router({
           and(eq(baselines.testRunId, input.runId), isNull(baselines.userId)),
         )
         .limit(1);
-      const autoApproved = autoApprovedRows.length > 0;
-
-      // Default branch is identical across all checkpoints in this run.
-      // Look it up once instead of per checkpoint inside the resolution
-      // loop. ADR-038 deferred per-checkpoint baseline resolution to
-      // Phase 5; we now resolve it here.
-      const projectRows = await ctx.db
-        .select({ mainBranchName: projects.mainBranchName })
-        .from(projects)
-        .where(eq(projects.id, run.projectId))
-        .limit(1);
-      const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
-
-      const contextList = await Promise.all(
-        shots.map((shot) =>
-          resolveCheckpointContext(
-            ctx.db,
-            ctx.telemetry.logger,
-            run,
-            defaultBranch,
-            shot,
-          ),
-        ),
-      );
-      // Each checkpoint's review (verdict, state, decision, newer capture):
-      // one batched read for the run, not one per checkpoint.
-      const review = await loadCheckpointReview(ctx.db, run.id, ctx.user);
-      const checkpointContexts: Record<
-        string,
-        CheckpointContext & CheckpointReviewView
-      > = {};
-      shots.forEach((shot, i) => {
-        const c = contextList[i];
-        if (c) {
-          checkpointContexts[shot.id] = {
-            ...c,
-            ...(review.get(shot.id) ?? NO_REVIEW),
-          };
-        }
-      });
-
-      // Back-compat: keep the top-level fields wired to the first
-      // checkpoint so existing tests + any straggler consumer keep
-      // working. The dashboard reads per-checkpoint from
-      // checkpointContexts based on the selected rail row.
-      const firstContext = contextList[0] ?? {
-        baselineScreenshot: null,
-        baselineSource: null,
-        variationIgnoreAreas: null,
-      };
 
       return {
-        ...run,
+        ...runRow.run,
         runByName: runByDisplayName(
           runRow.runByFirstName,
           runRow.runByLastName,
         ),
-        ignoreAreas: runIgnoreAreas,
-        screenshots: shots,
-        diffRegions: regions,
-        baselineScreenshot: firstContext.baselineScreenshot,
-        baselineSource: firstContext.baselineSource,
-        variationIgnoreAreas: firstContext.variationIgnoreAreas,
-        checkpointContexts,
-        autoApproved,
+        autoApproved: autoApprovedRows.length > 0,
       };
     }),
 
   /**
    * One step of a run, as the diff viewer shows it (spec 2026-10-27 §5): the
    * step, its baseline context, its regions, its review (the decision with its
-   * actor and undo) and its newer capture, each as `getById` and
-   * `listCheckpoints` report them for that step. Only this step's baseline is
-   * resolved; the statements do not grow with the run's step count. A step
-   * that is not the run's, or not in the run's project, is NOT_FOUND.
+   * actor and undo) and its newer capture with its build's name. Only this
+   * step's baseline is resolved; the statements do not grow with the run's
+   * step count. A step that is not the run's, or not in the run's project, is
+   * NOT_FOUND.
    */
   getStep: publicProcedure
     .input(stepInput)
@@ -1301,9 +1224,13 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      // Per-checkpoint review (verdict, state, decision, newer capture) comes
-      // from loadCheckpointReview, the read model over the decision core's own
-      // rows (lib/review/reads.ts); nothing is inferred from the run's status.
+      // The step list as the rail and the batch step cards draw it (spec
+      // 2026-10-27 §5): each step's identity, environment, thumbnail, failed
+      // diff, and the part of its review they show (`listedReview`). The
+      // per-step review comes from loadCheckpointReview, the read model over
+      // the decision core's own rows (lib/review/reads.ts); nothing is
+      // inferred from the run's status. The rest of a step (its numbers,
+      // baseline, regions, who decided) is `getStep`'s.
       const rows = await ctx.db
         .select({
           id: screenshots.id,
@@ -1312,19 +1239,10 @@ export const runsRouter = t.router({
           browser: screenshots.browser,
           os: screenshots.os,
           device: screenshots.device,
-          matchLevel: screenshots.matchLevel,
           imageKey: screenshots.imageKey,
-          testVariationId: screenshots.testVariationId,
-          createdAt: screenshots.createdAt,
-          // The step's own diff result (spec 2026-10-23 §9); a failed diff
-          // leaves no numbers, only `diffFailedAt` / `diffError`.
+          // A diff that failed for good (spec 2026-10-23 §9): when, and why.
           diffFailedAt: screenshots.diffFailedAt,
           diffError: screenshots.diffError,
-          diffPercent: screenshots.diffPercent,
-          vlmDescription: screenshots.vlmDescription,
-          // 0 = a legacy step, diffed before the per-step columns: its own
-          // numbers are NULL and the run's stand in for them (Ruling R46).
-          diffGeneration: screenshots.diffGeneration,
         })
         .from(screenshots)
         .where(eq(screenshots.runId, input.runId))
@@ -1334,29 +1252,12 @@ export const runsRouter = t.router({
 
       const review = await loadCheckpointReview(ctx.db, input.runId, ctx.user);
 
-      const items = rows.map((r) => {
-        // An entry per row unless a checkpoint was added since the first read;
-        // an undiffed one reads as verdict null.
-        const view = review.get(r.id) ?? NO_REVIEW;
-        return {
-          id: r.id,
-          name: r.name,
-          viewport: r.viewport,
-          browser: r.browser,
-          os: r.os,
-          device: r.device,
-          matchLevel: r.matchLevel,
-          imageKey: r.imageKey,
-          testVariationId: r.testVariationId,
-          createdAt: r.createdAt,
-          diffFailedAt: r.diffFailedAt,
-          diffError: r.diffError,
-          diffPercent: r.diffPercent,
-          vlmDescription: r.vlmDescription,
-          diffGeneration: r.diffGeneration,
-          ...view,
-        };
-      });
+      // An entry per row unless a checkpoint was added since the first read;
+      // an undiffed one reads as verdict null.
+      const items = rows.map((r) => ({
+        ...r,
+        ...listedReview(review.get(r.id) ?? NO_REVIEW),
+      }));
       return { items };
     }),
 

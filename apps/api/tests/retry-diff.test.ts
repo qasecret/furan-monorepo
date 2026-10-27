@@ -35,7 +35,9 @@ import {
  * `runs.retryDiff` and what a failed step does to review (spec 2026-10-23 §6,
  * §7, §9): an editor retries a step whose diff failed for good, the review
  * actions refuse a failed step (`diff_failed`) or skip it when they select
- * their own targets, and the per-step numbers reach `listCheckpoints`.
+ * their own targets, and the per-step result reaches the viewer: the failure
+ * through `listCheckpoints` (the step list draws it), the numbers through
+ * `getStep`.
  */
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -485,7 +487,7 @@ d("retry a failed step's diff", () => {
       expect(await decisionsOf([rs.runId])).toHaveLength(2);
     });
 
-    test("listCheckpoints returns diffFailedAt, diffError, diffPercent per step", async () => {
+    test("listCheckpoints returns diffFailedAt and diffError per step; getStep the step's numbers", async () => {
       const rs = await seed({
         checkpoints: [
           { name: "broken", verdict: "unresolved" },
@@ -509,9 +511,24 @@ d("retry a failed step's diff", () => {
         .set({ diffPercent: 3.5, vlmDescription: "The header moved." })
         .where(eq(screenshots.id, rs.shots.home!.id));
 
-      const { items } = await as(rs.editor).runs.listCheckpoints.query({
+      const { items: listed } = await as(rs.editor).runs.listCheckpoints.query({
         runId: rs.runId,
       });
+      // The step list carries the failure; the step's numbers and version are
+      // getStep's (spec 2026-10-27 §5): each item with its step's row.
+      const items = await Promise.all(
+        listed.map(async (item) => {
+          const { step } = await as(rs.editor).runs.getStep.query({
+            runId: rs.runId,
+            checkpointId: item.id,
+          });
+          expect(step).toMatchObject({
+            diffFailedAt: item.diffFailedAt,
+            diffError: item.diffError,
+          });
+          return { ...item, ...step };
+        }),
+      );
 
       const byName = new Map(items.map((i) => [i.name, i]));
       expect(byName.get("broken")).toMatchObject({

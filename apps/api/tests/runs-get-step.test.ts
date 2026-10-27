@@ -37,6 +37,7 @@ import {
   addReviewRun,
   cleanupReviewSeeds,
   cp,
+  failDiff,
   seedReviewRun,
   type ReviewRunSpec,
   type ReviewSeed,
@@ -47,11 +48,13 @@ import {
 /**
  * `runs.getStep` (spec 2026-10-27 §5): one step of a run as the diff viewer
  * shows it. The goldens below are what the viewer read for a step before
- * getStep existed: the old `runs.getById` (the step's row, its
- * `checkpointContexts` entry, the run's regions filtered the viewer's way) and
- * the old `runs.listCheckpoints` extras (decision undo, actor, the newer
- * capture with its build name). Each golden is checked against those old reads
- * first, then getStep must return the same.
+ * getStep existed (the old `runs.getById`'s step row, its `checkpointContexts`
+ * entry and the run's regions filtered the viewer's way, and the old
+ * `runs.listCheckpoints` extras: decision undo, actor, the newer capture with
+ * its build name), written as literals from the fixtures; they were checked
+ * against those old reads before the viewer moved over (Task 6). The run
+ * header and the step list that remain are checked here too: they carry none
+ * of what getStep serves, and the list agrees with getStep on what it keeps.
  */
 
 const skip = !process.env.DATABASE_URL;
@@ -198,50 +201,6 @@ d("runs.getStep", () => {
     return actionId;
   }
 
-  /**
-   * What the viewer read for one step before getStep (DiffViewer.tsx): the
-   * step's row from `getById.screenshots`, its `checkpointContexts` entry, the
-   * run's regions on that step or on none (a pre-v1.1.20 row shows on every
-   * step), and the review extras, which `listCheckpoints` reports the same.
-   */
-  async function oldStepView(
-    user: ReviewUser,
-    runId: string,
-    stepId: string,
-  ): Promise<StepView> {
-    const c = as(user);
-    const run = await c.runs.getById.query({ runId });
-    const list = await c.runs.listCheckpoints.query({ runId });
-    const ctx = run.checkpointContexts[stepId]!;
-    const item = list.items.find((i) => i.id === stepId)!;
-    const review = {
-      verdict: ctx.verdict,
-      state: ctx.state,
-      decision: ctx.decision,
-    };
-    expect({
-      verdict: item.verdict,
-      state: item.state,
-      decision: item.decision,
-      newerCapture: item.newerCapture,
-    }).toEqual({ ...review, newerCapture: ctx.newerCapture });
-    return {
-      step: run.screenshots.find((x) => x.id === stepId),
-      baselineContext: {
-        baselineScreenshot: ctx.baselineScreenshot,
-        baselineSource: ctx.baselineSource,
-        variationIgnoreAreas: ctx.variationIgnoreAreas,
-      },
-      regions: byId(
-        run.diffRegions.filter(
-          (r) => !r.screenshotId || r.screenshotId === stepId,
-        ),
-      ),
-      review,
-      newerCapture: ctx.newerCapture,
-    };
-  }
-
   /** getStep's answer, its regions in the goldens' order. */
   async function getStepView(
     user: ReviewUser,
@@ -253,6 +212,43 @@ d("runs.getStep", () => {
       checkpointId: stepId,
     });
     return { ...v, regions: byId(v.regions) };
+  }
+
+  /**
+   * The part of a step view the step list carries (`listedReview`): its
+   * review state, the decision's action, kind and whether the viewer may undo
+   * it, and the newer capture's build name.
+   */
+  function listedOf(view: StepView) {
+    const decision = view.review.decision as {
+      actionId: string;
+      kind: string;
+      undo: { allowed: boolean };
+    } | null;
+    const newer = view.newerCapture as { buildName: string } | null;
+    return {
+      verdict: view.review.verdict,
+      state: view.review.state,
+      decision: decision && {
+        actionId: decision.actionId,
+        kind: decision.kind,
+        undo: { allowed: decision.undo.allowed },
+      },
+      newerCapture: newer && { buildName: newer.buildName },
+    };
+  }
+
+  /** The step list's review fields for `stepId`. */
+  async function listedReviewOf(
+    user: ReviewUser,
+    runId: string,
+    stepId: string,
+  ) {
+    const { items } = await as(user).runs.listCheckpoints.query({ runId });
+    const { verdict, state, decision, newerCapture } = items.find(
+      (i) => i.id === stepId,
+    )!;
+    return { verdict, state, decision, newerCapture };
   }
 
   beforeAll(async () => {
@@ -393,19 +389,6 @@ d("runs.getStep", () => {
   }
 
   describe("the per-step context", () => {
-    test("golden: the old getById and listCheckpoints give each step's context", async () => {
-      const { s, steps, golden } = await threeSteps();
-      const peer = await addProjectEditor(h, s);
-      for (const step of steps) {
-        expect(await oldStepView(s.editor, s.runId, step.id)).toEqual(
-          golden[step.id],
-        );
-        expect(await oldStepView(peer, s.runId, step.id)).toEqual(
-          asPeer(golden[step.id]!),
-        );
-      }
-    });
-
     test("getStep returns the same per-step context the old getById built", async () => {
       const { s, steps, golden } = await threeSteps();
       const peer = await addProjectEditor(h, s);
@@ -416,6 +399,20 @@ d("runs.getStep", () => {
         // Undo is judged for the viewer getStep serves, as the old reads did.
         expect(await getStepView(peer, s.runId, step.id)).toEqual(
           asPeer(golden[step.id]!),
+        );
+      }
+    });
+
+    test("the step list carries the part of each step's review it draws, as getStep reports it", async () => {
+      const { s, steps, golden } = await threeSteps();
+      const peer = await addProjectEditor(h, s);
+      for (const step of steps) {
+        expect(await listedReviewOf(s.editor, s.runId, step.id)).toEqual(
+          listedOf(golden[step.id]!),
+        );
+        // Undo is the list viewer's too: another editor may not undo it.
+        expect(await listedReviewOf(peer, s.runId, step.id)).toEqual(
+          listedOf(asPeer(golden[step.id]!)),
         );
       }
     });
@@ -490,26 +487,6 @@ d("runs.getStep", () => {
   }
 
   describe("a legacy run", () => {
-    test("golden: the old getById's legacy context and diff fallback", async () => {
-      for (const names of [["a", "b"], ["only"]]) {
-        const { s, golden } = await legacyRun(names);
-        const run = await as(s.editor).runs.getById.query({ runId: s.runId });
-        for (const shot of s.shotsInOrder) {
-          const { diff, ...view } = golden[shot.id]!;
-          expect(await oldStepView(s.editor, s.runId, shot.id)).toEqual(view);
-          const step = run.screenshots.find((x) => x.id === shot.id)!;
-          expect(step.diffGeneration).toBe(0);
-          expect(step.diffImageKey).toBeNull();
-          expect(
-            viewerDiffKey(step, {
-              diffName: run.diffName,
-              screenshotCount: run.screenshots.length,
-            }),
-          ).toEqual(diff);
-        }
-      }
-    });
-
     test("getStep on a legacy run returns the same baseline context and legacy diff fallback as the old getById", async () => {
       for (const names of [["a", "b"], ["only"]]) {
         const { s, golden } = await legacyRun(names);
@@ -656,6 +633,103 @@ d("runs.getStep", () => {
         const v = await as(user).runs.getStep.query(input);
         expect((v.step as { id: string }).id).toBe(s.shots.a!.id);
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The viewer's other reads (spec 2026-10-27 §5): the run header and the
+  // step list. Neither carries what getStep serves.
+  // -------------------------------------------------------------------------
+
+  describe("the run header and the step list", () => {
+    test("getById no longer returns per-step data", async () => {
+      const { s } = await threeSteps();
+      const run = await as(s.editor).runs.getById.query({ runId: s.runId });
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      // The run's own fields, its build's runner and whether the system
+      // approved a baseline of it: nothing of its steps. (`baselineSource` is
+      // the run's own column again, no longer step 1's.)
+      expect(run).toEqual({
+        ...(wire(row) as object),
+        runByName: s.editor.name,
+        autoApproved: false,
+      });
+      for (const gone of [
+        "screenshots",
+        "diffRegions",
+        "checkpointContexts",
+        "baselineScreenshot",
+        "variationIgnoreAreas",
+        "ignoreAreas",
+      ]) {
+        expect(run).not.toHaveProperty(gone);
+      }
+      // The header the spec's budget counts (§5: under 2 KB).
+      expect(Buffer.byteLength(JSON.stringify(run))).toBeLessThan(2_048);
+    });
+
+    test("listCheckpoints carries only what the rail and the step cards draw, within 0.36 KB per step", async () => {
+      // A 200-step run as a suite leaves it: realistic names and
+      // environments, content-hash image keys, a quarter of the steps
+      // rejected in one action, two diffs failed for good.
+      const n = 200;
+      const s = await seed({
+        checkpoints: Array.from({ length: n }, (_, i) => ({
+          name: `checkout/step-${String(i + 1).padStart(4, "0")}`,
+          verdict:
+            i % 10 === 0
+              ? ("new" as const)
+              : i % 2 === 0
+                ? ("passed" as const)
+                : ("unresolved" as const),
+          os: "linux",
+        })),
+      });
+      await h.db.execute(
+        sql`update screenshots set image_key = encode(sha256(id::text::bytea), 'hex') where run_id = ${s.runId}`,
+      );
+      const ids = s.shotsInOrder.map((x) => x.id);
+      await reject(s, s.runId, ids.slice(0, n / 4));
+      await failDiff(h, ids[n - 1]!);
+      await failDiff(h, ids[n - 3]!);
+
+      const { items } = await as(s.editor).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+      expect(items).toHaveLength(n);
+      // What the rail and the batch step cards draw, and no more.
+      for (const item of items) {
+        expect(Object.keys(item).sort()).toEqual(
+          [
+            "browser",
+            "decision",
+            "device",
+            "diffError",
+            "diffFailedAt",
+            "id",
+            "imageKey",
+            "name",
+            "newerCapture",
+            "os",
+            "state",
+            "verdict",
+            "viewport",
+          ].sort(),
+        );
+      }
+      expect(items[0]!.decision).toEqual({
+        actionId: expect.any(String),
+        kind: "rejected",
+        undo: { allowed: true },
+      });
+      // The spec's target is 0.3 KB. What the cards draw takes 357 bytes a
+      // step here (the content-hash image key alone 78, the id 44): the
+      // bound holds the list to that, so nothing grows back unnoticed.
+      const perStep = Buffer.byteLength(JSON.stringify(items)) / n;
+      expect(perStep).toBeLessThanOrEqual(360);
     });
   });
 
@@ -1079,24 +1153,32 @@ d("runs.getStep", () => {
       : null;
 
   // Every scenario but the last is a golden of the old code (green on
-  // 5d23f7f0); the last pins the build lookup to the project.
-  describe("the newer capture, as the existing reads report it", () => {
+  // 5d23f7f0, then through listCheckpoints and getById); the last pins the
+  // build lookup to the project. getStep reports the newer capture in full;
+  // the step list carries whether there is one and its build's name, which a
+  // batch step card names before approving an older capture.
+  describe("the newer capture, as the step list reports it", () => {
     for (const [name, scenario] of Object.entries(scenarios)) {
       test(name, async () => {
         for (const c of await scenario()) {
           const list = await as(c.user).runs.listCheckpoints.query({
             runId: c.runId,
           });
-          const run = await as(c.user).runs.getById.query({ runId: c.runId });
-          expect(
-            pinned(
-              list.items.find((i) => i.id === c.stepId)!.newerCapture,
-              c.expected,
-            ),
-          ).toEqual(c.expected);
-          expect(
-            pinned(run.checkpointContexts[c.stepId]!.newerCapture, c.expected),
-          ).toEqual(c.expected);
+          const listed = list.items.find((i) => i.id === c.stepId)!;
+          const v = await as(c.user).runs.getStep.query({
+            runId: c.runId,
+            checkpointId: c.stepId,
+          });
+          expect(listed.newerCapture).toEqual(
+            c.expected === null
+              ? null
+              : { buildName: v.newerCapture?.buildName ?? "(none)" },
+          );
+          if (c.expected?.buildName !== undefined) {
+            expect(listed.newerCapture).toEqual({
+              buildName: c.expected.buildName,
+            });
+          }
         }
       });
     }

@@ -174,9 +174,9 @@ function drawReadout(container: Container, b: Bbox, scale: number): void {
 interface MountInput {
   /** The active edit scope ("off" = read-only render of all regions). */
   editMode: IgnoreEditMode;
-  /** Saved regions for the run; hydrated from runs.getById.ignoreAreas. */
+  /** Saved regions for the run (none since ADR-038). */
   savedRunIgnoreAreas: IgnoreArea[];
-  /** Saved regions for the variation; from runs.getById.variationIgnoreAreas. */
+  /** Saved regions for the variation; from the step's read (runs.getStep). */
   savedVariationIgnoreAreas: IgnoreArea[];
   /** Unsaved drafts created by drag-to-draw. */
   draftIgnoreAreas: DraftIgnoreArea[];

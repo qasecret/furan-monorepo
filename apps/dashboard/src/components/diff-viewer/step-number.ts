@@ -1,4 +1,4 @@
-/** The per-step diff numbers a `runs.listCheckpoints` item carries. */
+/** The per-step diff numbers a step's row (`runs.getStep`) carries. */
 interface StepNumbers {
   diffPercent: number | null;
   vlmDescription: string | null;
@@ -14,7 +14,7 @@ interface StepNumbers {
  * therefore shown alone (R46): a step with none (failed, new or still
  * diffing) has none, and reads as "no value". Only a row from before per-step
  * diffs (`diffGeneration` 0) falls back to the run's, since its numbers were
- * only ever kept there. Before the step list has loaded there is no step to
+ * only ever kept there. Before the step has been read there is no step to
  * ask, and the run's value stands.
  *
  * `??`, not `||`: a real 0 is the step's own number, and is kept.

@@ -340,16 +340,22 @@ export function ViewerToolbar({
   };
 
   const utils = trpc.useUtils();
+  // A save changes the regions a step's read carries: its variation's saved
+  // regions (in every run that captured the variation), or the run's
+  // temporary ones and its re-diff. Every step read is stale; only the ones
+  // on screen are read again now.
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
     onSuccess: (_data, vars) => {
       applySaveSuccess(vars.scope);
       void utils.runs.getById.invalidate({ runId });
+      void utils.runs.getStep.invalidate();
     },
   });
   const setTempIgnoreAreas = trpc.runs.setTempIgnoreAreas.useMutation({
     onSuccess: () => {
       discardIgnoreChanges();
       void utils.runs.getById.invalidate({ runId });
+      void utils.runs.getStep.invalidate({ runId });
     },
   });
 

@@ -25,9 +25,10 @@ import { assessRevert } from "./revert.js";
 import { loadActiveDecisionDetails, type ActiveDecision } from "./targets.js";
 
 /**
- * The review read model: what `runs.listCheckpoints`, `runs.getById` and
- * `runs.getStep` report about each checkpoint's review. It is a projection of
- * the rows the decision core works on and reuses the core's loaders and rules
+ * The review read model: what `runs.getStep` reports about a step's review,
+ * and `runs.listCheckpoints` about each step's (`listedReview`, the part of it
+ * the rail and the batch step cards draw). It is a projection of the rows the
+ * decision core works on and reuses the core's loaders and rules
  * (`targets.ts`) for them: a checkpoint's state is
  * `checkpointReviewState(verdict, active decision)`, and the active decision
  * and the actor's name are read the way the core reads them. Nothing here
@@ -381,3 +382,37 @@ export const NO_REVIEW: CheckpointReviewView = {
   decision: null,
   newerCapture: null,
 };
+
+/**
+ * What the step list carries of a step's review (spec 2026-10-27 §5): what
+ * the rail and the batch step cards draw. A card offers Undo while the viewer
+ * may undo the decision, and names the newer capture's build in the question
+ * it asks before approving an older capture. Who decided and when, why an
+ * undo is refused, and the newer capture's run and step are the viewer's, and
+ * `getStep`'s to serve.
+ */
+export interface ListedReview {
+  verdict: CheckpointReviewView["verdict"];
+  state: CheckpointReviewView["state"];
+  decision: {
+    actionId: string;
+    kind: CheckpointDecisionKind;
+    undo: { allowed: boolean };
+  } | null;
+  newerCapture: { buildName: string } | null;
+}
+
+/** `view` as the step list carries it. */
+export function listedReview(view: CheckpointReviewView): ListedReview {
+  const { decision, newerCapture } = view;
+  return {
+    verdict: view.verdict,
+    state: view.state,
+    decision: decision && {
+      actionId: decision.actionId,
+      kind: decision.kind,
+      undo: { allowed: decision.undo.allowed },
+    },
+    newerCapture: newerCapture && { buildName: newerCapture.buildName },
+  };
+}

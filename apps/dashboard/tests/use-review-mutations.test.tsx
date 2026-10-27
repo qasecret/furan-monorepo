@@ -35,6 +35,7 @@ const utils = {
   runs: {
     listCheckpoints: procedureUtils(["runs", "listCheckpoints"]),
     getById: procedureUtils(["runs", "getById"]),
+    getStep: procedureUtils(["runs", "getStep"]),
     list: procedureUtils(["runs", "list"]),
     getCheckpointGroup: procedureUtils(["runs", "getCheckpointGroup"]),
     facets: procedureUtils(["runs", "facets"]),
@@ -108,6 +109,7 @@ vi.mock("@/lib/trpc", () => ({
     runs: {
       list: { _def: () => ({ path: ["runs", "list"] }) },
       listCheckpoints: { _def: () => ({ path: ["runs", "listCheckpoints"] }) },
+      getStep: { _def: () => ({ path: ["runs", "getStep"] }) },
     },
     review: {
       approve: mutationFor("approve"),
@@ -171,14 +173,48 @@ const seedItems = (): Item[] => [
   { id: C, name: "footer", ...review("passed") },
 ];
 
-/** What `runs.getById` carries per checkpoint: the review fields, no name. */
-const contextOf = ({ verdict, state, decision }: Item) => ({
-  verdict,
-  state,
-  decision,
+/**
+ * The step list's decision, as `seedApproved` writes it, and the same one as
+ * the step's own read has it (`runs.getStep`): who decided and when, too.
+ */
+const viewedDecision = (d: Item["decision"]) =>
+  d && {
+    id: `decision-${d.actionId}`,
+    ...d,
+    actor: { id: "user-2", name: "Grace" },
+    at: "2026-10-10T00:00:00.000Z",
+    source: "viewer",
+    legacy: false,
+    undo: { allowed: true },
+  };
+
+/** What `runs.getStep` carries for a step: its row, and its review in full. */
+const stepOf = ({ id, name, verdict, state, decision }: Item) => ({
+  step: { id, name },
+  baselineContext: {
+    baselineScreenshot: null,
+    baselineSource: null,
+    variationIgnoreAreas: null,
+  },
+  regions: [],
+  review: { verdict, state, decision: viewedDecision(decision) },
   newerCapture: null,
 });
 
+/** Each of `items` read on its own (the viewer's step and its neighbours). */
+function seedSteps(items: Item[]) {
+  for (const i of items) {
+    qc.setQueryData(
+      keyOf(["runs", "getStep"], { runId: RUN, checkpointId: i.id }),
+      stepOf(i),
+    );
+  }
+}
+
+/**
+ * The caches a decision patches. `run` is the run header and each step read
+ * on its own (the viewer's views of the run); `items` the step list.
+ */
 function seed(
   loaded: {
     items?: boolean;
@@ -199,10 +235,8 @@ function seed(
       buildId: BUILD,
       status: "unresolved",
       statusOverride: null,
-      checkpointContexts: Object.fromEntries(
-        seedItems().map((i) => [i.id, contextOf(i)]),
-      ),
     });
+    seedSteps(seedItems());
   }
   if (list) {
     qc.setQueryData(
@@ -244,13 +278,12 @@ function seedApproved(actionId: string) {
     buildId: BUILD,
     status: "new",
     statusOverride: null,
-    checkpointContexts: Object.fromEntries(
-      seedItems().map((i) => [
-        i.id,
-        contextOf(i.id === A ? { ...i, state: "approved", decision } : i),
-      ]),
-    ),
   });
+  seedSteps(
+    seedItems().map((i) =>
+      i.id === A ? { ...i, state: "approved", decision } : i,
+    ),
+  );
   qc.setQueryData(
     keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
     {
@@ -264,16 +297,13 @@ function seedApproved(actionId: string) {
 }
 
 /**
- * Makes the run detail the patch reads come back without its checkpoint
- * contexts. The first read is the hook noting what it is about to overwrite,
- * so it gets the real cache; the second is the patch itself.
+ * Makes the patch's read of the run header throw, once: after it has patched
+ * the step list and the steps' own reads, before the header and the rest.
  */
 function breakNextPatchRead() {
-  utils.runs.getById.getData
-    .mockReturnValueOnce(
-      qc.getQueryData(keyOf(["runs", "getById"], { runId: RUN })),
-    )
-    .mockReturnValueOnce({ status: "unresolved" });
+  utils.runs.getById.getData.mockImplementationOnce(() => {
+    throw new TypeError("a broken cache");
+  });
 }
 
 const itemsCache = () =>
@@ -281,13 +311,16 @@ const itemsCache = () =>
     keyOf(["runs", "listCheckpoints"], { runId: RUN }),
   )?.items;
 const runCache = () =>
+  qc.getQueryData<{ status: string }>(
+    keyOf(["runs", "getById"], { runId: RUN }),
+  );
+/** Step `id` of the run, as its own read (`runs.getStep`) holds it. */
+const stepCache = (id: string) =>
   qc.getQueryData<{
-    status: string;
-    checkpointContexts: Record<
-      string,
-      Pick<Item, "verdict" | "state" | "decision">
-    >;
-  }>(keyOf(["runs", "getById"], { runId: RUN }));
+    review: Pick<Item, "verdict" | "state"> & {
+      decision: { actionId: string; kind: string } | null;
+    };
+  }>(keyOf(["runs", "getStep"], { runId: RUN, checkpointId: id }));
 const listRows = () =>
   qc.getQueryData<{ items: Array<{ id: string; status: string }> }>(
     keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
@@ -303,6 +336,7 @@ function snapshotCaches() {
   return structuredClone({
     items: itemsCache(),
     run: runCache(),
+    steps: [A, B, C].map(stepCache),
     rows: listRows(),
     build: buildCache(),
   });
@@ -429,6 +463,7 @@ describe("useReviewMutations: optimistic decide", () => {
     seed();
     const pending = deferred();
     server.approve.mockReturnValueOnce(pending.promise);
+    const cancelSteps = vi.spyOn(qc, "cancelQueries");
     const { result, run } = setup();
 
     await run(() =>
@@ -448,9 +483,17 @@ describe("useReviewMutations: optimistic decide", () => {
       decision: { kind: "approved" },
     });
     expect(itemState(B)).toBe("new");
-    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+    // The step's own read shows the decision in full, as the chip draws it.
+    expect(stepCache(A)?.review).toMatchObject({
       state: "approved",
+      decision: {
+        id: expect.stringMatching(/^optimistic:/) as string,
+        kind: "approved",
+        actor: { id: "", name: "You" },
+        undo: { allowed: true },
+      },
     });
+    expect(stepCache(B)?.review).toMatchObject({ state: "new" });
     // A was the only unresolved step: the run is now "new" (B), not unresolved.
     expect(runCache()?.status).toBe("new");
     expect(listRows()?.find((r) => r.id === RUN)?.status).toBe("new");
@@ -462,6 +505,10 @@ describe("useReviewMutations: optimistic decide", () => {
       runId: RUN,
     });
     expect(utils.runs.getById.cancel).toHaveBeenCalledWith({ runId: RUN });
+    expect(cancelSteps).toHaveBeenCalledWith({
+      queryKey: keyOf(["runs", "getStep"], { runId: RUN }),
+    });
+    cancelSteps.mockRestore();
 
     pending.resolve(decided());
     await run();
@@ -575,6 +622,35 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(utils.runs.getById.setData).not.toHaveBeenCalled();
     expect(utils.runs.listCheckpoints.setData).toHaveBeenCalled();
     expect(server.approve).toHaveBeenCalledTimes(1);
+  });
+
+  it("patches a step's own read without the step list, and moves the build's count by it", async () => {
+    seed({ items: false });
+    const pending = deferred();
+    server.approve.mockReturnValueOnce(pending.promise);
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+
+    expect(stepCache(A)?.review).toMatchObject({
+      state: "approved",
+      decision: { kind: "approved" },
+    });
+    expect(stepCache(B)?.review).toMatchObject({ state: "new" });
+    // With no step list there is no rollup to take: the header keeps its
+    // status until the refetch.
+    expect(runCache()?.status).toBe("unresolved");
+    expect(buildCache()?.pendingCheckpoints).toBe(4);
+
+    pending.resolve(decided());
+    await run();
   });
 
   it("patches nothing, and still sends the call, when no cache is loaded", async () => {
@@ -730,6 +806,8 @@ describe("useReviewMutations: optimistic decide", () => {
 
     expect(utils.runs.listCheckpoints.invalidate).toHaveBeenCalled();
     expect(utils.runs.getById.invalidate).toHaveBeenCalled();
+    // Every step read: the one on screen and the neighbours fetched ahead.
+    expect(utils.runs.getStep.invalidate).toHaveBeenCalledWith();
     expect(utils.runs.list.invalidate).toHaveBeenCalled();
     expect(utils.builds.getById.invalidate).toHaveBeenCalled();
   });
@@ -850,10 +928,10 @@ describe("useReviewMutations: rollback of overlapping decides", () => {
     expect(itemState(A)).toBe("unresolved");
     expect(itemsCache()?.find((i) => i.id === A)?.decision).toBeNull();
     expect(itemState(B)).toBe("approved");
-    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+    expect(stepCache(A)?.review).toMatchObject({
       state: "unresolved",
     });
-    expect(runCache()?.checkpointContexts[B]).toMatchObject({
+    expect(stepCache(B)?.review).toMatchObject({
       state: "approved",
     });
     expect(runCache()?.status).toBe("unresolved");
@@ -1415,7 +1493,7 @@ describe("useReviewMutations: errors", () => {
       actionId: PRIOR,
       kind: "approved",
     });
-    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+    expect(stepCache(A)?.review).toMatchObject({
       state: "approved",
       decision: { actionId: PRIOR },
     });
@@ -1660,7 +1738,7 @@ describe("useReviewMutations: undo", () => {
     await run(() => result.current.undo(ACTION));
 
     expect(itemState(A)).toBe("unresolved");
-    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+    expect(stepCache(A)?.review).toMatchObject({
       state: "unresolved",
       decision: null,
     });
@@ -1880,10 +1958,10 @@ describe("useReviewMutations: undo", () => {
       decision: { actionId: ACTION },
     });
     expect(itemState(B)).toBe("approved");
-    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+    expect(stepCache(A)?.review).toMatchObject({
       state: "approved",
     });
-    expect(runCache()?.checkpointContexts[B]).toMatchObject({
+    expect(stepCache(B)?.review).toMatchObject({
       state: "approved",
     });
     expect(runCache()?.status).toBe("passed");
