@@ -23,6 +23,7 @@ import {
   test,
 } from "vitest";
 
+import { encodeKeysetCursor } from "../src/lib/keyset-cursor.js";
 import { hashPassword } from "../src/lib/password.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
@@ -246,6 +247,52 @@ d("tRPC builds router", () => {
       properties: { region: "us-east-1" },
     });
     expect(res.items.map((b) => b.ciBuildId).sort()).toEqual(["p1", "p3"]);
+  });
+
+  test("a page past the end is empty, not an error", async () => {
+    await h.db.insert(builds).values([
+      { projectId: s.projectId, ciBuildId: "e1", branchName: "main" },
+      { projectId: s.projectId, ciBuildId: "e2", branchName: "main" },
+      { projectId: s.projectId, ciBuildId: "e3", branchName: "main" },
+    ]);
+    const client = mkClient(h, s.editorJwt);
+    const first = await client.builds.list.query({
+      projectId: s.projectId,
+      limit: 2,
+    });
+    expect(first.items).toHaveLength(2);
+    const second = await client.builds.list.query({
+      projectId: s.projectId,
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+
+    // A cursor at the oldest build, as the list would write it: nothing is
+    // older, whatever the filter.
+    const oldest = second.items[0]!.id;
+    const [row] = await h.db.execute<{ at: string }>(sql`
+      select to_char(created_at at time zone 'UTC',
+                     'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at
+      from builds where id = ${oldest}`);
+    const past = encodeKeysetCursor({ createdAt: row!.at, id: oldest });
+    for (const filter of [
+      {},
+      { needsReview: true },
+      { noPending: true },
+      { anyFailed: true },
+      { status: "empty" as const },
+      { status: "failed" as const },
+    ]) {
+      await expect(
+        client.builds.list.query({
+          projectId: s.projectId,
+          cursor: past,
+          ...filter,
+        }),
+      ).resolves.toEqual({ items: [], nextCursor: null });
+    }
   });
 
   test("list AND-joins multiple property filters", async () => {
