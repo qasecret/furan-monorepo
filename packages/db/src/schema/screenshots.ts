@@ -106,7 +106,7 @@ export const screenshots = pgTable(
     // row diffed before 0041 (the run's `test_runs.diff_name` is only its worst
     // checkpoint's). Every key-bearing column must be registered with the
     // storage proxy's ownership probes and the orphan reconcile
-    // (`gatherReferencedKeys`).
+    // (`gatherReferencedKeys`), and indexed for the probe (migration 0043).
     diffImageKey: text("diff_image_key"),
     // ADR-074 (migration 0040): true exactly when the step has an active
     // decision (a `checkpoint_decisions` row with `reverted_at IS NULL`).
@@ -197,5 +197,25 @@ export const screenshots = pgTable(
     stuckIdx: index("screenshots_stuck_idx")
       .on(t.diffQueuedAt)
       .where(stepAwaitingDiff(t)),
+    // Migration 0043 (spec 2026-10-27 §2). A variation's captures newest
+    // first: the viewer's "newer capture" (a top-1) and `variations.history`.
+    // DESC NULLS FIRST is what `ORDER BY ... DESC` reads.
+    variationCreatedIdx: index("screenshots_variation_created_idx").on(
+      t.testVariationId,
+      t.createdAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
+    // The storage proxy's ownership probes, one index per key column; the
+    // sparse keys are partial on their own column being set.
+    imageKeyIdx: index("screenshots_image_key_idx").on(t.imageKey),
+    domKeyIdx: index("screenshots_dom_key_idx")
+      .on(t.domKey)
+      .where(sql`${t.domKey} IS NOT NULL`),
+    elementMapKeyIdx: index("screenshots_element_map_key_idx")
+      .on(t.elementMapKey)
+      .where(sql`${t.elementMapKey} IS NOT NULL`),
+    diffImageKeyIdx: index("screenshots_diff_image_key_idx")
+      .on(t.diffImageKey)
+      .where(sql`${t.diffImageKey} IS NOT NULL`),
   }),
 );
