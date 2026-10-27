@@ -92,7 +92,12 @@
 -- Additive and idempotent: re-applying this file leaves the same schema and
 -- data and rewrites no row (the columns are skipped, the new indexes are
 -- rebuilt as they were, the superseded ones are already gone, and the backfill
--- finds every counter right).
+-- finds every counter right). Re-applied after 0044, though, it puts back the
+-- five storage-key indexes on the key alone, which 0044 replaced. The compose
+-- runner records a file by its hash and applies a file whose bytes changed
+-- again, so an edit of this file, even of a comment, must ship with an edit
+-- of 0044: the runner then applies both again, in file order, and ends on
+-- 0044's indexes.
 --
 -- Locks, by runner:
 -- - drizzle-kit (`drizzle-kit migrate`: every pending file in ONE
@@ -110,11 +115,19 @@
 --   index DROPs take ACCESS EXCLUSIVE inside the one transaction, so a live
 --   reader holding a lock the migration needs next can deadlock with it.
 -- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
---   statement its own transaction): each `ADD COLUMN` is a brief metadata
---   change; each `CREATE INDEX` holds SHARE on its table (writes wait, reads do
---   not) while it builds; each `DROP INDEX` of an existing index (a superseded
---   one, or a new one on a re-apply) takes ACCESS EXCLUSIVE on its table for a
---   moment. The backfill takes no table lock beyond an UPDATE's: it row-locks
+--   statement its own transaction): each `CREATE INDEX` holds SHARE on its
+--   table (writes wait, reads do not) while it builds. Each `ADD COLUMN` (a
+--   metadata change) and each `DROP INDEX` of an existing index (a superseded
+--   one, or a new one on a re-apply) needs ACCESS EXCLUSIVE on its table, and
+--   is not momentary: it has to wait for every transaction already open on
+--   the table (an api request, the orphan reconcile's full read of
+--   `screenshots`, any long query) before it can take the lock, and while it
+--   waits every new read and write of that table queues behind it. Nothing
+--   here sets a `lock_timeout`, so with such a transaction open all traffic
+--   to `test_runs`, `screenshots` or `baselines` stalls for as long as the
+--   longest open query lasts. Stop the app services (api, capture-worker,
+--   diff-worker) before `migrate` and start them after it, as for 0044.
+--   The backfill takes no table lock beyond an UPDATE's: it row-locks
 --   the runs it writes, waiting for any write that holds one of them, and a
 --   write that locks several runs can deadlock with it, in which case Postgres
 --   aborts one of the two. If that is the backfill, the migration fails before
@@ -122,15 +135,16 @@
 --   though that re-run rebuilds every index the file drops and creates, each
 --   build blocking writes to its table again.
 --   The previous release writes no counters, and under this runner it can keep
---   serving while the file runs (on `docker compose up -d` the old containers
---   run until their replacements start, after `migrate` completes). A run it
---   changes after the backfill has read it keeps counters that are stale until
---   the run's next write recomputes them, or until the repair fixes them:
+--   serving while the file runs: on a second host, when `migrate` is run by
+--   hand with the app up, or under another orchestrator. That is why the app
+--   services are stopped first. A run it changes after the backfill has read
+--   it keeps counters that are stale until the run's next write recomputes
+--   them, or until the repair fixes them:
 --   `verify-review-rollup --repair-counters` (apps/api), which recomputes
 --   each such run under its own run lock. Do not re-run the backfill itself
 --   while any writer is up: it computes from one snapshot and can overwrite a
---   concurrent writer's counters. For exact counters at the upgrade, stop the writers
---   first (api, capture-worker, diff-worker), as
+--   concurrent writer's counters. For exact counters at the upgrade, stop the
+--   writers first (api, capture-worker, diff-worker), as
 --   docs/runbooks/migration-deploy-order.md describes.
 --
 -- One-off cost on a large install: each index build reads its whole table once
