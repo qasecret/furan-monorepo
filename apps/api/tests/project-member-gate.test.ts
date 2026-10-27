@@ -703,7 +703,7 @@ d("projectMember gate", () => {
       expect(extra).toEqual({
         ...Object.fromEntries(Object.keys(calls).map((name) => [name, 2])),
         // Its handler acts in the project the gate resolved
-        // (`ctx.gatedProjectId`); an admin, who skips the gate, reads the
+        // (`ctx.gated`); an admin, who skips the gate, reads the
         // build's project instead. So a member pays 2 - 1.
         "review.previewApproveBuild": 1,
       });
