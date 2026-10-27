@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { createDb, type DB } from "./client.js";
@@ -319,6 +319,54 @@ describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
       const boom = new Error("resolver failed");
       const thrown = await gateProjectMember(tx, s.userId, {
         resolve: () => Promise.reject(boom),
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      return { same: thrown === boom, role: await currentUserRole(tx) };
+    });
+    expect(seen).toEqual({ same: true, role: "editor" });
+  });
+
+  /** The Postgres error code of a query error (drizzle wraps it in `cause`). */
+  const codeOf = (err: unknown): string | undefined => {
+    const e = err as { code?: string; cause?: { code?: string } } | null;
+    return e?.code ?? e?.cause?.code;
+  };
+
+  test("a query that raises: its own error is rethrown, not the restore's", async () => {
+    const seen = await inRolledBackTx(async (tx) => {
+      const s = await seeded(tx);
+      // A `query` that slips its contract (two rows) raises inside the gate's
+      // statement (21000), which aborts the transaction. The restore then
+      // fails too (25P02), and that failure is swallowed: the caller sees the
+      // query's error.
+      const thrown = await gateProjectMember(tx, s.userId, {
+        query: sql`SELECT ${projects.id} FROM ${projects}
+          WHERE ${projects.id} IN (${s.member}, ${s.other})`,
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      return { code: codeOf(thrown) };
+    });
+    expect(seen).toEqual({ code: "21000" });
+  });
+
+  test("a failure in JS, before the statement is sent: the role is restored, the same error rethrown", async () => {
+    const seen = await inRolledBackTx(async (tx) => {
+      const s = await seeded(tx);
+      const boom = new Error("the query could not be built");
+      // drizzle calls a chunk's getSQL() while it builds the gate's statement,
+      // so this one fails in JS, after the elevation and before anything is
+      // sent: the transaction is still usable, and the restore must run.
+      const unbuildable = {
+        getSQL: (): never => {
+          throw boom;
+        },
+      };
+      const thrown = await gateProjectMember(tx, s.userId, {
+        query: sql`SELECT ${unbuildable as unknown as SQL}`,
       }).then(
         () => null,
         (err: unknown) => err,
