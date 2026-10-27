@@ -1,13 +1,15 @@
 import {
   and,
   eq,
+  exists,
   inArray,
-  or,
   projectMembers,
   screenshots,
+  sql,
   testRuns,
   withPrivilegedScope,
   type DB,
+  type SQL,
 } from "@furan/db";
 import { createStorage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
@@ -26,7 +28,7 @@ import type { AuthedUser } from "../plugins/auth.js";
  * attributed to a project via the DB rows that reference it —
  * `screenshots.{image,dom,element_map,diff_image}_key` and
  * `test_runs.{image,diff}_name` (all carry `project_id`; see
- * {@link KEY_OWNERSHIP_PROBES}). A key the caller can't prove ownership of
+ * {@link KEY_OWNERSHIP_SOURCES}). A key the caller can't prove ownership of
  * returns 404 (not 403) so the endpoint never confirms the existence of
  * another tenant's content. (Content-addressed sha256 keys are unguessable, but that
  * was defense-by-obscurity — this closes the actual cross-tenant read.)
@@ -96,63 +98,136 @@ export async function registerStorageProxyRoute(
 }
 
 /**
- * Every place a storage key can be attributed to a project. This is the SINGLE
- * source of truth for key→project ownership: each probe returns true iff `key`
- * is referenced by a row in one of `projectIds`. The check is fail-closed —
- * a key attributed to no project is denied (404) — so when a new feature adds
- * a key-bearing column or table, it MUST be registered here, otherwise the
- * proxy will 404 that artifact for legitimate members. Probes run in order and
- * short-circuit on the first hit.
+ * One place a storage key can be attributed to a project: an `EXISTS`
+ * subquery that holds iff `key` is referenced, through one key column, by a
+ * row of one of `projectIds`. It filters on that single column, so the column's
+ * own index answers it.
  */
-type KeyOwnershipProbe = (
-  db: DB,
+type KeyOwnershipSource = (
+  db: Pick<DB, "select">,
   projectIds: string[],
   key: string,
-) => Promise<boolean>;
+) => Parameters<typeof exists>[0];
 
-const KEY_OWNERSHIP_PROBES: KeyOwnershipProbe[] = [
-  // screenshots.{image,dom,element_map,diff_image}_key
-  async (db, projectIds, key) => {
-    const rows = await db
-      .select({ id: screenshots.id })
+/**
+ * Every place a storage key can be attributed to a project. This is the SINGLE
+ * source of truth for key→project ownership. The check is fail-closed — a key
+ * attributed to no project is denied (404) — so when a new feature adds a
+ * key-bearing column or table, it MUST be registered here (and indexed, as
+ * migration 0043 does for these), otherwise the proxy will 404 that artifact
+ * for legitimate members.
+ *
+ * {@link keyOwnershipQuery} OR-s one `EXISTS` per source into one statement:
+ * - A single `OR` over several key columns can only be answered by a bitmap
+ *   scan of all their indexes, which collects every match of a key before it
+ *   returns the first one, and a key is shared by every identical screenshot
+ *   (the keys are content hashes). One `EXISTS` per column is planned alone and
+ *   answered by an index scan that stops at the first match; the `project_id`
+ *   list only filters the rows the key matches.
+ * - The sparse key columns have indexes that are partial on `IS NOT NULL`,
+ *   which `col = key` implies, so those indexes serve their arms.
+ * - The arms are evaluated left to right and the evaluation stops at the first
+ *   that is true, so the order is the cost: the most-fetched sources come
+ *   first, and the one source with no index, the legacy `test_runs.image_name`
+ *   (nothing in this repository writes it any more), comes last, so a key that
+ *   any other source holds never reaches it. SQL does not promise the order of
+ *   an `OR`'s operands; these arms are uncorrelated, so Postgres runs each as
+ *   an InitPlan on first use, and the plan test pins that.
+ */
+const KEY_OWNERSHIP_SOURCES: KeyOwnershipSource[] = [
+  // screenshots.image_key: a step's capture.
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
       .from(screenshots)
       .where(
         and(
           inArray(screenshots.projectId, projectIds),
-          or(
-            eq(screenshots.imageKey, key),
-            eq(screenshots.domKey, key),
-            eq(screenshots.elementMapKey, key),
-            eq(screenshots.diffImageKey, key),
-          ),
+          eq(screenshots.imageKey, key),
         ),
-      )
-      .limit(1);
-    return rows.length > 0;
-  },
-  // test_runs.{image,diff}_name
-  async (db, projectIds, key) => {
-    const rows = await db
-      .select({ id: testRuns.id })
+      ),
+  // screenshots.diff_image_key: a step's own diff image.
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
+      .from(screenshots)
+      .where(
+        and(
+          inArray(screenshots.projectId, projectIds),
+          eq(screenshots.diffImageKey, key),
+        ),
+      ),
+  // screenshots.element_map_key: the element-map sidecar.
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
+      .from(screenshots)
+      .where(
+        and(
+          inArray(screenshots.projectId, projectIds),
+          eq(screenshots.elementMapKey, key),
+        ),
+      ),
+  // screenshots.dom_key: the DOM snapshot.
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
+      .from(screenshots)
+      .where(
+        and(
+          inArray(screenshots.projectId, projectIds),
+          eq(screenshots.domKey, key),
+        ),
+      ),
+  // test_runs.diff_name: a run's worst step's diff image (rows diffed before
+  // migration 0041 have no per-step diff key, so it is their only reference).
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
       .from(testRuns)
       .where(
         and(
           inArray(testRuns.projectId, projectIds),
-          or(eq(testRuns.imageName, key), eq(testRuns.diffName, key)),
+          eq(testRuns.diffName, key),
         ),
-      )
-      .limit(1);
-    return rows.length > 0;
-  },
+      ),
+  // test_runs.image_name: legacy, no index; last, see above.
+  (db, projectIds, key) =>
+    db
+      .select({ one: sql`1` })
+      .from(testRuns)
+      .where(
+        and(
+          inArray(testRuns.projectId, projectIds),
+          eq(testRuns.imageName, key),
+        ),
+      ),
 ];
+
+/**
+ * The ownership check as one statement: `owned` is true iff `key` belongs to a
+ * row of one of `projectIds` through any of {@link KEY_OWNERSHIP_SOURCES}.
+ * `projectIds` must not be empty.
+ */
+export function keyOwnershipQuery(
+  db: Pick<DB, "select">,
+  projectIds: string[],
+  key: string,
+): SQL {
+  const arms = KEY_OWNERSHIP_SOURCES.map((source) =>
+    exists(source(db, projectIds, key)),
+  );
+  return sql`select ${sql.join(arms, sql` or `)} as "owned"`;
+}
 
 /**
  * True if `auth` may read the storage `key`. Admins/owners bypass — by role
  * only, so an admin's API token keeps it like the other membership gates
  * (ADR-064 step A). Otherwise the key must be referenced by a row (see
- * {@link KEY_OWNERSHIP_PROBES}) in one of the caller's member projects. The member-project set is cached per user
- * (short TTL) since the diff viewer fetches many keys per page and the set is
- * stable between membership changes.
+ * {@link KEY_OWNERSHIP_SOURCES}) in one of the caller's member projects. The
+ * member-project set is cached per user (short TTL) since the diff viewer
+ * fetches many keys per page and the set is stable between membership
+ * changes; the ownership check itself is never cached.
  */
 async function callerCanAccessKey(
   db: DB,
@@ -165,10 +240,10 @@ async function callerCanAccessKey(
   const projectIds = await memberProjectIds(db, auth.id, cache);
   if (projectIds.length === 0) return false;
 
-  for (const probe of KEY_OWNERSHIP_PROBES) {
-    if (await probe(db, projectIds, key)) return true;
-  }
-  return false;
+  const rows = await db.execute<{ owned: boolean }>(
+    keyOwnershipQuery(db, projectIds, key),
+  );
+  return rows[0]?.owned === true;
 }
 
 /**
