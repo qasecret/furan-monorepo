@@ -1018,7 +1018,8 @@ d("builds.list pages before it aggregates", () => {
       // One statement for the page: its rows, aggregates and pending counts.
       expect(body, name).toHaveLength(1);
       const [q] = body;
-      expect(q, name).not.toBe("select");
+      // A raw statement (not a builder's), so it can be explained as it is.
+      expect(typeof q, name).toBe("object");
 
       const [explained] = await h.db.execute<{ "QUERY PLAN": unknown }>(
         sql`explain (analyze, format json) ${q as SQL}`,

@@ -1,12 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  checkpointDecisions,
-  eq,
-  inArray,
-  screenshots,
-  testRuns,
-} from "@furan/db";
+import { eq, inArray, screenshots, testRuns } from "@furan/db";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { GROUP_APPROVE_CAP } from "../src/lib/review/groups.js";
@@ -22,8 +16,10 @@ import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
+  cp,
+  decideDirectly,
+  failDiff,
   seedReviewRun,
-  syncRunCounters,
   type ReviewCheckpointSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
@@ -61,43 +57,12 @@ d("the group selection in SQL equals the decision core's", () => {
     return s;
   }
 
-  const cp = (
-    name: string,
-    verdict: ReviewCheckpointSpec["verdict"],
-  ): ReviewCheckpointSpec => ({ name, verdict });
-
   /** Gives `shotIds` the diff signature `sig`. */
   async function sign(sig: string, shotIds: string[]): Promise<void> {
     await h.db
       .update(screenshots)
       .set({ diffSignature: sig })
       .where(inArray(screenshots.id, shotIds));
-  }
-
-  /** Decisions written directly; the runs' counters then recomputed. */
-  async function decide(
-    s: ReviewSeed,
-    shots: Array<{ runId: string; id: string }>,
-    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
-  ): Promise<void> {
-    for (const shot of shots) {
-      await h.db.insert(checkpointDecisions).values({
-        projectId: s.projectId,
-        runId: shot.runId,
-        screenshotId: shot.id,
-        actionId: randomUUID(),
-        decision: opts.decision ?? "approved",
-        actorId: s.editor.id,
-        source: "viewer",
-        before: null,
-        revertedAt: opts.reverted ? new Date() : null,
-        revertedBy: opts.reverted ? s.editor.id : null,
-      });
-    }
-    await syncRunCounters(
-      h.db,
-      shots.map((x) => x.runId),
-    );
   }
 
   const key = (t: { runId: string; screenshotId: string }) =>
@@ -241,14 +206,10 @@ d("the group selection in SQL equals the decision core's", () => {
       all.map((x) => x.id),
     );
     await sign(S2, [r0("d").id]);
-    await decide(s, [at(r1)("e")]);
-    await decide(s, [at(r1)("f")], { decision: "rejected" });
-    await decide(s, [at(r1)("g")], { reverted: true });
-    await h.db
-      .update(screenshots)
-      .set({ diffFailedAt: new Date(), diffError: "timeout" })
-      .where(eq(screenshots.id, at(r2)("h").id));
-    await syncRunCounters(h.db, [r2.runId]);
+    await decideDirectly(h, s, [at(r1)("e").id]);
+    await decideDirectly(h, s, [at(r1)("f").id], { decision: "rejected" });
+    await decideDirectly(h, s, [at(r1)("g").id], { reverted: true });
+    await failDiff(h, at(r2)("h").id);
 
     const k = (x: { runId: string; id: string }) => `${x.runId}:${x.id}`;
     const [qa, qb] = [q1, q2].sort((x, y) => (x.id < y.id ? -1 : 1));
@@ -317,7 +278,7 @@ d("the group selection in SQL equals the decision core's", () => {
     ];
     const decided = members.pop()!;
     await sign(S, [...members.map((x) => x.id), decided.id]);
-    await decide(s, [decided]);
+    await decideDirectly(h, s, [decided.id]);
 
     const limit = GROUP_APPROVE_CAP + 1;
     const capped = await both(s.projectId, s.buildId, S, limit);
@@ -356,7 +317,11 @@ d("the group selection in SQL equals the decision core's", () => {
 
     // Down to 201 members: from a member the other 200 fit, from the decided
     // step all 201 do not.
-    await decide(s, members.slice(201));
+    await decideDirectly(
+      h,
+      s,
+      members.slice(201).map((x) => x.id),
+    );
     const at201 = await both(s.projectId, s.buildId, S, limit);
     expect(at201.total).toBe(201);
     expect(at201.sql).toEqual(at201.js);

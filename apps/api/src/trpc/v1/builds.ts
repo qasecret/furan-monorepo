@@ -424,7 +424,8 @@ export const buildsRouter = t.router({
           SELECT ${RUN_AGGREGATE},
             count(*) FILTER (WHERE r.status = 'new')     AS new_count,
             -- Every step of the build, by the runs' step counts (upload,
-            -- complete and merge keep checkpoint_count).
+            -- complete, merge and the capture worker's step insert keep
+            -- checkpoint_count).
             coalesce(sum(r.checkpoint_count), 0)         AS steps_total
           FROM test_runs r
           WHERE r.build_id = b.id

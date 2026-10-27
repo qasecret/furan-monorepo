@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -244,17 +244,8 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
   }, 60_000);
 
   it("a capture adds an undiffed step: the run is running, the counters 0", async () => {
-    let page: Server | undefined;
-    try {
-      page = createServer((_req, res) => {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(
-          `<!DOCTYPE html><html><body><p>counters ${Date.now()}</p></body></html>`,
-        );
-      });
-      await new Promise<void>((r) => page!.listen(0, "127.0.0.1", () => r()));
-      const port = (page.address() as AddressInfo).port;
-      const job = await seedJob(`http://127.0.0.1:${port}/`);
+    await withPage(async (url) => {
+      const job = await seedJob(url);
 
       await handleCaptureJob(job, mockLogger, { db, storage, redis });
 
@@ -266,9 +257,7 @@ desc("handleCaptureJob keeps the run counters right (integration)", () => {
       expect(await runStatus(job.runId)).toBe("running");
       await expectCounters(job.runId, { pendingSteps: 0, failedSteps: 0 });
       expect(await stepCounts(job.runId)).toEqual({ stored: 2, steps: 2 });
-    } finally {
-      if (page) await new Promise<void>((r) => page!.close(() => r()));
-    }
+    });
   }, 60_000);
 
   it("each captured step counts toward checkpoint_count; a re-delivered one does not", async () => {

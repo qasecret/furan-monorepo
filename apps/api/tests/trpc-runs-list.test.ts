@@ -4,7 +4,6 @@ import type { AddressInfo } from "node:net";
 import {
   baselines,
   builds,
-  checkpointDecisions,
   diffRegions,
   eq,
   inArray,
@@ -41,6 +40,7 @@ import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
+  decideDirectly,
   seedReviewRun,
   syncRunCounters,
   type ReviewRunSpec,
@@ -600,32 +600,6 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     page.items.map((i) => i.id);
   const sorted = (ids: string[]) => [...ids].sort();
 
-  /**
-   * A decision row (an approve unless `decision`), active unless `reverted`,
-   * written directly; then the run's stored counters (and rollup status) are
-   * brought in line, as the app's decide core does.
-   */
-  async function decide(
-    s: ReviewSeed,
-    runId: string,
-    shotId: string,
-    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
-  ): Promise<void> {
-    await h.db.insert(checkpointDecisions).values({
-      projectId: s.projectId,
-      runId,
-      screenshotId: shotId,
-      actionId: randomUUID(),
-      decision: opts.decision ?? "approved",
-      actorId: s.editor.id,
-      source: "viewer",
-      before: null,
-      revertedAt: opts.reverted ? new Date() : null,
-      revertedBy: opts.reverted ? s.editor.id : null,
-    });
-    await syncRunCounters(h.db, [runId]);
-  }
-
   beforeAll(async () => {
     h = await createTestApp();
     h.app.log.level = "silent";
@@ -740,17 +714,17 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
       lifecycle: "passed",
       checkpoints: [{ name: "b", verdict: "unresolved" }],
     });
-    await decide(s, b.runId, b.shots.b!.id);
+    await decideDirectly(h, s, [b.shots.b!.id]);
     const b2 = await addReviewRun(h, s, {
       lifecycle: "failed",
       checkpoints: [{ name: "b2", verdict: "unresolved" }],
     });
-    await decide(s, b2.runId, b2.shots.b2!.id, { decision: "rejected" });
+    await decideDirectly(h, s, [b2.shots.b2!.id], { decision: "rejected" });
     // (c) unresolved, its approve reverted: pending again
     const c = await addReviewRun(h, s, {
       checkpoints: [{ name: "c", verdict: "unresolved" }],
     });
-    await decide(s, c.runId, c.shots.c!.id, { reverted: true });
+    await decideDirectly(h, s, [c.shots.c!.id], { reverted: true });
     // (d) running, (e) aborted, (f) empty, (g) overridden, (h) a sibling not yet
     // diffed: not reviewable, so nothing in them is pending
     for (const [name, spec] of [
@@ -929,7 +903,7 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
         { name: "d2", verdict: "unresolved" },
       ],
     });
-    await decide(s, d2.runId, d2.shots.d1!.id);
+    await decideDirectly(h, s, [d2.shots.d1!.id]);
     // E: no steps at all
     const e = await addReviewRun(h, s, { lifecycle: "empty", checkpoints: [] });
 
@@ -1151,7 +1125,7 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     ).toEqual({ [x]: [1, 2] });
 
     // A step decided on mobile is no longer pending there.
-    await decide(s, x, s.shotsInOrder[1]!.id);
+    await decideDirectly(h, s, [s.shotsInOrder[1]!.id]);
     expect(await summary({ pending: true, viewport: "375x812" })).toEqual({});
     expect(await summary({ pending: true })).toEqual({
       [x]: [1, 2],
@@ -1227,7 +1201,7 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
           { name: "decided", verdict: "unresolved", browser: "firefox" },
         ],
       });
-      await decide(s, decided.runId, decided.shots.decided!.id);
+      await decideDirectly(h, s, [decided.shots.decided!.id]);
       // Run 4: still running (not reviewable), so its step is not pending,
       // but its environment still counts as a value of the batch.
       await addReviewRun(h, s, {

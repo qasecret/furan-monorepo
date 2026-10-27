@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
   builds,
-  checkpointDecisions,
   diffRegions,
   eq,
   inArray,
@@ -45,6 +43,8 @@ import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
+  decideDirectly,
+  failDiff,
   seedReviewRun,
   syncRunCounters,
   type ReviewRunSpec,
@@ -556,29 +556,6 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
   /** The client of one of the seed's users. */
   const as = (user: { jwt: string }) => mkClient(h, user.jwt);
 
-  /** A decision row (an approve unless `decision`), active unless `reverted`. */
-  async function decide(
-    s: ReviewSeed,
-    runId: string,
-    shotId: string,
-    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
-  ): Promise<void> {
-    await h.db.insert(checkpointDecisions).values({
-      projectId: s.projectId,
-      runId,
-      screenshotId: shotId,
-      actionId: randomUUID(),
-      decision: opts.decision ?? "approved",
-      actorId: s.editor.id,
-      source: "viewer",
-      before: null,
-      revertedAt: opts.reverted ? new Date() : null,
-      revertedBy: opts.reverted ? s.editor.id : null,
-    });
-    // The decide core recomputes the run; a direct insert must too.
-    await syncRunCounters(h.db, [runId]);
-  }
-
   const idsOf = (page: { items: Array<{ id: string }> }) =>
     page.items.map((i) => i.id);
   const sorted = (ids: string[]) => [...ids].sort();
@@ -606,7 +583,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const bRun = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "b1", verdict: "unresolved" }] },
     });
-    await decide(s, bRun.runId, bRun.shots["b1"]!.id, {
+    await decideDirectly(h, s, [bRun.shots["b1"]!.id], {
       decision: "rejected",
     });
     // C: only passed steps: nothing to review.
@@ -617,7 +594,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const dRun = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "d1", verdict: "unresolved" }] },
     });
-    await decide(s, dRun.runId, dRun.shots["d1"]!.id, { reverted: true });
+    await decideDirectly(h, s, [dRun.shots["d1"]!.id], { reverted: true });
     // E: still running, so not reviewable: its steps are not pending.
     const e = await addReviewBuild(h, s, {
       spec: {
@@ -717,7 +694,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
       lifecycle: "failed",
       checkpoints: [{ name: "a-rejected", verdict: "unresolved" }],
     });
-    await decide(s, s.runId, s.shots["a-rejected"]!.id, {
+    await decideDirectly(h, s, [s.shots["a-rejected"]!.id], {
       decision: "rejected",
     });
     await addReviewRun(h, s, {
@@ -731,7 +708,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         checkpoints: [{ name: "b-rejected", verdict: "unresolved" }],
       },
     });
-    await decide(s, b.runId, b.shots["b-rejected"]!.id, {
+    await decideDirectly(h, s, [b.shots["b-rejected"]!.id], {
       decision: "rejected",
     });
     // C: only a pending run: to review, no failure.
@@ -804,7 +781,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const c = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
     });
-    await decide(s, c.runId, c.shots["c1"]!.id);
+    await decideDirectly(h, s, [c.shots["c1"]!.id]);
     // D: one `new` step approved, its sibling still pending.
     const dBuild = await addReviewBuild(h, s, {
       spec: {
@@ -814,7 +791,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         ],
       },
     });
-    await decide(s, dBuild.runId, dBuild.shots["d-done"]!.id);
+    await decideDirectly(h, s, [dBuild.shots["d-done"]!.id]);
     // E: an unresolved step: not passed in the rollup.
     const e = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "e1", verdict: "unresolved" }] },
@@ -862,8 +839,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         { name: "a-decided", verdict: "unresolved" },
       ],
     });
-    const aRun = s.runId;
-    await decide(s, aRun, s.shots["a-decided"]!.id);
+    await decideDirectly(h, s, [s.shots["a-decided"]!.id]);
     // A second run in the same build: one more pending step, and a run that is
     // still running (not reviewable, so none of its steps count).
     await addReviewRun(h, s, {
@@ -924,20 +900,6 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     ).toEqual({ [s.buildId]: 3, [c.buildId]: 3 });
   });
 
-  /** The step's final diff failure, as `markStepDiffFailed` writes it. */
-  async function failDiff(runId: string, shotId: string): Promise<void> {
-    await h.db
-      .update(screenshots)
-      .set({
-        verdict: "unresolved",
-        verdictAt: new Date(),
-        diffFailedAt: new Date(),
-        diffError: "timeout",
-      })
-      .where(eq(screenshots.id, shotId));
-    await syncRunCounters(h.db, [runId]);
-  }
-
   /**
    * Writes runs' stored columns directly: the stale values a writer that
    * skipped `recomputeRunStatus` (the counters) or the step count would
@@ -981,7 +943,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const failed = await addReviewRun(h, s, {
       checkpoints: [{ name: "a4", verdict: "unresolved" }],
     });
-    await failDiff(failed.runId, failed.shots.a4!.id);
+    await failDiff(h, failed.shots.a4!.id);
 
     const client = as(s.editor);
     const detail = () => client.builds.getById.query({ buildId: s.buildId });
@@ -1092,7 +1054,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     expect(await count(other.editor, other.projectId)).toEqual({ total: 1 });
 
     // It follows the decisions: deciding B's only step takes B out.
-    await decide(s, b.runId, b.shots["b1"]!.id, { decision: "rejected" });
+    await decideDirectly(h, s, [b.shots["b1"]!.id], { decision: "rejected" });
     expect(await count(s.editor, s.projectId)).toEqual({ total: 1 });
 
     // A project without builds is zero.
