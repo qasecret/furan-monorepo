@@ -29,7 +29,7 @@ import {
  * `--repair-counters` then fixes the listed runs whose counters are wrong,
  * one at a time under each run's lock (`repairRunCounters`, through
  * `recomputeRunStatus`), so it is safe while the app runs. It never changes a
- * status: a run whose status is not its rollup is left for runbook §5, and
+ * status: a run whose status is not its rollup is left for review-model-upgrade.md §5, and
  * printed with both (`<run_id>, not repaired: stored <status>, rollup
  * <status>`). The check then runs again and the exit code is its result.
  *
