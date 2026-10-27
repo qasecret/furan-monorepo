@@ -60,9 +60,12 @@ export interface LockedRun {
  */
 const stepDiffFailed = sql<boolean>`${screenshots.diffFailedAt} is not null`;
 
-/** A checkpoint as the core needs it (the promotion's fields + its verdict). */
+/**
+ * A checkpoint as the core needs it: the promotion's fields, its verdict, and
+ * the facts legality reads beside it (`loadTargetFacts`).
+ */
 export type DecidableCheckpoint = Awaited<
-  ReturnType<typeof loadCheckpointsInCaptureOrder>
+  ReturnType<typeof loadTargetFacts>
 >[number];
 
 /**
@@ -133,7 +136,11 @@ async function lockRunsBy(
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-/** Locks variations `FOR NO KEY UPDATE` in ascending id order (R8). */
+/**
+ * Locks variations `FOR NO KEY UPDATE` in ascending id order (R8). (An approve
+ * locks them with the fields it promotes instead:
+ * `lockVariationsForPromotion`.)
+ */
 export async function lockVariations(
   tx: Tx,
   variationIds: string[],
@@ -147,8 +154,21 @@ export async function lockVariations(
     .for("no key update");
 }
 
-/** The given checkpoints, in capture order. Unknown ids are absent. */
-async function loadCheckpointsInCaptureOrder(tx: Tx, screenshotIds: string[]) {
+/**
+ * The given checkpoints, in capture order (unknown ids are absent), each with
+ * what legality reads beside its own row, in ONE statement:
+ * - `active`, its active decision (`reverted_at IS NULL`; at most one, by the
+ *   partial unique index, so the join adds no row);
+ * - `runAwaitsDiff`, whether its run is among `runIds` and has a step that
+ *   is not diffed yet (`verdict IS NULL`). The runs are scanned once for the
+ *   statement, not once per checkpoint.
+ * `runIds` must not be empty.
+ */
+async function loadTargetFacts(
+  tx: Tx,
+  screenshotIds: string[],
+  runIds: string[],
+) {
   return tx
     .select({
       id: screenshots.id,
@@ -163,9 +183,20 @@ async function loadCheckpointsInCaptureOrder(tx: Tx, screenshotIds: string[]) {
       matchLevel: screenshots.matchLevel,
       verdict: screenshots.verdict,
       diffFailed: stepDiffFailed,
+      active: checkpointDecisions.decision,
+      runAwaitsDiff: sql<boolean>`${screenshots.runId} IN (
+        SELECT undiffed.run_id FROM ${screenshots} AS undiffed
+        WHERE undiffed.run_id IN ${runIds} AND undiffed.verdict IS NULL)`,
     })
     .from(screenshots)
     .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+    .leftJoin(
+      checkpointDecisions,
+      and(
+        eq(checkpointDecisions.screenshotId, screenshots.id),
+        isNull(checkpointDecisions.revertedAt),
+      ),
+    )
     .where(inArray(screenshots.id, screenshotIds))
     .orderBy(
       asc(testRuns.createdAt),
@@ -173,20 +204,6 @@ async function loadCheckpointsInCaptureOrder(tx: Tx, screenshotIds: string[]) {
       asc(screenshots.createdAt),
       asc(screenshots.id),
     );
-}
-
-/** The runs among `runIds` that still have an undiffed checkpoint. */
-async function runsWithPendingDiff(
-  tx: Tx,
-  runIds: string[],
-): Promise<Set<string>> {
-  const rows = await tx
-    .selectDistinct({ runId: screenshots.runId })
-    .from(screenshots)
-    .where(
-      and(inArray(screenshots.runId, runIds), isNull(screenshots.verdict)),
-    );
-  return new Set(rows.map((r) => r.runId));
 }
 
 /** Each given checkpoint's active decision (at most one, by the partial unique index). */
@@ -239,12 +256,14 @@ export function dedupeTargets(
 }
 
 /**
- * Loads what legality needs for `targets` (deduped; every run must be in
- * `runs`, locked by the caller) and assesses each against `decision`.
- * Returns the targets' checkpoints in capture order, and one refusal per
- * illegal target, in target order: `not_in_run` for a checkpoint that is not
- * in its target's run, otherwise `assessDecision`'s reason. When `reasons` is
- * empty, `checkpoints` holds exactly one row per target.
+ * Loads what legality needs for `targets` (deduped, not empty; every run must
+ * be in `runs`, locked by the caller) and assesses each against `decision`.
+ * The checkpoints and their facts are read in one statement
+ * (`loadTargetFacts`). Returns the targets' checkpoints in capture order, and
+ * one refusal per illegal target, in target order: `not_in_run` for a
+ * checkpoint that is not in its target's run, otherwise `assessDecision`'s
+ * reason. When `reasons` is empty, `checkpoints` holds exactly one row per
+ * target.
  */
 export async function assessTargets(
   tx: Tx,
@@ -255,16 +274,18 @@ export async function assessTargets(
   checkpoints: DecidableCheckpoint[];
   reasons: TargetRefusal[];
 }> {
-  const shotIds = targets.map((t) => t.screenshotId);
-  const checkpoints = await loadCheckpointsInCaptureOrder(tx, shotIds);
+  const checkpoints = await loadTargetFacts(
+    tx,
+    targets.map((t) => t.screenshotId),
+    [...runs.keys()],
+  );
   const shotById = new Map(checkpoints.map((s) => [s.id, s]));
-  const pendingDiff = await runsWithPendingDiff(tx, [...runs.keys()]);
-  const active = await loadActiveDecisions(tx, shotIds);
 
   const reasons: TargetRefusal[] = [];
   for (const t of targets) {
     const run = runs.get(t.runId)!;
     const shot = shotById.get(t.screenshotId);
+    // A checkpoint in its target's run: `runAwaitsDiff` is that run's.
     const reason =
       shot === undefined || shot.runId !== t.runId
         ? "not_in_run"
@@ -272,9 +293,9 @@ export async function assessTargets(
             {
               lifecycle: run.lifecycle,
               override: run.override,
-              allVerdictsSet: !pendingDiff.has(run.id),
+              allVerdictsSet: !shot.runAwaitsDiff,
               verdict: shot.verdict,
-              active: active.get(shot.id) ?? null,
+              active: shot.active,
               diffFailed: shot.diffFailed,
             },
             decision,

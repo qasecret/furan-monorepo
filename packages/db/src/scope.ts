@@ -119,8 +119,18 @@ export type GateProject =
    */
   | { resolve: () => Promise<string | null> };
 
-/** The gate's verdict: through, no such resource, or not a member. */
-export type GateOutcome = "ok" | "not_found" | "forbidden";
+/**
+ * The gate's verdict (through, no such resource, or not a member) and, when
+ * through, the project it resolved: the one whose membership it checked, so
+ * the caller can act in it without reading the resource again.
+ */
+export type GateResult =
+  | { outcome: "ok"; projectId: string }
+  | { outcome: "not_found" }
+  | { outcome: "forbidden" };
+
+/** The gate's verdict alone. */
+export type GateOutcome = GateResult["outcome"];
 
 /**
  * Reads the current role and switches to the RLS-bypass role, in that order:
@@ -158,6 +168,8 @@ async function restoreRoleQuietly(tx: DB, role: string): Promise<void> {
  *     MATERIALIZED CTE the next one reads, so the restore's `set_config`
  *     runs only after both reads, which therefore still run as `owner`.
  * A `resolve` runs between the two, elevated, at the cost of its own reads.
+ * On `ok` the result carries the project resolved (as Postgres returned it,
+ * lowercase uuid text).
  *
  * Every setting is transaction-local (`is_local = true`), as before: the role
  * the procedure body sees is the one it had before the gate, and nothing
@@ -171,7 +183,7 @@ export async function gateProjectMember(
   tx: DB,
   userId: string,
   project: GateProject,
-): Promise<GateOutcome> {
+): Promise<GateResult> {
   const elevated = await tx.execute<{ role: string | null }>(ELEVATE_ROLE);
   const prior = elevated[0]?.role ?? "";
 
@@ -213,8 +225,10 @@ export async function gateProjectMember(
     throw err;
   }
   const row = rows[0];
-  if (!row?.project_id) return "not_found";
-  return row.member ? "ok" : "forbidden";
+  if (!row?.project_id) return { outcome: "not_found" };
+  return row.member
+    ? { outcome: "ok", projectId: row.project_id }
+    : { outcome: "forbidden" };
 }
 
 /** Reads the current scoped user_id; returns null when no identity is set. */

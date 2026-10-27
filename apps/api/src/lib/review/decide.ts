@@ -25,14 +25,17 @@ import { emitAudit } from "../emit-audit.js";
 
 import { reviewError } from "./errors.js";
 import { recordReviewDecisions } from "./metrics.js";
-import { promoteCheckpointInTx } from "./promote.js";
+import {
+  lockVariationsForPromotion,
+  promoteCheckpointInTx,
+  type LockedVariation,
+} from "./promote.js";
 import {
   assessTargets,
   dedupeTargets,
   loadActiveDecisions,
   loadWinner,
   lockRuns,
-  lockVariations,
   type ReviewTarget,
   type TargetRefusal,
 } from "./targets.js";
@@ -103,19 +106,24 @@ const INSERT_CHUNK = 1_000;
  *    nothing else done), so a retry racing its original cannot act twice.
  *    With no targets nothing is locked or written, but a known `actionId`
  *    still replays (a retried "all pending" selection comes back empty).
- * 3. Loads the facts and applies legality (spec §5.4). Explicit targets are
- *    all-or-nothing: any refusal throws before the first write —
- *    `CONFLICT already_decided` (with `details.winner`) when a target is
- *    already decided, else `PRECONDITION_FAILED <first reason>`. A run outside
- *    the project is `NOT_FOUND`.
- * 4. Locks the variations (approve), ascending id; then, in capture order,
- *    promotes each checkpoint (snapshotting what it replaces) or records a
- *    reject, inserts the decision rows and recomputes each run's status in
- *    ascending run id order. This write phase runs in its own savepoint (R16),
- *    so any failure after the first write leaves nothing behind even if the
- *    caller's transaction goes on to commit. A concurrent decision on the same
- *    checkpoint (unique violation) becomes `CONFLICT already_decided`.
+ * 3. Loads the facts (one statement) and applies legality (spec §5.4).
+ *    Explicit targets are all-or-nothing: any refusal throws before the first
+ *    write — `CONFLICT already_decided` (with `details.winner`) when a target
+ *    is already decided, else `PRECONDITION_FAILED <first reason>`. A run
+ *    outside the project is `NOT_FOUND`.
+ * 4. Locks the variations (approve), ascending id, reading what the
+ *    promotions start from; then, in capture order, promotes each checkpoint
+ *    (snapshotting what it replaces) or records a reject, inserts the decision
+ *    rows and recomputes each run's status in ascending run id order, under
+ *    the run locks taken in step 1 (`lockHeld`). This write phase runs in its
+ *    own savepoint (R16), so any failure after the first write leaves nothing
+ *    behind even if the caller's transaction goes on to commit. A concurrent
+ *    decision on the same checkpoint (unique violation) becomes `CONFLICT
+ *    already_decided`.
  * 5. Writes one audit row per run, counts the decisions and logs the action.
+ *
+ * Every fact is read once: the runs (with their lock), the replay check and
+ * the targets' facts, then each variation (with its lock).
  *
  * Broadcasting is the caller's job, after commit; `runs` names what changed.
  */
@@ -124,6 +132,24 @@ export async function decideCheckpoints(
   input: DecideInput,
   deps: DecideDeps,
 ): Promise<DecideResult> {
+  return (await decideCheckpointsWithBuilds(tx, input, deps)).result;
+}
+
+/**
+ * {@link decideCheckpoints}, plus the build of each run it decided in, as it
+ * read them when it locked the runs: a caller that announces the result
+ * (`announceRuns`) needs no read of its own. Empty for a replay, or when
+ * nothing was decided.
+ */
+export async function decideCheckpointsWithBuilds(
+  tx: Tx,
+  input: DecideInput,
+  deps: DecideDeps,
+): Promise<{
+  result: DecideResult;
+  buildIdByRun: ReadonlyMap<string, string>;
+}> {
+  const noBuilds: ReadonlyMap<string, string> = new Map();
   const { actor, projectId, actionId, source, decision } = input;
   const targets = dedupeTargets(input.targets);
   if (
@@ -139,14 +165,13 @@ export async function decideCheckpoints(
     // Still a replay when the action was applied: a retried implicit
     // selection ("all pending", the build drain, saveNewTests) finds nothing
     // left once its original committed. Nothing is written, so no locks.
-    return (
-      (await replayAction(tx, projectId, actionId)) ?? {
-        actionId,
-        decided: [],
-        runs: [],
-        replayed: false,
-      }
-    );
+    const result = (await replayAction(tx, projectId, actionId)) ?? {
+      actionId,
+      decided: [],
+      runs: [],
+      replayed: false,
+    };
+    return { result, buildIdByRun: noBuilds };
   }
 
   // 1. Locks first (R8); 2. then idempotency, so it sees a committed original.
@@ -154,7 +179,7 @@ export async function decideCheckpoints(
   const runIds = [...new Set(targets.map((t) => t.runId))].sort();
   const runs = await lockRuns(tx, projectId, runIds);
   const replay = await replayAction(tx, projectId, actionId);
-  if (replay) return replay;
+  if (replay) return { result: replay, buildIdByRun: noBuilds };
   if (runs.size !== runIds.length) {
     throw reviewError("NOT_FOUND", "run_not_found");
   }
@@ -168,12 +193,16 @@ export async function decideCheckpoints(
   );
   if (reasons.length > 0) await refuse(tx, reasons);
 
-  if (decision === "approved") {
-    await lockVariations(
-      tx,
-      [...new Set(ordered.map((s) => s.testVariationId))].sort(),
-    );
-  }
+  // The variations an approve promotes onto, locked, as each promotion
+  // starts from them; a promotion's write carries forward to the next one of
+  // the same variation.
+  const variations: Map<string, LockedVariation> =
+    decision === "approved"
+      ? await lockVariationsForPromotion(
+          tx,
+          [...new Set(ordered.map((s) => s.testVariationId))].sort(),
+        )
+      : new Map();
 
   // 4. The write phase, atomic on its own (R16).
   let statuses: DecideResult["runs"];
@@ -181,18 +210,24 @@ export async function decideCheckpoints(
     statuses = await tx.transaction(async (sp) => {
       const rows: NewCheckpointDecisionRow[] = [];
       for (const shot of ordered) {
-        const before: DecisionSnapshot =
-          decision === "approved"
-            ? decisionSnapshotSchema.parse(
-                await promoteCheckpointInTx(
-                  sp,
-                  shot,
-                  runs.get(shot.runId)!,
-                  actor.id,
-                  input.ignoreAreas,
-                ),
-              )
-            : { baseline: null, variation: null };
+        let before: DecisionSnapshot = { baseline: null, variation: null };
+        if (decision === "approved") {
+          const promoted = await promoteCheckpointInTx(
+            sp,
+            shot,
+            variations.get(shot.testVariationId),
+            runs.get(shot.runId)!,
+            actor.id,
+            input.ignoreAreas,
+          );
+          if (promoted.variationAfter) {
+            variations.set(shot.testVariationId, {
+              id: shot.testVariationId,
+              ...promoted.variationAfter,
+            });
+          }
+          before = decisionSnapshotSchema.parse(promoted);
+        }
         rows.push({
           projectId,
           // Always the screenshot's run: loadRollupInputs keys decisions by it.
@@ -210,9 +245,12 @@ export async function decideCheckpoints(
           .insert(checkpointDecisions)
           .values(rows.slice(i, i + INSERT_CHUNK));
       }
+      // Step 1 locked every run in `runIds`, in this transaction.
       const out: DecideResult["runs"] = [];
       for (const runId of runIds) {
-        const { after } = await recomputeRunStatus(sp, runId);
+        const { after } = await recomputeRunStatus(sp, runId, {
+          lockHeld: true,
+        });
         out.push({ runId, status: after });
       }
       return out;
@@ -265,14 +303,17 @@ export async function decideCheckpoints(
   );
 
   return {
-    actionId,
-    decided: ordered.map((s) => ({
-      checkpointId: s.id,
-      runId: s.runId,
-      state: decision,
-    })),
-    runs: statuses,
-    replayed: false,
+    result: {
+      actionId,
+      decided: ordered.map((s) => ({
+        checkpointId: s.id,
+        runId: s.runId,
+        state: decision,
+      })),
+      runs: statuses,
+      replayed: false,
+    },
+    buildIdByRun: new Map([...runs.values()].map((r) => [r.id, r.buildId])),
   };
 }
 

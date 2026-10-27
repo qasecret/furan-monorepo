@@ -700,9 +700,13 @@ d("projectMember gate", () => {
         const admin = inScope(await wireOf(() => call(callers.adminOfNone)));
         extra[name] = member - admin;
       }
-      expect(extra).toEqual(
-        Object.fromEntries(Object.keys(calls).map((name) => [name, 2])),
-      );
+      expect(extra).toEqual({
+        ...Object.fromEntries(Object.keys(calls).map((name) => [name, 2])),
+        // Its handler acts in the project the gate resolved
+        // (`ctx.gatedProjectId`); an admin, who skips the gate, reads the
+        // build's project instead. So a member pays 2 - 1.
+        "review.previewApproveBuild": 1,
+      });
     });
 
     test("the shared capturing proxy counts the gate's statements as the request's", async () => {

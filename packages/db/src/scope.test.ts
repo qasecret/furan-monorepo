@@ -10,6 +10,7 @@ import {
   gateProjectMember,
   withProjectScope,
   withUserScope,
+  type GateResult,
 } from "./scope.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -220,7 +221,7 @@ describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
     const seen = await inRolledBackTx(async (tx) => {
       const s = await seeded(tx);
       const missing = crypto.randomUUID();
-      const out: Array<[string, string | null]> = [];
+      const out: Array<[GateResult, string | null]> = [];
       for (const id of [s.member, s.other, missing]) {
         out.push([
           await gateProjectMember(tx, s.userId, { query: projectById(id) }),
@@ -237,16 +238,18 @@ describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
         await gateProjectMember(tx, s.userId, { resolve: async () => "" }),
         await currentUserRole(tx),
       ]);
-      return out;
+      return { out, member: s.member };
     });
-    expect(seen).toEqual([
-      ["ok", "editor"],
-      ["ok", "editor"],
-      ["forbidden", "editor"],
-      ["forbidden", "editor"],
-      ["not_found", "editor"],
-      ["not_found", "editor"],
-      ["not_found", "editor"],
+    // On `ok`, the project it resolved: the one it checked membership in.
+    const ok = { outcome: "ok", projectId: seen.member };
+    expect(seen.out).toEqual([
+      [ok, "editor"],
+      [ok, "editor"],
+      [{ outcome: "forbidden" }, "editor"],
+      [{ outcome: "forbidden" }, "editor"],
+      [{ outcome: "not_found" }, "editor"],
+      [{ outcome: "not_found" }, "editor"],
+      [{ outcome: "not_found" }, "editor"],
     ]);
   });
 
@@ -265,7 +268,11 @@ describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
           return s.member;
         },
       });
-      return { viaQuery, viaResolve, roleInResolver };
+      return {
+        viaQuery: viaQuery.outcome,
+        viaResolve: viaResolve.outcome,
+        roleInResolver,
+      };
     });
     expect(seen).toEqual({
       viaQuery: "ok",
@@ -314,7 +321,7 @@ describe.runIf(RUN_INTEGRATION)("gateProjectMember (integration)", () => {
           await tx.delete(users).where(sql`${users.id} = ${s.userId}`);
         }
       });
-      expect(outcome).toBe("ok");
+      expect(outcome.outcome).toBe("ok");
       expect(statements).toHaveLength(2);
       for (const q of statements) {
         expect(q.match(/set_config\([^)]*\)/g)).toEqual([

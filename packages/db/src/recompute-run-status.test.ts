@@ -785,6 +785,415 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
     });
   });
 
+  describe("with the run's lock already held (lockHeld)", () => {
+    /** Rolls back a transaction once `fn` has run in it. */
+    class Rollback extends Error {}
+
+    /**
+     * `recomputeRunStatus` on `runId`, plain or with `lockHeld` after locking
+     * the run (as the decision core does), in a transaction that is then
+     * rolled back: its result, and what it left in the run's row.
+     */
+    async function recomputeOnce(runId: string, held: boolean) {
+      let out: unknown;
+      await db
+        .transaction(async (tx) => {
+          const rowOf = async () => {
+            const [row] = await tx
+              .select({
+                status: testRuns.status,
+                merge: testRuns.merge,
+                pendingSteps: testRuns.pendingSteps,
+                failedSteps: testRuns.failedSteps,
+                updatedAt: testRuns.updatedAt,
+                xmin: sql<string>`xmin::text`,
+              })
+              .from(testRuns)
+              .where(eq(testRuns.id, runId));
+            return row!;
+          };
+          const before = await rowOf();
+          if (held) {
+            await tx
+              .select({ id: testRuns.id })
+              .from(testRuns)
+              .where(eq(testRuns.id, runId))
+              .for("no key update");
+          }
+          const result = await recomputeRunStatus(
+            tx,
+            runId,
+            held ? { lockHeld: true } : {},
+          );
+          const after = await rowOf();
+          out = {
+            result,
+            row: {
+              status: after.status,
+              merge: after.merge,
+              pendingSteps: after.pendingSteps,
+              failedSteps: after.failedSteps,
+              updatedAtMoved:
+                after.updatedAt.getTime() !== before.updatedAt.getTime(),
+              rewritten: after.xmin !== before.xmin,
+            },
+          };
+          throw new Rollback();
+        })
+        .catch((err: unknown) => {
+          if (!(err instanceof Rollback)) throw err;
+        });
+      return out;
+    }
+
+    const open = { verdict: "unresolved" as const };
+    const scenarios: Array<[string, () => Promise<string>]> = [
+      [
+        "aborted, a rejected step",
+        async () =>
+          (
+            await seedRun({
+              status: "aborted",
+              checkpoints: [{ verdict: "unresolved", decision: "rejected" }],
+            })
+          ).runId,
+      ],
+      [
+        "empty",
+        async () =>
+          (
+            await seedRun({
+              status: "empty",
+              checkpoints: [{ verdict: "new" }],
+            })
+          ).runId,
+      ],
+      [
+        "aborted under a passed override",
+        async () =>
+          (
+            await seedRun({
+              status: "aborted",
+              override: "passed",
+              checkpoints: [open],
+            })
+          ).runId,
+      ],
+      [
+        "a failed override over passing steps",
+        async () =>
+          (
+            await seedRun({
+              status: "passed",
+              override: "failed",
+              checkpoints: [{ verdict: "passed" }],
+            })
+          ).runId,
+      ],
+      [
+        "a passed override over unresolved and undiffed steps",
+        async () =>
+          (
+            await seedRun({
+              status: "unresolved",
+              override: "passed",
+              checkpoints: [open, { verdict: null }],
+            })
+          ).runId,
+      ],
+      [
+        "no steps",
+        async () =>
+          (await seedRun({ status: "running", checkpoints: [] })).runId,
+      ],
+      [
+        "an undiffed step",
+        async () =>
+          (
+            await seedRun({
+              status: "passed",
+              checkpoints: [{ verdict: "passed" }, { verdict: null }, open],
+            })
+          ).runId,
+      ],
+      [
+        "all passed",
+        async () =>
+          (
+            await seedRun({
+              status: "running",
+              checkpoints: [{ verdict: "passed" }, { verdict: "passed" }],
+            })
+          ).runId,
+      ],
+      [
+        "unresolved outranks new and passed",
+        async () =>
+          (
+            await seedRun({
+              checkpoints: [{ verdict: "passed" }, { verdict: "new" }, open],
+            })
+          ).runId,
+      ],
+      [
+        "a rejected step outranks an unresolved one",
+        async () =>
+          (
+            await seedRun({
+              checkpoints: [
+                open,
+                { verdict: "unresolved", decision: "rejected" },
+              ],
+            })
+          ).runId,
+      ],
+      [
+        "the only unresolved step approved",
+        async () =>
+          (
+            await seedRun({
+              status: "unresolved",
+              checkpoints: [
+                { verdict: "passed" },
+                { verdict: "unresolved", decision: "approved" },
+              ],
+            })
+          ).runId,
+      ],
+      [
+        "a partial approval: nothing to write",
+        async () =>
+          (
+            await seedRun({
+              status: "unresolved",
+              checkpoints: [
+                { verdict: "unresolved", decision: "approved" },
+                open,
+              ],
+            })
+          ).runId,
+      ],
+      [
+        "counters with a failed diff and an approved step",
+        async () =>
+          (
+            await seedRun({
+              status: "running",
+              checkpoints: [
+                open,
+                { verdict: "new" },
+                { verdict: "unresolved", diffFailed: true },
+                { verdict: "passed" },
+                { verdict: "unresolved", decision: "approved" },
+              ],
+            })
+          ).runId,
+      ],
+      [
+        "many steps of each kind (grouped and counted)",
+        async () =>
+          (
+            await seedRun({
+              status: "unresolved",
+              checkpoints: [
+                ...Array.from({ length: 7 }, () => open),
+                ...Array.from({ length: 3 }, () => ({
+                  verdict: "new" as const,
+                })),
+                ...Array.from({ length: 4 }, () => ({
+                  verdict: "unresolved" as const,
+                  diffFailed: true,
+                })),
+                ...Array.from({ length: 2 }, () => ({
+                  verdict: "passed" as const,
+                })),
+                ...Array.from({ length: 2 }, () => ({
+                  verdict: "new" as const,
+                  decision: "approved" as const,
+                })),
+              ],
+            })
+          ).runId,
+      ],
+      [
+        "stale counters",
+        async () => {
+          const { runId } = await seedRun({
+            status: "new",
+            checkpoints: [{ verdict: "new" }, { verdict: "new" }],
+          });
+          await db
+            .update(testRuns)
+            .set({ pendingSteps: 5, failedSteps: 3 })
+            .where(eq(testRuns.id, runId));
+          return runId;
+        },
+      ],
+      [
+        "a baseline row: merge",
+        async () => {
+          const { runId } = await seedRun({
+            status: "passed",
+            checkpoints: [{ verdict: "passed" }],
+          });
+          await db.insert(baselines).values({
+            testVariationId: variationId,
+            testRunId: runId,
+            baselineName: randomUUID(),
+          });
+          return runId;
+        },
+      ],
+      [
+        "merge stored with no baseline row",
+        async () => {
+          const { runId } = await seedRun({
+            status: "passed",
+            checkpoints: [{ verdict: "passed" }],
+          });
+          await db
+            .update(testRuns)
+            .set({ merge: true })
+            .where(eq(testRuns.id, runId));
+          return runId;
+        },
+      ],
+      [
+        "a reverted decision beside the active one",
+        async () => {
+          const { runId, shots } = await seedRun({
+            status: "failed",
+            checkpoints: [open, open],
+          });
+          await addDecision(runId, shots[0]!, "rejected", db, {
+            revertedAt: new Date(),
+          });
+          await addDecision(runId, shots[0]!, "approved");
+          await addDecision(runId, shots[1]!, "approved", db, {
+            revertedAt: new Date(),
+          });
+          return runId;
+        },
+      ],
+      [
+        "a decision filed under another run",
+        async () => {
+          const mine = await seedRun({
+            status: "unresolved",
+            checkpoints: [open],
+          });
+          const other = await seedRun({
+            status: "unresolved",
+            checkpoints: [open],
+          });
+          await addDecision(other.runId, mine.shots[0]!, "rejected");
+          return mine.runId;
+        },
+      ],
+    ];
+
+    it.each(scenarios)(
+      "writes what the plain recompute writes: %s",
+      async (_name, setup) => {
+        const runId = await setup();
+        const plain = await recomputeOnce(runId, false);
+        const held = await recomputeOnce(runId, true);
+        expect(held).toEqual(plain);
+      },
+    );
+
+    it("the scenarios cover a status write, a counter-only write, a merge write and no write", async () => {
+      // Guards the comparison above: it compares every kind of outcome.
+      const outcomes = [];
+      for (const [, setup] of scenarios) {
+        const runId = await setup();
+        outcomes.push(
+          (await recomputeOnce(runId, true)) as {
+            result: { changed: boolean; before: string; after: string };
+            row: { updatedAtMoved: boolean; rewritten: boolean };
+          },
+        );
+      }
+      const kinds = new Set(
+        outcomes.map(({ result, row }) =>
+          !result.changed
+            ? "none"
+            : result.before !== result.after
+              ? "status"
+              : row.updatedAtMoved
+                ? "merge"
+                : "counters",
+        ),
+      );
+      expect([...kinds].sort()).toEqual([
+        "counters",
+        "merge",
+        "none",
+        "status",
+      ]);
+      for (const { result, row } of outcomes) {
+        expect(row.rewritten).toBe(result.changed);
+      }
+    });
+
+    it("takes no lock and no savepoint: one read, then the UPDATE when something moved", async () => {
+      const moving = await seedRun({
+        status: "running",
+        checkpoints: [open, { verdict: "new" }],
+      });
+      const settled = await seedRun({
+        status: "passed",
+        checkpoints: [{ verdict: "passed" }],
+      });
+      const statements: string[] = [];
+      const client = postgres(process.env.DATABASE_URL!, {
+        max: 1,
+        debug: (_conn, query) => void statements.push(query),
+      });
+      const counting = drizzle(client, { schema });
+      try {
+        await counting.transaction(async (tx) => {
+          for (const runId of [moving.runId, settled.runId].sort()) {
+            await tx
+              .select({ id: testRuns.id })
+              .from(testRuns)
+              .where(eq(testRuns.id, runId))
+              .for("no key update");
+          }
+          statements.length = 0;
+          expect(
+            await recomputeRunStatus(tx, moving.runId, { lockHeld: true }),
+          ).toEqual({ before: "running", after: "unresolved", changed: true });
+          expect(statements).toHaveLength(2);
+          expect(statements[1]).toMatch(/^update "test_runs"/i);
+          statements.length = 0;
+          expect(
+            await recomputeRunStatus(tx, settled.runId, { lockHeld: true }),
+          ).toEqual({ before: "passed", after: "passed", changed: false });
+          expect(statements).toHaveLength(1);
+        });
+      } finally {
+        await client.end();
+      }
+      for (const q of statements) {
+        expect(q).not.toMatch(/for (no key )?update|savepoint/i);
+      }
+      expect(await storedRun(moving.runId)).toMatchObject({
+        status: "unresolved",
+        pendingSteps: 2,
+      });
+    });
+
+    it("throws run_not_found:<id> for an unknown run", async () => {
+      const missing = randomUUID();
+      await expect(
+        db.transaction((tx) =>
+          recomputeRunStatus(tx, missing, { lockHeld: true }),
+        ),
+      ).rejects.toThrow(`run_not_found:${missing}`);
+    });
+  });
+
   describe("loadRollupInputs", () => {
     it("returns the lifecycle, override, verdicts and active decisions per run", async () => {
       const a = await seedRun({

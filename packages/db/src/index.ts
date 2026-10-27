@@ -14,9 +14,10 @@ export type { BaselineSource, GitRefs } from "./baseline.js";
 
 // Run-status rollup: `recomputeRunStatus` is the ONLY writer of
 // `test_runs.status` after a diff (review flow, spec §4.3). It locks the run
-// row and holds the lock until the surrounding transaction commits.
+// row and holds the lock until the surrounding transaction commits (or, with
+// `lockHeld`, relies on the lock its caller already holds).
 export { loadRollupInputs, recomputeRunStatus } from "./review-status.js";
-export type { Tx } from "./review-status.js";
+export type { RecomputeOptions, RecomputeResult, Tx } from "./review-status.js";
 
 // Per-step diff pipeline (spec 2026-10-23): queue a step for a diff by bumping
 // its version, fail ONE step without aborting its run, heal an abort the old

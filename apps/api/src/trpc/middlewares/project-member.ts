@@ -31,10 +31,25 @@ export interface ProjectMemberOpts<TInput> {
       };
 }
 
+/** What the gate adds to the context (see {@link projectMember}). */
+export interface GatedContext {
+  gatedProjectId: string | null;
+}
+
+const gated = (gatedProjectId: string | null): GatedContext => ({
+  gatedProjectId,
+});
+
 /**
  * tRPC analogue of `requireProjectMember` (hooks/require-project-member.ts).
  * Admin bypass; otherwise looks up `(userId, projectId)` in `project_members`.
  * Guests are rejected (parity with the REST hook).
+ *
+ * Downstream, `ctx.gatedProjectId` is the project the gate resolved from
+ * `from` and checked the caller's membership in, so a handler acting on that
+ * same resource need not read it again to learn its project. It is null for
+ * an admin, who skips the gate: the handler resolves the project itself (with
+ * the same lookup, e.g. `requireRunProject`).
  */
 export function projectMember<TInput>(
   _action: Action,
@@ -44,7 +59,9 @@ export function projectMember<TInput>(
     if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
     // Role-only on purpose (not `hasAdminSurface`): the membership bypass also
     // applies to an admin's API token (ADR-064 step A; see the REST hook).
-    if (isAtLeastAdmin(ctx.user.role)) return next();
+    if (isAtLeastAdmin(ctx.user.role)) {
+      return next({ ctx: gated(null) });
+    }
     if (ctx.user.role === "guest") {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
@@ -59,7 +76,7 @@ export function projectMember<TInput>(
     // business queries are not.
     const from = opts.from;
     const args = { input: input as TInput, ctx };
-    const outcome = await gateProjectMember(
+    const gate = await gateProjectMember(
       ctx.db,
       ctx.user.id,
       "query" in from
@@ -67,9 +84,13 @@ export function projectMember<TInput>(
         : { resolve: () => from.resolver(args) },
     );
 
-    if (outcome === "not_found") throw new TRPCError({ code: "NOT_FOUND" });
-    if (outcome === "forbidden") throw new TRPCError({ code: "FORBIDDEN" });
+    if (gate.outcome === "not_found") {
+      throw new TRPCError({ code: "NOT_FOUND" });
+    }
+    if (gate.outcome === "forbidden") {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
 
-    return next();
+    return next({ ctx: gated(gate.projectId) });
   });
 }

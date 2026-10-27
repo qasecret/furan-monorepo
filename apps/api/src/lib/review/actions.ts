@@ -1,8 +1,6 @@
 import {
-  asc,
   builds,
   checkpointDecisions,
-  eq,
   inArray,
   sql,
   testRuns,
@@ -21,7 +19,7 @@ import type { Broadcaster } from "../broadcast.js";
 import { emitAudit } from "../emit-audit.js";
 
 import {
-  decideCheckpoints,
+  decideCheckpointsWithBuilds,
   type DecideDeps,
   type DecideInput,
   type DecideLogger,
@@ -77,57 +75,13 @@ export function trpcActionCtx(ctx: {
 // Project resolution.
 // ---------------------------------------------------------------------------
 
-/** The project a run belongs to, or null when there is no such run. */
-export async function resolveRunProject(
-  db: DB | Tx,
-  runId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ projectId: testRuns.projectId })
-    .from(testRuns)
-    .where(eq(testRuns.id, runId))
-    .limit(1);
-  return rows[0]?.projectId ?? null;
-}
-
-/** The project a build belongs to, or null when there is no such build. */
-export async function resolveBuildProject(
-  db: DB | Tx,
-  buildId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ projectId: builds.projectId })
-    .from(builds)
-    .where(eq(builds.id, buildId))
-    .limit(1);
-  return rows[0]?.projectId ?? null;
-}
-
 /**
- * The project a review action belongs to, or null when there is no such
- * action. An action id is unique per project, not globally (the client
- * generates it), so one that appears in two projects resolves, deterministically,
- * to the project of its oldest decision (`created_at, id`): `review.revert`
- * then acts there and only there.
- */
-export async function resolveActionProject(
-  db: DB | Tx,
-  actionId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ projectId: checkpointDecisions.projectId })
-    .from(checkpointDecisions)
-    .where(eq(checkpointDecisions.actionId, actionId))
-    .orderBy(asc(checkpointDecisions.createdAt), asc(checkpointDecisions.id))
-    .limit(1);
-  return rows[0]?.projectId ?? null;
-}
-
-/**
- * The membership gate's lookups (`projectMember`'s `query`, spec 2026-10-27
- * §7): the selects of `resolveRunProject`, `resolveBuildProject` and
- * `resolveActionProject`, which the gate runs inside its own statement
- * instead of as a statement of their own.
+ * The lookups of the project a run, a build or a review action belongs to:
+ * one column (`project_id`), at most one row, none when there is no such
+ * resource. The membership gate runs them inside its own statement
+ * (`projectMember`'s `query`, spec 2026-10-27 §7), and `resolve*Project` run
+ * the same ones on their own, so the gate and a handler can never disagree on
+ * what exists.
  */
 export function runProjectQuery(runId: string): SQL {
   return sql`SELECT ${testRuns.projectId} FROM ${testRuns}
@@ -141,8 +95,10 @@ export function buildProjectQuery(buildId: string): SQL {
 }
 
 /**
- * {@link runProjectQuery} for a review action: the project of its oldest
- * decision, as `resolveActionProject` picks it.
+ * {@link runProjectQuery} for a review action. An action id is unique per
+ * project, not globally (the client generates it), so one that appears in two
+ * projects resolves, deterministically, to the project of its oldest decision
+ * (`created_at, id`): `review.revert` then acts there and only there.
  */
 export function actionProjectQuery(actionId: string): SQL {
   return sql`SELECT ${checkpointDecisions.projectId} FROM ${checkpointDecisions}
@@ -151,35 +107,78 @@ export function actionProjectQuery(actionId: string): SQL {
     LIMIT 1`;
 }
 
+/** The project a `*ProjectQuery` lookup finds, or null. One statement. */
+async function resolveProject(
+  db: DB | Tx,
+  lookup: SQL,
+): Promise<string | null> {
+  const rows = await db.execute<{ project_id: string }>(lookup);
+  return rows[0]?.project_id ?? null;
+}
+
+/** The project a run belongs to, or null when there is no such run. */
+export function resolveRunProject(
+  db: DB | Tx,
+  runId: string,
+): Promise<string | null> {
+  return resolveProject(db, runProjectQuery(runId));
+}
+
+/** The project a build belongs to, or null when there is no such build. */
+export function resolveBuildProject(
+  db: DB | Tx,
+  buildId: string,
+): Promise<string | null> {
+  return resolveProject(db, buildProjectQuery(buildId));
+}
+
 /**
- * `resolveRunProject`, NOT_FOUND when there is no such run. An admin skips the
- * membership gate's resolver, so every handler resolves the project again.
+ * The project a review action belongs to (its oldest decision's, see
+ * {@link actionProjectQuery}), or null when there is no such action.
+ */
+export function resolveActionProject(
+  db: DB | Tx,
+  actionId: string,
+): Promise<string | null> {
+  return resolveProject(db, actionProjectQuery(actionId));
+}
+
+/**
+ * The run's project, NOT_FOUND when there is no such run.
+ *
+ * `gated` is what the membership gate resolved for this same run
+ * (`ctx.gatedProjectId`, from `runProjectQuery(runId)`): when it is set,
+ * nothing is read. An admin skips the gate (`gated` null), so the run is read
+ * here, with the same lookup.
  */
 export async function requireRunProject(
   db: DB | Tx,
   runId: string,
+  gated: string | null = null,
 ): Promise<string> {
-  const projectId = await resolveRunProject(db, runId);
+  const projectId = gated ?? (await resolveRunProject(db, runId));
   if (!projectId) throw reviewError("NOT_FOUND", "run_not_found");
   return projectId;
 }
 
-/** `resolveActionProject`, NOT_FOUND when there is no such action. */
+/** {@link requireRunProject} for a review action; NOT_FOUND `action_not_found`. */
 export async function requireActionProject(
   db: DB | Tx,
   actionId: string,
+  gated: string | null = null,
 ): Promise<string> {
-  const projectId = await resolveActionProject(db, actionId);
+  const projectId = gated ?? (await resolveActionProject(db, actionId));
   if (!projectId) throw reviewError("NOT_FOUND", "action_not_found");
   return projectId;
 }
 
-/** `resolveBuildProject`, NOT_FOUND when there is no such build. */
+/** {@link requireRunProject} for a build; NOT_FOUND `build_not_found`. */
 export async function requireBuildProject(
   db: DB | Tx,
   buildId: string,
+  gated: string | null = null,
 ): Promise<string> {
-  const projectId = await resolveBuildProject(db, buildId);
+  const projectId = gated ?? (await resolveBuildProject(db, buildId));
   if (!projectId) throw reviewError("NOT_FOUND", "build_not_found");
   return projectId;
 }
@@ -194,17 +193,24 @@ export async function requireBuildProject(
  * and `build_updated` once per affected build. Nothing for no runs. A replay
  * announces again: the events are idempotent "refetch" hints, and the
  * original's broadcast may have been lost.
+ *
+ * `knownBuilds` maps runs to their builds when the caller already read them
+ * (the decision core locked the runs it decided): the builds are read only
+ * when some run is missing from it.
  */
 export async function announceRuns(
   ctx: ReviewActionCtx,
   projectId: string,
   runIds: string[],
+  knownBuilds: ReadonlyMap<string, string> = new Map(),
 ): Promise<void> {
   if (runIds.length === 0) return;
-  const rows = await ctx.tx
-    .select({ buildId: testRuns.buildId })
-    .from(testRuns)
-    .where(inArray(testRuns.id, runIds));
+  const rows = runIds.every((id) => knownBuilds.has(id))
+    ? runIds.map((id) => ({ buildId: knownBuilds.get(id)! }))
+    : await ctx.tx
+        .select({ buildId: testRuns.buildId })
+        .from(testRuns)
+        .where(inArray(testRuns.id, runIds));
   const buildIds = [...new Set(rows.map((r) => r.buildId))].sort();
   ctx.onCommit(async () => {
     for (const id of runIds) {
@@ -257,7 +263,7 @@ export async function decideSelection(
   input: Omit<DecideInput, "actor" | "targets">,
   selection: Selection,
 ): Promise<ReviewResult> {
-  const result = await decideCheckpoints(
+  const { result, buildIdByRun } = await decideCheckpointsWithBuilds(
     ctx.tx,
     { ...input, actor: ctx.actor, targets: selection.targets },
     ctx.deps,
@@ -266,6 +272,7 @@ export async function decideSelection(
     ctx,
     input.projectId,
     result.runs.map((r) => r.runId),
+    buildIdByRun,
   );
   const capped = result.replayed
     ? selection.scope !== undefined && (await anyPending(ctx, selection.scope))
@@ -324,14 +331,17 @@ export async function auditBuildAction(
  * pending rule, in the project resolved here (R18). A seed without a signature
  * (VLM / auto-approved / no meaningful diff) has no group; the empty selection
  * still lets the core replay a known actionId. NOT_FOUND for an unknown run or
- * checkpoint, BAD_REQUEST for a checkpoint of another run.
+ * checkpoint, BAD_REQUEST for a checkpoint of another run. `gated` is
+ * `ctx.gatedProjectId` behind a gate on `runProjectQuery(input.runId)` (see
+ * `requireRunProject`).
  */
 export async function decideGroup(
   ctx: ReviewActionCtx,
   input: { runId: string; checkpointId: string; actionId: string },
   decision: CheckpointDecisionKind,
+  gated: string | null = null,
 ): Promise<ReviewResult> {
-  const projectId = await requireRunProject(ctx.tx, input.runId);
+  const projectId = await requireRunProject(ctx.tx, input.runId, gated);
   const seed = await loadGroupSeed(ctx.tx, input, projectId);
 
   const scope = groupScope(seed, projectId) ?? undefined;

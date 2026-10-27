@@ -39,6 +39,7 @@ import {
   announceRuns,
   buildProjectQuery,
   requireBuildProject,
+  resolveRunProject,
   runProjectQuery,
   trpcActionCtx,
 } from "../../lib/review/actions.js";
@@ -65,7 +66,10 @@ import { lockRuns, selectGroupTargets } from "../../lib/review/targets.js";
 import { runByDisplayName } from "../../lib/run-by-name.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
-import { projectMember } from "../middlewares/project-member.js";
+import {
+  projectMember,
+  type GatedContext,
+} from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
 
 const runIdInput = z.object({ runId: z.string().uuid() });
@@ -231,27 +235,18 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "failed",
 ]);
 
-async function resolveRunProjectId(
-  input: RunIdInput,
-  ctx: Context,
-): Promise<string | null> {
-  const rows = await ctx.db
-    .select({ projectId: testRuns.projectId })
-    .from(testRuns)
-    .where(eq(testRuns.id, input.runId))
-    .limit(1);
-  return rows[0]?.projectId ?? null;
-}
-
 /**
- * The run's project, as the membership gate resolved it; NOT_FOUND when there
- * is no such run (an admin skips the gate's resolver).
+ * The run's project, behind a gate on `runProjectQuery(input.runId)`: the one
+ * the gate resolved (`ctx.gatedProjectId`), with nothing read; for an admin,
+ * who skips the gate, the same lookup run here. NOT_FOUND when there is no
+ * such run.
  */
 async function requireRunProjectId(
   input: RunIdInput,
-  ctx: Context,
+  ctx: Context & GatedContext,
 ): Promise<string> {
-  const projectId = await resolveRunProjectId(input, ctx);
+  const projectId =
+    ctx.gatedProjectId ?? (await resolveRunProject(ctx.db, input.runId));
   if (!projectId) throw new TRPCError({ code: "NOT_FOUND" });
   return projectId;
 }
@@ -654,8 +649,13 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ input, ctx }) => {
-      // An admin skips the gate's resolver: resolve the project again here.
-      const projectId = await requireBuildProject(ctx.db, input.buildId);
+      // The gate's project; an admin skips the gate, so the build's lookup
+      // runs here instead.
+      const projectId = await requireBuildProject(
+        ctx.db,
+        input.buildId,
+        ctx.gatedProjectId,
+      );
       return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
 
