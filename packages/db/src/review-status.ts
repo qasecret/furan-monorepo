@@ -29,6 +29,11 @@ export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
  *
  * This only reads. Callers that go on to write the result must hold the run's
  * row lock first (`recomputeRunStatus` does).
+ *
+ * {@link loadHeldRollupState} reads the same facts for one run in one
+ * statement, for a recompute whose caller already holds the run lock. Keep
+ * the two in step: a new input to the rollup or the counters is read by both
+ * (`RunCountersInput`, which both return, makes a missing one a type error).
  */
 export async function loadRollupInputs(
   db: DB | Tx,
@@ -283,9 +288,10 @@ interface HeldRollupRow extends Record<string, unknown> {
  * override, the run's steps (each with its verdict, its active decision and
  * whether its diff failed) and whether a `baselines` row exists for the run.
  *
- * The same facts as the lock, `loadRollupInputs` and the baseline probe: a
- * step's active decision is the one with `reverted_at IS NULL` filed under the
- * step's own run (at most one, by the partial unique index), as
+ * The same facts as the lock, {@link loadRollupInputs} and the baseline
+ * probe, and kept in step with `loadRollupInputs` (a new input is read by
+ * both): a step's active decision is the one with `reverted_at IS NULL` filed
+ * under the step's own run (at most one, by the partial unique index), as
  * `loadRollupInputs` keys them. Steps come grouped by (verdict, decision,
  * diff failed) with a count and are expanded back to one entry per step: the
  * rollup and the counters depend only on that multiset, and a large run sends
