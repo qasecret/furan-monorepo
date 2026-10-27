@@ -349,12 +349,15 @@ async function remainingIn(
  * `nextBatch` is filled in even when the target is still in the batch.
  *
  * The batches come from the runs' stored counters, the steps from
- * `pendingStepCondition`. So a counter left above 0 on a run with nothing
- * pending shows up as an offered batch (`nextBatch`, its `pending`,
- * `projectBatches`) in which no step is found: the hand-off to it has
- * `target: null`. A counter left at 0 hides the run's steps. Neither is
- * repaired here: stored = computed is what the rollup verifier checks, and
- * `verify-review-rollup --repair-counters` restores (spec 2026-10-27 §3.3).
+ * `pendingStepCondition`. So, on an unfaceted call, a counter left above 0 on
+ * a run with nothing pending shows up as an offered batch (`nextBatch`, its
+ * `pending`, `projectBatches`) in which no step is found: the hand-off to it
+ * has `target: null`. With facets a batch is offered and counted only when
+ * `pendingStepCondition` finds a step of it inside them, so a stale-high
+ * counter is not offered. A counter left at 0 hides the run's steps either
+ * way. Neither is repaired here: stored = computed is what the rollup
+ * verifier checks, and `verify-review-rollup --repair-counters` restores
+ * (spec 2026-10-27 §3.3).
  */
 export async function findNext(
   db: DB | Tx,
