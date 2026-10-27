@@ -106,7 +106,8 @@ export const screenshots = pgTable(
     // row diffed before 0041 (the run's `test_runs.diff_name` is only its worst
     // checkpoint's). Every key-bearing column must be registered with the
     // storage proxy's ownership probes and the orphan reconcile
-    // (`gatherReferencedKeys`), and indexed for the probe (migration 0043).
+    // (`gatherReferencedKeys`), and indexed for the probe (migrations 0043 and
+    // 0044).
     diffImageKey: text("diff_image_key"),
     // ADR-074 (migration 0040): true exactly when the step has an active
     // decision (a `checkpoint_decisions` row with `reverted_at IS NULL`).
@@ -206,16 +207,23 @@ export const screenshots = pgTable(
       t.id.desc().nullsFirst(),
     ),
     // The storage proxy's ownership probes, one index per key column; the
-    // sparse keys are partial on their own column being set.
-    imageKeyIdx: index("screenshots_image_key_idx").on(t.imageKey),
+    // sparse keys are partial on their own column being set. Migration 0043
+    // built them on the key alone; 0044 added `project_id` after it. A key is
+    // a content hash, so every identical capture shares one and a project's
+    // rows are a small share of a popular key's entries: `(key, project_id)`
+    // lets the probe's `key = $1 AND project_id IN (...)` land on the caller's
+    // own rows instead of reading the other projects' entries one by one, and
+    // the leading key still serves a lookup by the key alone (the retention
+    // sweep's `image_key IN (...)`).
+    imageKeyIdx: index("screenshots_image_key_idx").on(t.imageKey, t.projectId),
     domKeyIdx: index("screenshots_dom_key_idx")
-      .on(t.domKey)
+      .on(t.domKey, t.projectId)
       .where(sql`${t.domKey} IS NOT NULL`),
     elementMapKeyIdx: index("screenshots_element_map_key_idx")
-      .on(t.elementMapKey)
+      .on(t.elementMapKey, t.projectId)
       .where(sql`${t.elementMapKey} IS NOT NULL`),
     diffImageKeyIdx: index("screenshots_diff_image_key_idx")
-      .on(t.diffImageKey)
+      .on(t.diffImageKey, t.projectId)
       .where(sql`${t.diffImageKey} IS NOT NULL`),
   }),
 );

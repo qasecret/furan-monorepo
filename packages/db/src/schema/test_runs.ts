@@ -137,10 +137,18 @@ export const testRuns = pgTable(
       t.createdAt,
       t.id,
     ),
-    // The storage proxy's legacy ownership probe on the run's diff image.
+    // The storage proxy's legacy ownership probes on the run's diff image and
+    // its image name, each led by the key and followed by `project_id` as the
+    // `screenshots` key indexes are (see there). `diff_name` has been indexed
+    // since 0043 (single column; 0044 added the project). `image_name` is a
+    // legacy column nothing writes any more, so its partial index (0044) is
+    // empty on a current install and costs a write nothing.
     diffNameIdx: index("test_runs_diff_name_idx")
-      .on(t.diffName)
+      .on(t.diffName, t.projectId)
       .where(sql`${t.diffName} IS NOT NULL`),
+    imageNameIdx: index("test_runs_image_name_idx")
+      .on(t.imageName, t.projectId)
+      .where(sql`${t.imageName} IS NOT NULL`),
     // The diff-worker reconciler's empty-run rule (every 30 s): running runs
     // not updated since its cutoff. Only the runs in flight are in it.
     runningIdx: index("test_runs_running_idx")
