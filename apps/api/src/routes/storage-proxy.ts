@@ -23,14 +23,17 @@ import type { AuthedUser } from "../plugins/auth.js";
 /**
  * GET /api/v1/storage/:key — project-scoped proxy for storage bytes.
  *
- * Authorization: admins/owners see everything; any other caller may only
- * fetch a key that belongs to a project they're a member of. A key is
+ * Authorization: admins/owners see everything; guests see nothing, whatever
+ * projects they're members of, as at every project gate
+ * (`requireProjectMember`, `projectMember`); any other caller may only fetch
+ * a key that belongs to a project they're a member of. A key is
  * attributed to a project via the DB rows that reference it —
  * `screenshots.{image,dom,element_map,diff_image}_key` and
  * `test_runs.{image,diff}_name` (all carry `project_id`; see
  * {@link KEY_OWNERSHIP_SOURCES}). A key the caller can't prove ownership of
  * returns 404 (not 403) so the endpoint never confirms the existence of
- * another tenant's content. (Content-addressed sha256 keys are unguessable, but that
+ * another tenant's content. A guest gets that same 404 (not the gates' 403),
+ * so every refusal here has one body. (Content-addressed sha256 keys are unguessable, but that
  * was defense-by-obscurity — this closes the actual cross-tenant read.)
  */
 export const paramsSchema = z.object({
@@ -63,8 +66,9 @@ export async function registerStorageProxyRoute(
       }
       const { key } = parsed.data;
 
-      // Project-scope: non-admins may only read keys owned by a project they
-      // belong to. 404 (not 403) to avoid confirming existence cross-tenant.
+      // Project-scope: guests read nothing; other non-admins may only read
+      // keys owned by a project they belong to. 404 (not 403) for every
+      // refusal, a guest's too, to avoid confirming existence cross-tenant.
       // This IS the authorization boundary, so — like the requireProjectMember
       // gate — it runs PRIVILEGED (RLS bypass): callerCanAccessKey decides
       // access from the caller's membership set + key ownership, and must not be
@@ -225,11 +229,15 @@ export function keyOwnershipQuery(
 /**
  * True if `auth` may read the storage `key`. Admins/owners bypass — by role
  * only, so an admin's API token keeps it like the other membership gates
- * (ADR-064 step A). Otherwise the key must be referenced by a row (see
- * {@link KEY_OWNERSHIP_SOURCES}) in one of the caller's member projects. The
- * member-project set is cached per user (short TTL) since the diff viewer
- * fetches many keys per page and the set is stable between membership
- * changes; the ownership check itself is never cached.
+ * (ADR-064 step A). Guests are refused next, before any lookup, as those
+ * gates refuse them: a guest reads no project's data, member or not, so the
+ * answer never depends on the key. Otherwise the key must be referenced by a
+ * row (see {@link KEY_OWNERSHIP_SOURCES}) in one of the caller's member
+ * projects. The member-project set is cached per user (short TTL) since the
+ * diff viewer fetches many keys per page and the set is stable between
+ * membership changes; the ownership check itself is never cached. The role is
+ * the live one (see `plugins/auth.ts`), so a demotion to guest applies to the
+ * next fetch even while the cached set still names the user's projects.
  */
 async function callerCanAccessKey(
   db: DB,
@@ -238,6 +246,7 @@ async function callerCanAccessKey(
   cache: MemberProjectsCache | null,
 ): Promise<boolean> {
   if (isAtLeastAdmin(auth.role)) return true;
+  if (auth.role === "guest") return false;
 
   const projectIds = await memberProjectIds(db, auth.id, cache);
   if (projectIds.length === 0) return false;
