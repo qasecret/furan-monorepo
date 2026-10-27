@@ -7,6 +7,7 @@ import {
   isNull,
   sql,
   testRuns,
+  type SQL,
 } from "@furan/db";
 import { createAutoRuleInput, updateAutoRuleInput } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
@@ -34,23 +35,23 @@ const fromProjectId = {
 };
 
 /**
- * Resolve the owning project of a rule referenced by `id` (get/update/
- * delete/toggle). Returns null for a missing OR soft-deleted rule so the
- * projectMember middleware surfaces NOT_FOUND — this is the authorization
- * gate that keeps rules project-scoped (CLAUDE.md: every project-scoped
- * procedure wires in projectMember).
+ * The owning project of a live (not soft-deleted) rule, as the membership
+ * gate's lookup: no row for a missing OR soft-deleted rule, so the
+ * projectMember middleware surfaces NOT_FOUND. This is the authorization gate
+ * that keeps rules project-scoped (CLAUDE.md: every project-scoped procedure
+ * wires in projectMember).
  */
+function ruleProjectQuery(ruleId: string): SQL {
+  return sql`SELECT ${autoRules.projectId} FROM ${autoRules}
+    WHERE ${autoRules.id} = ${ruleId} AND ${autoRules.deletedAt} IS NULL
+    LIMIT 1`;
+}
+
+/** The gate source of a rule referenced by `id` (get/update/delete/toggle). */
 function projectIdFromRuleId<TInput extends { id: string }>() {
   return {
     from: {
-      resolver: async ({ input, ctx }: { input: TInput; ctx: Context }) => {
-        const rows = await ctx.db
-          .select({ projectId: autoRules.projectId })
-          .from(autoRules)
-          .where(and(eq(autoRules.id, input.id), isNull(autoRules.deletedAt)))
-          .limit(1);
-        return rows[0]?.projectId ?? null;
-      },
+      query: ({ input }: { input: TInput }) => ruleProjectQuery(input.id),
     },
   };
 }
@@ -256,27 +257,7 @@ export const autoRulesRouter = t.router({
     .use(authed)
     .use(
       projectMember<{ ruleId: string }>("read", {
-        from: {
-          resolver: async ({
-            input,
-            ctx,
-          }: {
-            input: { ruleId: string };
-            ctx: Context;
-          }) => {
-            const rows = await ctx.db
-              .select({ projectId: autoRules.projectId })
-              .from(autoRules)
-              .where(
-                and(
-                  eq(autoRules.id, input.ruleId),
-                  isNull(autoRules.deletedAt),
-                ),
-              )
-              .limit(1);
-            return rows[0]?.projectId ?? null;
-          },
-        },
+        from: { query: ({ input }) => ruleProjectQuery(input.ruleId) },
       }),
     )
     .query(async ({ input, ctx }) => {

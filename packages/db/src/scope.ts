@@ -1,6 +1,7 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 
 import type { DB } from "./client.js";
+import { projectMembers } from "./schema/index.js";
 
 /**
  * Runs `fn` inside a transaction with `app.current_project_id` set as a
@@ -90,7 +91,9 @@ export async function withUserScope<T>(
  * (ADR-058, finding #4). The policies treat `owner` as a bypass
  * (`app_is_admin()`), so once RLS is on these reads see everything. RLS is not
  * enabled yet, so this is a no-op marker today. Do NOT use for business
- * queries — only the ACL gate.
+ * queries — only the ACL gate. Inside an already-scoped request transaction
+ * use {@link gateProjectMember} instead, which elevates that transaction in
+ * place rather than opening a second pooled connection.
  */
 export async function withPrivilegedScope<T>(
   db: DB,
@@ -100,38 +103,118 @@ export async function withPrivilegedScope<T>(
 }
 
 /**
- * Temporarily elevates the CURRENT open transaction to the RLS-bypass role
- * (`app.user_role = 'owner'`) for the duration of `fn`, then restores the prior
- * role — all on the SAME connection, so no second pooled connection is checked
- * out. Use this (not {@link withPrivilegedScope}) for an authorization read
- * that runs INSIDE an already-scoped request transaction (e.g. the tRPC
- * `projectMember` gate inside `scopeToUser`'s tx): a separate privileged
- * connection would make each gated request hold two pooled connections at once
- * and can exhaust the pool under load.
- *
- * `tx` MUST be an open transaction (`SET LOCAL` is transaction-scoped). The
- * restore runs in a `finally`; if a query in `fn` aborted the transaction the
- * restore no-ops (the whole unit fails anyway), so its error is swallowed.
+ * Where the project-member gate ({@link gateProjectMember}) finds the project
+ * a call acts on.
  */
-export async function withElevatedRole<T>(
-  tx: DB,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const rows = await tx.execute<{ role: string | null }>(
-    sql`SELECT current_setting('app.user_role', true) AS role`,
-  );
-  const prev = rows[0]?.role ?? "";
-  await tx.execute(sql`SELECT set_config('app.user_role', 'owner', true)`);
+export type GateProject =
+  /**
+   * A select of the owning project's id: one column, at most one row (none
+   * when the resource does not exist). The gate runs it INSIDE its own
+   * statement, as a subquery, so it costs no statement of its own.
+   */
+  | { query: SQL }
+  /**
+   * Resolved by the caller in code. Any rows it reads (through the same
+   * transaction) are read while the role is elevated, each its own statement.
+   */
+  | { resolve: () => Promise<string | null> };
+
+/** The gate's verdict: through, no such resource, or not a member. */
+export type GateOutcome = "ok" | "not_found" | "forbidden";
+
+/**
+ * Reads the current role and switches to the RLS-bypass role, in that order:
+ * the prior role is read from a MATERIALIZED CTE before the outer row, whose
+ * `set_config` elevates, is formed.
+ */
+const ELEVATE_ROLE = sql`
+  WITH prior AS MATERIALIZED (
+    SELECT current_setting('app.user_role', true) AS role
+  )
+  SELECT prior.role, set_config('app.user_role', 'owner', true) AS elevated
+  FROM prior`;
+
+/** Puts `role` back, best effort: the transaction may already be aborted. */
+async function restoreRoleQuietly(tx: DB, role: string): Promise<void> {
   try {
-    return await fn();
-  } finally {
-    try {
-      await tx.execute(sql`SELECT set_config('app.user_role', ${prev}, true)`);
-    } catch {
-      // The transaction was aborted by a failing query in `fn`; the request
-      // fails anyway, so there is no live role to restore.
-    }
+    await tx.execute(sql`SELECT set_config('app.user_role', ${role}, true)`);
+  } catch {
+    // A failing query aborted the transaction; the request fails anyway, so
+    // there is no live role to restore.
   }
+}
+
+/**
+ * The tRPC `projectMember` gate's reads (spec 2026-10-27 §7): the project a
+ * call acts on and the caller's membership row in it, read as the RLS-bypass
+ * role (`app.user_role = 'owner'`) on the CALLER'S OWN open transaction, so the
+ * gate can see rows RLS would hide from the caller (it is the authorization
+ * boundary, ADR-058) without checking out a second pooled connection.
+ *
+ * Two statements, in this order:
+ *  1. read the current role and set `owner` ({@link ELEVATE_ROLE});
+ *  2. resolve the project (a `query` runs here, as a subquery), read the
+ *     membership row, then restore the prior role. Each step is a
+ *     MATERIALIZED CTE the next one reads, so the restore's `set_config`
+ *     runs only after both reads, which therefore still run as `owner`.
+ * A `resolve` runs between the two, elevated, at the cost of its own reads.
+ *
+ * Every setting is transaction-local (`is_local = true`), as before: the role
+ * the procedure body sees is the one it had before the gate, and nothing
+ * outlives the transaction. `tx` MUST be an open transaction. If a step fails,
+ * the restore is still attempted and its error swallowed (the transaction is
+ * aborted, and the request with it), then the failure is rethrown.
+ *
+ * Every value reaches Postgres as a bound parameter.
+ */
+export async function gateProjectMember(
+  tx: DB,
+  userId: string,
+  project: GateProject,
+): Promise<GateOutcome> {
+  const elevated = await tx.execute<{ role: string | null }>(ELEVATE_ROLE);
+  const prior = elevated[0]?.role ?? "";
+
+  let resolved: SQL;
+  if ("query" in project) {
+    resolved = sql`(${project.query})`;
+  } else {
+    let projectId: string | null;
+    try {
+      projectId = await project.resolve();
+    } catch (err) {
+      await restoreRoleQuietly(tx, prior);
+      throw err;
+    }
+    // An empty id means no project, as it always has.
+    resolved = sql`${projectId || null}::uuid`;
+  }
+
+  let rows: Array<{ project_id: string | null; member: boolean }>;
+  try {
+    rows = await tx.execute<{ project_id: string | null; member: boolean }>(sql`
+      WITH resolved AS MATERIALIZED (
+        SELECT ${resolved} AS project_id
+      ),
+      membership AS MATERIALIZED (
+        SELECT resolved.project_id,
+               EXISTS (
+                 SELECT 1 FROM ${projectMembers}
+                 WHERE ${projectMembers.userId} = ${userId}
+                   AND ${projectMembers.projectId} = resolved.project_id
+               ) AS member
+        FROM resolved
+      )
+      SELECT membership.project_id, membership.member,
+             set_config('app.user_role', ${prior}, true) AS restored
+      FROM membership`);
+  } catch (err) {
+    await restoreRoleQuietly(tx, prior);
+    throw err;
+  }
+  const row = rows[0];
+  if (!row?.project_id) return "not_found";
+  return row.member ? "ok" : "forbidden";
 }
 
 /** Reads the current scoped user_id; returns null when no identity is set. */
