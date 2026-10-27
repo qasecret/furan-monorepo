@@ -94,6 +94,20 @@ pipeline sent one per diff job, most of them repeating `running`. The
 payload's `diffPercent` is omitted when no step of the run was compared with a
 baseline (every step `new`).
 
+**Reads stay small as a project grows.** Each run stores how many of its
+steps need review (`pending_steps`, and `failed_steps` for those whose diff
+failed). One function writes them, `recomputeRunStatus`, in the same
+transaction as the run's status and under the run lock every write path takes
+first; `verify-review-rollup --repair-counters` checks and repairs them (see
+[`docs/runbooks/server-reads-upgrade.md`](docs/runbooks/server-reads-upgrade.md)).
+The review queue, the pending counts and the "Needs review" filters read those
+counters, and the batch and run lists pick one page of rows first and build
+only that page. The diff viewer reads the run's header and step list, then one
+step at a time (`runs.getStep`: its baseline, regions and review), fetching
+the steps either side of it ahead. The storage proxy checks that an image
+belongs to one of the caller's projects through indexes that lead with the
+storage key and carry the project.
+
 ## Comparison pipeline
 
 The **image is the source of truth**:

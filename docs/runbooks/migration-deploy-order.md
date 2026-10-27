@@ -132,7 +132,11 @@ For 0008 specifically, the symptom of a botched deploy order is:
 
 **Recommendation:** stop the writers first (§2, step 2) and run the migration with nothing writing, as for any migration in this runbook. Then none of the waits above is visible to users and no deadlock can occur.
 
-## 7. References
+## 7. Migrations 0043 and 0044 (server reads)
+
+`0043_server_reads.sql` and `0044_key_indexes_with_project.sql` add the stored pending counters and the read indexes. Their index builds block writes, each `DROP INDEX` waits for open transactions while every new query of its table queues behind it, and the release before them writes no counters, so stop the app services while they run. The steps, the measured costs and the counter repair are in [`server-reads-upgrade.md`](server-reads-upgrade.md).
+
+## 8. References
 
 - Migration: [`packages/db/migrations/0008_run_status_enum.sql`](../../packages/db/migrations/0008_run_status_enum.sql)
 - Spec: [`furan-design/specs/2026-05-19-run-status-enum-design.md`](../../furan-design/specs/2026-05-19-run-status-enum-design.md) (gitignored design dir)
