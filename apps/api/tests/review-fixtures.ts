@@ -4,7 +4,9 @@ import {
   auditLog,
   baselines,
   builds,
+  checkpointDecisions,
   computeRunCounters,
+  eq,
   inArray,
   or,
   projectMembers,
@@ -493,6 +495,71 @@ export async function syncRunCounters(
   for (const runId of [...new Set(runIds)].sort()) {
     await recomputeRunStatus(db, runId);
   }
+}
+
+/** A checkpoint spec: `name` with `verdict`, the default environment unless `env`. */
+export function cp(
+  name: string,
+  verdict: ReviewCheckpointSpec["verdict"],
+  env: Omit<ReviewCheckpointSpec, "name" | "verdict"> = {},
+): ReviewCheckpointSpec {
+  return { name, verdict, ...env };
+}
+
+/**
+ * A decision on each of `stepIds` (an approve unless `opts.decision`), active
+ * unless `opts.reverted`, by the seed's editor, written directly (not through
+ * the decide core); then the steps' runs' counters (and rollup status) are
+ * brought in line with `syncRunCounters`, as the decide core does.
+ */
+export async function decideDirectly(
+  h: TestApp,
+  seed: Pick<ReviewSeed, "projectId" | "editor">,
+  stepIds: readonly string[],
+  opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
+): Promise<void> {
+  if (stepIds.length === 0) return;
+  const steps = await h.db
+    .select({ id: screenshots.id, runId: screenshots.runId })
+    .from(screenshots)
+    .where(inArray(screenshots.id, [...stepIds]));
+  for (const step of steps) {
+    await h.db.insert(checkpointDecisions).values({
+      projectId: seed.projectId,
+      runId: step.runId,
+      screenshotId: step.id,
+      actionId: randomUUID(),
+      decision: opts.decision ?? "approved",
+      actorId: seed.editor.id,
+      source: "viewer",
+      before: null,
+      revertedAt: opts.reverted ? new Date() : null,
+      revertedBy: opts.reverted ? seed.editor.id : null,
+    });
+  }
+  await syncRunCounters(
+    h.db,
+    steps.map((x) => x.runId),
+  );
+}
+
+/**
+ * The step's final diff failure, as `markStepDiffFailed` writes it, then its
+ * run's counters brought in line (`syncRunCounters`).
+ */
+export async function failDiff(h: TestApp, stepId: string): Promise<void> {
+  const [step] = await h.db
+    .update(screenshots)
+    .set({
+      verdict: "unresolved",
+      verdictAt: new Date(),
+      diffFailedAt: new Date(),
+      diffError: "timeout",
+    })
+    .where(eq(screenshots.id, stepId))
+    .returning({ runId: screenshots.runId });
+  if (!step) throw new Error(`failDiff: no step ${stepId}`);
+  await syncRunCounters(h.db, [step.runId]);
 }
 
 /**

@@ -580,10 +580,16 @@ export interface CheckpointTarget extends ReviewTarget {
  * It selects exactly what `selectPendingTargets` selects over the same group
  * scope (`collectLegalTargets` for "approve"): the pending steps
  * (`pendingStepCondition`) whose diff did not fail (`diff_failed`, the one
- * pending step approve refuses). The run's stored counter is the pre-filter
- * every step pick uses (`storedPendingRun`, `test_runs_pending_idx`): a run
- * stored at 0 has no pending step. `group-selection-equivalence.test.ts`
- * holds the two selections together.
+ * pending step approve refuses). `group-selection-equivalence.test.ts` holds
+ * the two selections together. "Exactly" holds while the rows are
+ * consistent, which the app's writers keep them; two drifts it does not
+ * cover (Ruling R14: approve still selects the true group):
+ * - the run's stored counter is the pre-filter every step pick uses
+ *   (`storedPendingRun`, `test_runs_pending_idx`), so a run whose counter
+ *   is stale at 0 is left out;
+ * - the step must carry the scope's `project_id` too, so a corrupt step whose
+ *   `project_id` differs from its run's is left out (the JS selection goes
+ *   by the run's project alone).
  *
  * `limit` must be at least 1: the total is read off the selected rows.
  * Read-only and unlocked, like `selectPendingTargets`.

@@ -1,15 +1,6 @@
-import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
-import {
-  builds,
-  checkpointDecisions,
-  eq,
-  inArray,
-  screenshots,
-  sql,
-  testRuns,
-} from "@furan/db";
+import { builds, eq, inArray, screenshots, sql, testRuns } from "@furan/db";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -25,8 +16,10 @@ import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
+  cp,
+  decideDirectly,
+  failDiff,
   seedReviewRun,
-  syncRunCounters,
   type ReviewCheckpointSpec,
   type ReviewRunSpec,
   type ReviewSeed,
@@ -536,59 +529,6 @@ d("run list, batch detail and checkpoint group answer as before", () => {
     return w;
   }
 
-  /**
-   * A decision on each of `steps` (labels), written directly, then the runs'
-   * counters (and rollup status) brought in line, as the decide core does.
-   */
-  async function decide(
-    w: World,
-    steps: string[],
-    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
-  ): Promise<void> {
-    const rows = await h.db
-      .select({ id: screenshots.id, runId: screenshots.runId })
-      .from(screenshots)
-      .where(
-        inArray(
-          screenshots.id,
-          steps.map((l) => w.id[l]!),
-        ),
-      );
-    for (const row of rows) {
-      await h.db.insert(checkpointDecisions).values({
-        projectId: w.s.projectId,
-        runId: row.runId,
-        screenshotId: row.id,
-        actionId: randomUUID(),
-        decision: opts.decision ?? "approved",
-        actorId: w.s.editor.id,
-        source: "viewer",
-        before: null,
-        revertedAt: opts.reverted ? new Date() : null,
-        revertedBy: opts.reverted ? w.s.editor.id : null,
-      });
-    }
-    await syncRunCounters(
-      h.db,
-      rows.map((r) => r.runId),
-    );
-  }
-
-  /** The step's final diff failure, as `markStepDiffFailed` writes it. */
-  async function failDiff(w: World, step: string): Promise<void> {
-    const [row] = await h.db
-      .update(screenshots)
-      .set({
-        verdict: "unresolved",
-        verdictAt: new Date(),
-        diffFailedAt: new Date(),
-        diffError: "timeout",
-      })
-      .where(eq(screenshots.id, w.id[step]!))
-      .returning({ runId: screenshots.runId });
-    await syncRunCounters(h.db, [row!.runId]);
-  }
-
   /** Gives `steps` (labels) the diff signature labelled `sig`. */
   async function sign(w: World, sig: string, steps: string[]): Promise<void> {
     const value = `${sig}-${w.s.tag}`;
@@ -604,11 +544,6 @@ d("run list, batch detail and checkpoint group answer as before", () => {
       );
   }
 
-  const cp = (
-    name: string,
-    verdict: ReviewCheckpointSpec["verdict"],
-    env: Pick<ReviewCheckpointSpec, "viewport" | "browser"> = {},
-  ): ReviewCheckpointSpec => ({ name, verdict, ...env });
   const run = (...checkpoints: ReviewCheckpointSpec[]): ReviewRunSpec => ({
     checkpoints,
   });
@@ -659,10 +594,10 @@ d("run list, batch detail and checkpoint group answer as before", () => {
     ]);
     await sign(w, "sigA", ["g0", ..."abcdefghijklmop".split(""), "x", "y"]);
     await sign(w, "sigB", ["n"]);
-    await decide(w, ["d"]);
-    await decide(w, ["e"], { decision: "rejected" });
-    await decide(w, ["f"], { reverted: true });
-    await failDiff(w, "l");
+    await decideDirectly(h, w.s, [w.id.d!]);
+    await decideDirectly(h, w.s, [w.id.e!], { decision: "rejected" });
+    await decideDirectly(h, w.s, [w.id.f!], { reverted: true });
+    await failDiff(h, w.id.l!);
     return w;
   }
 

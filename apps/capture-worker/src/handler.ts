@@ -203,7 +203,12 @@ async function handleCaptureJobInner(
         await tx
           .select({ id: testRuns.id })
           .from(testRuns)
-          .where(eq(testRuns.id, data.runId))
+          .where(
+            and(
+              eq(testRuns.id, data.runId),
+              eq(testRuns.projectId, data.projectId),
+            ),
+          )
           .for("no key update");
         if (thumbnailKey !== null) {
           await tx
@@ -245,7 +250,12 @@ async function handleCaptureJobInner(
           await tx
             .update(testRuns)
             .set({ checkpointCount: sql`${testRuns.checkpointCount} + 1` })
-            .where(eq(testRuns.id, data.runId));
+            .where(
+              and(
+                eq(testRuns.id, data.runId),
+                eq(testRuns.projectId, data.projectId),
+              ),
+            );
           await recomputeRunStatus(tx, data.runId);
         }
       });
