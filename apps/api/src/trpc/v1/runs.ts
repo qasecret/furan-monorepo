@@ -3,7 +3,6 @@ import {
   asc,
   baselines,
   builds,
-  count,
   desc,
   diffRegions,
   eq,
@@ -53,8 +52,8 @@ import {
 import {
   facetCondition,
   facetValuesByBuild,
-  pendingCountsByRun,
   pendingStepCondition,
+  storedPendingRun,
   type StepFacets,
 } from "../../lib/review/pending.js";
 import {
@@ -62,7 +61,7 @@ import {
   NO_REVIEW,
   type CheckpointReviewView,
 } from "../../lib/review/reads.js";
-import { lockRuns, selectPendingTargets } from "../../lib/review/targets.js";
+import { lockRuns, selectGroupTargets } from "../../lib/review/targets.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -202,7 +201,8 @@ const listInput = z.object({
   customTags: z.string().min(1).max(255).optional(),
   /**
    * `true` keeps the runs that need review: at least one pending step (spec
-   * §3.1; `pendingStepCondition`) inside the environment facets above.
+   * §3.1; `pendingStepCondition`) inside the environment facets above. With
+   * no facet, the run's stored counter answers it (spec 2026-10-27 §3).
    * `false` or omitted is no filter. Combines with `status` by AND.
    */
   pending: z.boolean().optional(),
@@ -231,9 +231,6 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "unresolved",
   "failed",
 ]);
-
-/** `selectPendingTargets` with no cap: the caller applies its own limit. */
-const NO_SELECTION_CAP = Number.MAX_SAFE_INTEGER;
 
 async function resolveRunProjectId(
   input: RunIdInput,
@@ -483,6 +480,14 @@ function runHasStep(projectId: string, step: SQL | undefined): SQL {
  * (projectId + branch/buildId/customTags, plus the step conditions: the
  * environment facets and `pending`). A shared builder keeps filter logic
  * centralized so it can't drift when a dimension is added.
+ *
+ * `pending` reads the run's stored counter (`pending_steps > 0`, spec
+ * 2026-10-27 §3.1). Inside facets, which the counter cannot see, the steps
+ * decide (`pendingStepCondition`), as they always have. The counter is not
+ * added beside them as a pre-filter: it steers the planner to
+ * `test_runs_pending_idx` and a sort of every pending run of the batch, each
+ * probed for a step in the facets, where the capture-order scan of
+ * `test_runs_build_created_idx` probes runs only until the page is full.
  */
 function runListBaseConditions(
   input: {
@@ -507,7 +512,11 @@ function runListBaseConditions(
   // inside the facets (a pending step elsewhere does not qualify the run).
   const facetsOnly = facetCondition(facets);
   if (input.pending) {
-    conditions.push(runHasStep(input.projectId, pendingStepCondition(facets)));
+    conditions.push(
+      facetsOnly
+        ? runHasStep(input.projectId, pendingStepCondition(facets))
+        : storedPendingRun(),
+    );
   } else if (facetsOnly) {
     conditions.push(runHasStep(input.projectId, facetsOnly));
   }
@@ -515,26 +524,20 @@ function runListBaseConditions(
 }
 
 /**
- * Every step of each of `runIds` (the project's runs only), unfiltered: the
- * total a reviewer sees beside the pending count. A run with no step is absent
- * from the map. One grouped query, however many runs.
+ * The run's pending steps inside `facets`, a column of the list query (over
+ * the unaliased `test_runs`): its stored counter with no facet; inside facets
+ * the steps' count, as the `pending` filter decides them there. Evaluated for
+ * the page's rows only.
  */
-async function stepCountsByRun(
-  db: Context["db"],
-  args: { projectId: string; runIds: string[] },
-): Promise<Map<string, number>> {
-  if (args.runIds.length === 0) return new Map();
-  const rows = await db
-    .select({ id: screenshots.runId, steps: count() })
-    .from(screenshots)
-    .where(
-      and(
-        eq(screenshots.projectId, args.projectId),
-        inArray(screenshots.runId, args.runIds),
-      ),
-    )
-    .groupBy(screenshots.runId);
-  return new Map(rows.map((r) => [r.id, r.steps]));
+function runPendingCount(projectId: string, facets: StepFacets): SQL<number> {
+  if (facetCondition(facets) === undefined) {
+    return sql<number>`${testRuns.pendingSteps}`.mapWith(Number);
+  }
+  return sql<number>`(select count(*)::int from ${screenshots} where ${and(
+    sql`${screenshots.runId} = ${testRuns.id}`,
+    eq(screenshots.projectId, projectId),
+    pendingStepCondition(facets),
+  )})`.mapWith(Number);
 }
 
 export const runsRouter = t.router({
@@ -548,8 +551,13 @@ export const runsRouter = t.router({
    * should be set.
    *
    * Each item carries `pendingCount` (its pending steps inside the environment
-   * facets) and `stepCount` (all its steps), filled by one grouped query each
-   * per page.
+   * facets) and `stepCount` (all its steps). Both come from the run's own
+   * columns, the stored `pending_steps` and `checkpoint_count` (spec
+   * 2026-10-27 §4, "`runs.list`"); inside facets the pending steps are
+   * counted per page row. One statement per page: a batch's page reads
+   * `test_runs_build_created_idx` in capture order and stops at the LIMIT;
+   * its pending page reads only the batch's runs with pending work
+   * (`test_runs_pending_idx`), then takes the page.
    */
   list: publicProcedure
     .input(listInput)
@@ -595,6 +603,7 @@ export const runsRouter = t.router({
           buildBranchName: builds.branchName,
           buildCreatedAt: builds.createdAt,
           cursorAt: cursorTimestamp(testRuns.createdAt),
+          pendingCount: runPendingCount(input.projectId, facets),
         })
         .from(testRuns)
         .leftJoin(builds, eq(testRuns.buildId, builds.id))
@@ -608,17 +617,6 @@ export const runsRouter = t.router({
 
       const hasMore = rows.length > input.limit;
       const page = hasMore ? rows.slice(0, input.limit) : rows;
-      // One grouped query each for the whole page, never one per row.
-      const runIds = page.map((r) => r.run.id);
-      const pendingByRun = await pendingCountsByRun(ctx.db, {
-        projectId: input.projectId,
-        runIds,
-        facets,
-      });
-      const stepsByRun = await stepCountsByRun(ctx.db, {
-        projectId: input.projectId,
-        runIds,
-      });
       // Flatten the join: run columns stay top-level (back-compat with every
       // existing consumer) with the build display fields alongside so the
       // dashboard can group runs under their build (ADR-038 batch model).
@@ -629,8 +627,8 @@ export const runsRouter = t.router({
         buildCiBuildId: r.buildCiBuildId,
         buildBranchName: r.buildBranchName,
         buildCreatedAt: r.buildCreatedAt,
-        pendingCount: pendingByRun.get(r.run.id) ?? 0,
-        stepCount: stepsByRun.get(r.run.id) ?? 0,
+        pendingCount: r.pendingCount,
+        stepCount: r.run.checkpointCount,
       }));
       const last = page[page.length - 1];
       const nextCursor =
@@ -1393,8 +1391,11 @@ export const runsRouter = t.router({
    * return the other pending checkpoints in the same CI build that share the
    * same diff_signature. Used by the "Accept all N like this" button in the
    * diff-review panel (ADR-042 Phase B Step 2). "Pending" is the decision
-   * core's rule (`selectPendingTargets`): a reviewable run, verdict `new` or
-   * `unresolved`, no active decision.
+   * core's rule for "approve" (`selectPendingTargets`): a reviewable run,
+   * verdict `new` or `unresolved`, no active decision, a diff that did not
+   * fail. The members are selected in one statement (`selectGroupTargets`,
+   * spec 2026-10-27 §4), the first `GROUP_APPROVE_CAP + 1` of them: enough to
+   * show the cap's worth besides the seed and to know whether more exist.
    *
    * NULL diff_signature means VLM / auto-approved / no meaningful diff —
    * those carry no structural fingerprint, so no group can be formed.
@@ -1427,45 +1428,25 @@ export const runsRouter = t.router({
         };
       }
 
-      // ALL pending same-signature checkpoints of the build (no window: a
-      // limited one would never slide as rows get decided, stranding the
-      // rest); the seed is left out and the list is capped for display.
-      const { targets } = await selectPendingTargets(
-        ctx.db,
-        scope,
-        NO_SELECTION_CAP,
-      );
-      const others = targets.filter(
-        (t) => t.screenshotId !== input.checkpointId,
-      );
-      const capped = others.length > GROUP_APPROVE_CAP;
-      const shownTargets = others.slice(0, GROUP_APPROVE_CAP);
-
-      const rows =
-        shownTargets.length === 0
-          ? []
-          : await ctx.db
-              .select({
-                id: screenshots.id,
-                runId: screenshots.runId,
-                name: screenshots.name,
-                viewport: screenshots.viewport,
-                testName: testRuns.name,
-              })
-              .from(screenshots)
-              .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-              .where(
-                inArray(
-                  screenshots.id,
-                  shownTargets.map((t) => t.screenshotId),
-                ),
-              );
-      const byId = new Map(rows.map((r) => [r.id, r]));
-      const shown = shownTargets.flatMap((t) => byId.get(t.screenshotId) ?? []);
+      // The pending same-signature checkpoints of the build, recomputed on
+      // every read (a stored window would never slide as rows get decided,
+      // stranding the rest), less the seed, capped for display. The first
+      // cap + 1 members are enough: without the seed they still hold the
+      // cap's worth, and `total` says whether more exist. A member seed
+      // counts in `total`; it can be missing from those in hand only when
+      // the total is past cap + 1, and then the others are capped anyway.
+      const { targets, total } = await selectGroupTargets(ctx.db, {
+        ...scope,
+        limit: GROUP_APPROVE_CAP + 1,
+      });
+      const seedIsMember = targets.some((t) => t.screenshotId === seed.id);
+      const others = targets.filter((t) => t.screenshotId !== seed.id);
+      const capped = total - (seedIsMember ? 1 : 0) > GROUP_APPROVE_CAP;
+      const shown = others.slice(0, GROUP_APPROVE_CAP);
 
       return {
         checkpoints: shown.map((c) => ({
-          id: c.id,
+          id: c.screenshotId,
           runId: c.runId,
           testName: c.testName,
           name: c.name,

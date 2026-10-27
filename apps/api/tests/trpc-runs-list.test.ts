@@ -14,7 +14,6 @@ import {
   testRuns,
   testVariations,
   users,
-  type DB,
 } from "@furan/db";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import type { inferRouterInputs } from "@trpc/server";
@@ -32,12 +31,18 @@ import type { Context } from "../src/trpc/context.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 import { runsRouter } from "../src/trpc/v1/runs.js";
 
+import {
+  bodyStatements,
+  capturing,
+  type CapturedStatement,
+} from "./capturing-db.js";
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
@@ -564,28 +569,6 @@ d("tRPC runs.list", () => {
   });
 });
 
-/** Counts the statements a read issues (`select*` / `execute` on the handle). */
-function countingDb(db: DB): { db: DB; count: () => number } {
-  let n = 0;
-  const counted = new Set([
-    "select",
-    "selectDistinct",
-    "selectDistinctOn",
-    "execute",
-  ]);
-  const proxy = new Proxy(db, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof value !== "function") return value;
-      return (...args: unknown[]) => {
-        if (counted.has(String(prop))) n++;
-        return (value as (...a: unknown[]) => unknown).apply(target, args);
-      };
-    },
-  });
-  return { db: proxy, count: () => n };
-}
-
 type ListQuery = Omit<
   inferRouterInputs<AppRouter>["runs"]["list"],
   "projectId"
@@ -617,7 +600,11 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     page.items.map((i) => i.id);
   const sorted = (ids: string[]) => [...ids].sort();
 
-  /** A decision row (an approve unless `decision`), active unless `reverted`. */
+  /**
+   * A decision row (an approve unless `decision`), active unless `reverted`,
+   * written directly; then the run's stored counters (and rollup status) are
+   * brought in line, as the app's decide core does.
+   */
   async function decide(
     s: ReviewSeed,
     runId: string,
@@ -636,6 +623,7 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
       revertedAt: opts.reverted ? new Date() : null,
       revertedBy: opts.reverted ? s.editor.id : null,
     });
+    await syncRunCounters(h.db, [runId]);
   }
 
   beforeAll(async () => {
@@ -964,18 +952,89 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     });
   });
 
-  test("the counts come from one grouped query each, however many rows", async () => {
+  test("stepCount, pendingCount and the pending filter read the run's columns", async () => {
+    // A: two pending steps (desktop, mobile) and a passed one. B: nothing pending.
+    const s = await seed({
+      checkpoints: [
+        { name: "a1", verdict: "unresolved" },
+        { name: "a2", verdict: "new", viewport: "375x812" },
+        { name: "a3", verdict: "passed" },
+      ],
+    });
+    const b = await addReviewRun(h, s, {
+      checkpoints: [{ name: "b1", verdict: "passed" }],
+    });
+    const summary = async (q: ListQuery) =>
+      Object.fromEntries(
+        (await list(s, { limit: 100, ...q })).items.map((i) => [
+          i.id,
+          [i.pendingCount, i.stepCount],
+        ]),
+      );
+    expect(await summary({})).toEqual({
+      [s.runId]: [2, 3],
+      [b.runId]: [0, 1],
+    });
+
+    // Stale columns, as a writer that skipped `recomputeRunStatus` (or the
+    // step count) would leave them: A says nothing is pending and it has 9
+    // steps; B says 4 are pending.
+    try {
+      await h.db
+        .update(testRuns)
+        .set({ pendingSteps: 0, checkpointCount: 9 })
+        .where(eq(testRuns.id, s.runId));
+      await h.db
+        .update(testRuns)
+        .set({ pendingSteps: 4 })
+        .where(eq(testRuns.id, b.runId));
+      expect(await summary({})).toEqual({
+        [s.runId]: [0, 9],
+        [b.runId]: [4, 1],
+      });
+      expect(await summary({ pending: true })).toEqual({ [b.runId]: [4, 1] });
+      // Inside facets, which the counter cannot see, the steps decide the
+      // filter and the count, whatever the counter says.
+      expect(await summary({ viewport: "375x812" })).toEqual({
+        [s.runId]: [1, 9],
+      });
+      expect(await summary({ pending: true, viewport: "375x812" })).toEqual({
+        [s.runId]: [1, 9],
+      });
+      expect(await summary({ pending: true, viewport: "1280x720" })).toEqual({
+        [s.runId]: [1, 9],
+      });
+    } finally {
+      await h.db
+        .update(testRuns)
+        .set({ checkpointCount: 3 })
+        .where(eq(testRuns.id, s.runId));
+      await syncRunCounters(h.db, [s.runId, b.runId]);
+    }
+    expect(await summary({ pending: true })).toEqual({ [s.runId]: [2, 3] });
+    expect(await summary({ pending: true, viewport: "375x812" })).toEqual({
+      [s.runId]: [1, 3],
+    });
+  });
+
+  test("the page and its counts are one statement, however many rows", async () => {
     const s = await seed({
       checkpoints: [{ name: "a", verdict: "unresolved" }],
     });
-    const caller = (db: DB) =>
-      runsRouter.createCaller({
-        user: { id: s.admin.id, role: "admin", via: "jwt" },
-        db,
-      } as unknown as Context);
+    /** The page, as an admin, with the request body's statements. */
+    const listed = async (query: ListQuery) => {
+      const statements: CapturedStatement[] = [];
+      const page = await runsRouter
+        .createCaller({
+          user: { id: s.admin.id, role: "admin", via: "jwt" },
+          db: capturing(h.db, statements),
+        } as unknown as Context)
+        .list({ projectId: s.projectId, ...query });
+      return { page, statements: bodyStatements(statements) };
+    };
 
-    const one = countingDb(h.db);
-    const small = await caller(one.db).list({ projectId: s.projectId });
+    const small = await listed({});
+    const smallPending = await listed({ pending: true, viewport: "1280x720" });
     for (let i = 0; i < 6; i++) {
       await addReviewRun(h, s, {
         checkpoints: [
@@ -984,24 +1043,27 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
         ],
       });
     }
-    const many = countingDb(h.db);
-    const big = await caller(many.db).list({ projectId: s.projectId });
+    const big = await listed({});
+    const bigPending = await listed({ pending: true, viewport: "1280x720" });
 
-    expect(small.items).toHaveLength(1);
-    expect(big.items).toHaveLength(7);
-    expect(big.items.map((i) => i.pendingCount)).toEqual([2, 2, 2, 2, 2, 2, 1]);
-    // The page, the pending counts and the step counts: three statements for
-    // one row or for seven.
-    expect(one.count()).toBe(many.count());
-    expect(many.count()).toBeLessThanOrEqual(3);
-    // An empty page asks nothing about its (absent) rows.
-    const none = countingDb(h.db);
-    const empty = await caller(none.db).list({
-      projectId: s.projectId,
-      branch: "no-such-branch",
-    });
-    expect(empty.items).toEqual([]);
-    expect(none.count()).toBeLessThanOrEqual(1);
+    expect(small.page.items).toHaveLength(1);
+    expect(big.page.items).toHaveLength(7);
+    expect(big.page.items.map((i) => i.pendingCount)).toEqual([
+      2, 2, 2, 2, 2, 2, 1,
+    ]);
+    expect(bigPending.page.items.map((i) => i.pendingCount)).toEqual([
+      2, 2, 2, 2, 2, 2, 1,
+    ]);
+    // The rows, their pending counts (the counter, or the steps inside the
+    // facets) and their step counts: one statement, for one row or seven.
+    expect(small.statements).toHaveLength(1);
+    expect(big.statements).toHaveLength(1);
+    expect(smallPending.statements).toHaveLength(1);
+    expect(bigPending.statements).toHaveLength(1);
+    // An empty page is the same single statement.
+    const none = await listed({ branch: "no-such-branch" });
+    expect(none.page.items).toEqual([]);
+    expect(none.statements).toHaveLength(1);
   });
 
   test("pending + facets: membership and pendingCount respect the facets, stepCount does not", async () => {
@@ -1089,16 +1151,7 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     ).toEqual({ [x]: [1, 2] });
 
     // A step decided on mobile is no longer pending there.
-    await h.db.insert(checkpointDecisions).values({
-      projectId: s.projectId,
-      runId: x,
-      screenshotId: s.shotsInOrder[1]!.id,
-      actionId: randomUUID(),
-      decision: "approved",
-      actorId: s.editor.id,
-      source: "viewer",
-      before: null,
-    });
+    await decide(s, x, s.shotsInOrder[1]!.id);
     expect(await summary({ pending: true, viewport: "375x812" })).toEqual({});
     expect(await summary({ pending: true })).toEqual({
       [x]: [1, 2],

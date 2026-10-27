@@ -1104,7 +1104,7 @@ d("review read model", () => {
   // -------------------------------------------------------------------------
 
   describe("builds.getById pendingCheckpoints", () => {
-    test("counts the pending checkpoints across the whole build, by the same rule as approve-pending", async () => {
+    test("counts the pending checkpoints across the whole build", async () => {
       // run 1: a (unresolved), b (new), c (passed)    -> 2 pending
       // run 2: d (unresolved), e (unresolved)         -> 2 pending, e rejected below
       // run 3: still diffing                          -> not reviewable
@@ -1136,6 +1136,8 @@ d("review read model", () => {
         buildId: s.buildId,
       });
       expect(build.pendingCheckpoints).toBe(3);
+      // With no failed diff, every pending checkpoint is one approve-pending
+      // would act on (a failed one is pending but not approvable).
       const preview = await as(s.editor).review.previewApproveBuild.query({
         buildId: s.buildId,
       });

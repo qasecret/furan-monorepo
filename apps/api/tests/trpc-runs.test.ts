@@ -190,6 +190,8 @@ async function seedCheckpoint(
   const viewport = opts.viewport ?? "1280x720";
   const effectiveBaselineName =
     opts.baselineName === undefined ? "existing-baseline" : opts.baselineName;
+  const verdict: CheckpointVerdict =
+    opts.verdict ?? (opts.unresolved ? "unresolved" : "passed");
   const [variation] = await h.db
     .insert(testVariations)
     .values({
@@ -209,6 +211,10 @@ async function seedCheckpoint(
       status: opts.unresolved ? "unresolved" : "passed",
       branchName: opts.branchName ?? "feature/x",
       name: opts.name,
+      // Its one step, and the stored pending counter a writer would leave for
+      // it (spec 2026-10-27 §3.1): the run is reviewable, the step undecided.
+      checkpointCount: 1,
+      pendingSteps: verdict === "passed" ? 0 : 1,
     })
     .returning();
   const [shot] = await h.db
@@ -226,7 +232,7 @@ async function seedCheckpoint(
       // The per-checkpoint verdict is what the review reads (and the group
       // procedures' "pending" rule) go by; a checkpoint with none is not
       // diffed yet and its run is not reviewable.
-      verdict: opts.verdict ?? (opts.unresolved ? "unresolved" : "passed"),
+      verdict,
     })
     .returning();
   // A fixture representing a variation WITH a baseline inserts a real

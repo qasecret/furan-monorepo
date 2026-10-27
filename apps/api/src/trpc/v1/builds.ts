@@ -16,7 +16,6 @@ import {
   buildHasStoredPending,
   pendingBatchCount,
 } from "../../lib/review/pending.js";
-import { countPendingCheckpoints } from "../../lib/review/reads.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -111,12 +110,16 @@ const aggregateStatusExpr = sql.raw(
   ).join(" ")} ELSE 'empty' END`,
 );
 
-/** The aggregate over one build's runs `r` that `list` reports: one row. */
+/**
+ * The aggregate over one build's runs `r` that `list` and `getById` both
+ * report: one row, from the runs' own columns.
+ */
 const RUN_AGGREGATE = sql`
   count(*)                                         AS run_count,
   ${RUN_STATUS_COUNTS},
   count(*) FILTER (WHERE r.status = 'empty')       AS empty_count,
-  -- The pending steps by the runs' stored counters (spec 2026-10-27 §3.1).
+  -- The pending steps by the runs' stored counters (spec 2026-10-27 §3.1),
+  -- the number both the list and getById report.
   coalesce(sum(r.pending_steps), 0)                AS pending_checkpoints,
   -- The build's single distinct test name (NULL when 0 or >1 tests), so the
   -- Builds list can title a one-test build by its test rather than the
@@ -351,7 +354,11 @@ export const buildsRouter = t.router({
 
   /**
    * Fetch a single build by its id with the same aggregated status + counts
-   * that `list` returns. Uses a resolve-then-gate auth pattern (mirrors
+   * that `list` returns, in one statement whatever the build's size (spec
+   * 2026-10-27 §4, "`builds.getById`"; budget R5): the counts are sums of its
+   * runs' columns, `pendingCheckpoints` the stored counters (the number the
+   * list shows) and `stepsTotal` the step counts. Every run read is the
+   * build's project's. Uses a resolve-then-gate auth pattern (mirrors
    * `runs.getById`) because the input is a bare `buildId` with no `projectId`.
    */
   getById: publicProcedure
@@ -395,47 +402,34 @@ export const buildsRouter = t.router({
         new_count: number;
         empty_count: number;
         steps_total: number;
+        pending_checkpoints: number;
         run_by_first_name: string | null;
         run_by_last_name: string | null;
         test_name: string | null;
         aggregate_status: string;
       }>(sql`
-        WITH run_agg AS (
-          SELECT
-            r.build_id,
-            count(*)                                                AS run_count,
-            ${RUN_STATUS_COUNTS},
-            count(*) FILTER (WHERE r.status = 'new')                AS new_count,
-            count(*) FILTER (WHERE r.status = 'empty')              AS empty_count,
-            CASE WHEN count(DISTINCT r.name) = 1 THEN min(r.name) ELSE NULL END AS test_name
-          FROM test_runs r
-          WHERE r.build_id = ${input.buildId}
-          GROUP BY r.build_id
-        )
         SELECT
           b.id, b.ci_build_id, b.number, b.branch_name, b.status, b.name,
           b.properties, b.project_id, b.user_id, b.is_running, b.environment,
           b.created_at, b.updated_at,
-          coalesce(r.run_count, 0)         AS run_count,
-          coalesce(r.running_count, 0)     AS running_count,
-          coalesce(r.unresolved_count, 0)  AS unresolved_count,
-          coalesce(r.failed_count, 0)      AS failed_count,
-          coalesce(r.aborted_count, 0)     AS aborted_count,
-          coalesce(r.passed_count, 0)      AS passed_count,
-          coalesce(r.new_count, 0)         AS new_count,
-          coalesce(r.empty_count, 0)       AS empty_count,
-          coalesce((
-            SELECT count(*) FROM screenshots sc
-            WHERE sc.run_id IN (
-              SELECT id FROM test_runs WHERE build_id = b.id
-            )
-          ), 0)                            AS steps_total,
+          r.run_count, r.running_count, r.unresolved_count, r.failed_count,
+          r.aborted_count, r.passed_count, r.new_count, r.empty_count,
+          r.steps_total, r.pending_checkpoints,
           u.first_name                     AS run_by_first_name,
           u.last_name                      AS run_by_last_name,
           r.test_name                      AS test_name,
           ${aggregateStatusExpr}            AS aggregate_status
         FROM builds b
-        LEFT JOIN run_agg r ON r.build_id = b.id
+        LEFT JOIN LATERAL (
+          SELECT ${RUN_AGGREGATE},
+            count(*) FILTER (WHERE r.status = 'new')     AS new_count,
+            -- Every step of the build, by the runs' step counts (upload,
+            -- complete and merge keep checkpoint_count).
+            coalesce(sum(r.checkpoint_count), 0)         AS steps_total
+          FROM test_runs r
+          WHERE r.build_id = b.id
+            AND r.project_id = b.project_id
+        ) r ON true
         LEFT JOIN users u ON u.id = b.user_id
         WHERE b.id = ${input.buildId}
         LIMIT 1
@@ -444,12 +438,6 @@ export const buildsRouter = t.router({
       if (!r) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
-      // The run-level counts above key on run status and keep their meaning;
-      // this one is per checkpoint: what "approve pending" would act on.
-      const pendingCheckpoints = await countPendingCheckpoints(ctx.db, {
-        projectId: r.project_id,
-        buildId: r.id,
-      });
       return {
         id: r.id,
         ciBuildId: r.ci_build_id,
@@ -474,7 +462,7 @@ export const buildsRouter = t.router({
         newCount: Number(r.new_count),
         emptyCount: Number(r.empty_count),
         stepsTotal: Number(r.steps_total),
-        pendingCheckpoints,
+        pendingCheckpoints: Number(r.pending_checkpoints),
         runByName:
           r.run_by_first_name || r.run_by_last_name
             ? `${r.run_by_first_name ?? ""} ${r.run_by_last_name ?? ""}`.trim()

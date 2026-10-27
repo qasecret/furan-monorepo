@@ -26,13 +26,11 @@ import type { CheckpointVerdict } from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import {
-  pendingCountsByRun,
-  pendingStepCondition,
-} from "../src/lib/review/pending.js";
+import { pendingStepCondition } from "../src/lib/review/pending.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import { pendingCountsByRun } from "./pending-oracle.js";
 import {
   addReviewRun,
   cleanupReviewSeeds,
