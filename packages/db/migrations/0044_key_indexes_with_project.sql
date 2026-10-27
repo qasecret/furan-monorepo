@@ -36,7 +36,13 @@
 --
 -- This is a new file rather than an edit of 0043 because 0043 has already run
 -- on databases (the test database, and any deploy part-way through a release
--- train), where an edited 0043 would never be applied again.
+-- train), where an edited 0043 would never be applied again by drizzle-kit.
+-- The compose runner is the other way round: it records a file by its hash
+-- and applies a file whose bytes changed again, and 0043 applied after this
+-- file puts the key-only indexes back. So an edit of 0043, even of a comment,
+-- ships with an edit of this file, and the runner applies both again, in file
+-- order, ending on the indexes below. (0043's header and this paragraph were
+-- edited together for that reason.)
 --
 -- Each index is dropped (IF EXISTS) before it is created, as in 0043: every
 -- database that ran 0043 holds the five single-column indexes under these very
@@ -81,7 +87,8 @@
 --   image on a large install. So the previous release cannot be relied on to
 --   keep serving while the file runs: stop the app services (api,
 --   capture-worker, diff-worker) before `migrate`, as for 0043, and start
---   them again after it.
+--   them again after it. 0043's header states the same wait for its own
+--   `DROP INDEX` and `ADD COLUMN` statements.
 --
 -- One-off cost on a large install: each build reads its table once and sorts
 -- it. The four `screenshots` builds dominate; the `test_runs` ones read a table
