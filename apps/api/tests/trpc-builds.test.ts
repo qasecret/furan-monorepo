@@ -5,6 +5,8 @@ import {
   builds,
   checkpointDecisions,
   diffRegions,
+  eq,
+  inArray,
   projectMembers,
   projects,
   screenshots,
@@ -29,9 +31,15 @@ import {
 
 import { encodeKeysetCursor } from "../src/lib/keyset-cursor.js";
 import { hashPassword } from "../src/lib/password.js";
-import { AGGREGATE_STATUS_RUNS } from "../src/trpc/v1/builds.js";
+import type { Context } from "../src/trpc/context.js";
+import { AGGREGATE_STATUS_RUNS, buildsRouter } from "../src/trpc/v1/builds.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
+import {
+  bodyStatements,
+  capturing,
+  type CapturedStatement,
+} from "./capturing-db.js";
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
   addReviewBuild,
@@ -914,6 +922,145 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         needing.items.map((i) => [i.id, i.pendingCheckpoints]),
       ),
     ).toEqual({ [s.buildId]: 3, [c.buildId]: 3 });
+  });
+
+  /** The step's final diff failure, as `markStepDiffFailed` writes it. */
+  async function failDiff(runId: string, shotId: string): Promise<void> {
+    await h.db
+      .update(screenshots)
+      .set({
+        verdict: "unresolved",
+        verdictAt: new Date(),
+        diffFailedAt: new Date(),
+        diffError: "timeout",
+      })
+      .where(eq(screenshots.id, shotId));
+    await syncRunCounters(h.db, [runId]);
+  }
+
+  /**
+   * Writes runs' stored columns directly: the stale values a writer that
+   * skipped `recomputeRunStatus` (the counters) or the step count would
+   * leave. `fn` runs with them; both are restored after, whatever happens.
+   */
+  async function withStaleColumns(
+    stale: Record<string, { pendingSteps?: number; checkpointCount?: number }>,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const runIds = Object.keys(stale);
+    const kept = await h.db
+      .select({ id: testRuns.id, checkpointCount: testRuns.checkpointCount })
+      .from(testRuns)
+      .where(inArray(testRuns.id, runIds));
+    try {
+      for (const [runId, columns] of Object.entries(stale)) {
+        await h.db.update(testRuns).set(columns).where(eq(testRuns.id, runId));
+      }
+      await fn();
+    } finally {
+      for (const r of kept) {
+        await h.db
+          .update(testRuns)
+          .set({ checkpointCount: r.checkpointCount })
+          .where(eq(testRuns.id, r.id));
+      }
+      await syncRunCounters(h.db, runIds);
+    }
+  }
+
+  test("getById counts from the runs' columns: the list's pending number, steps from checkpoint_count", async () => {
+    // Run 1: two pending steps and a passed one. Run 2: a pending step whose
+    // diff failed: pending (the list and the badge count it), not approvable.
+    const s = await seed({
+      checkpoints: [
+        { name: "a1", verdict: "new" },
+        { name: "a2", verdict: "unresolved" },
+        { name: "a3", verdict: "passed" },
+      ],
+    });
+    const failed = await addReviewRun(h, s, {
+      checkpoints: [{ name: "a4", verdict: "unresolved" }],
+    });
+    await failDiff(failed.runId, failed.shots.a4!.id);
+
+    const client = as(s.editor);
+    const detail = () => client.builds.getById.query({ buildId: s.buildId });
+    const listed = async () => {
+      const page = await client.builds.list.query({ projectId: s.projectId });
+      return page.items.find((i) => i.id === s.buildId)!.pendingCheckpoints;
+    };
+
+    expect(await detail()).toMatchObject({
+      pendingCheckpoints: 3,
+      stepsTotal: 4,
+    });
+    expect(await listed()).toBe(3);
+    // Approve-pending acts on the approvable ones only.
+    const preview = await client.review.previewApproveBuild.query({
+      buildId: s.buildId,
+    });
+    expect(preview.pendingCheckpoints).toBe(2);
+
+    // The numbers are the columns', even stale: getById and the list agree.
+    await withStaleColumns(
+      {
+        [s.runId]: { pendingSteps: 7, checkpointCount: 10 },
+        [failed.runId]: { pendingSteps: 0 },
+      },
+      async () => {
+        expect(await detail()).toMatchObject({
+          pendingCheckpoints: 7,
+          stepsTotal: 11,
+        });
+        expect(await listed()).toBe(7);
+      },
+    );
+    expect(await detail()).toMatchObject({
+      pendingCheckpoints: 3,
+      stepsTotal: 4,
+    });
+    expect(await listed()).toBe(3);
+  });
+
+  test("getById is one statement, however many runs and steps the batch has", async () => {
+    const small = await seed({ checkpoints: [{ name: "s1", verdict: "new" }] });
+    const big = await seed({
+      checkpoints: [
+        { name: "b1", verdict: "new" },
+        { name: "b2", verdict: "unresolved" },
+        { name: "b3", verdict: "passed" },
+      ],
+    });
+    for (let i = 0; i < 5; i++) {
+      await addReviewRun(h, big, {
+        checkpoints: [
+          { name: `b${i}-1`, verdict: "unresolved" },
+          { name: `b${i}-2`, verdict: "new" },
+          { name: `b${i}-3`, verdict: "passed" },
+        ],
+      });
+    }
+    /** getById as an admin, with the request body's statements. */
+    const read = async (s: ReviewSeed) => {
+      const statements: CapturedStatement[] = [];
+      const res = await buildsRouter
+        .createCaller({
+          user: { id: s.admin.id, role: "admin", via: "jwt" },
+          db: capturing(h.db, statements),
+        } as unknown as Context)
+        .getById({ buildId: s.buildId });
+      return { res, statements: bodyStatements(statements) };
+    };
+    const one = await read(small);
+    const many = await read(big);
+    expect(one.res).toMatchObject({ runCount: 1, stepsTotal: 1 });
+    expect(many.res).toMatchObject({
+      runCount: 6,
+      stepsTotal: 18,
+      pendingCheckpoints: 12,
+    });
+    expect(one.statements).toHaveLength(1);
+    expect(many.statements).toHaveLength(1);
   });
 
   test("builds.pendingCount counts builds, member-gated", async () => {

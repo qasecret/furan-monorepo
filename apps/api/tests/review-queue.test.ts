@@ -14,11 +14,7 @@ import {
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import {
-  pendingCountsByBuild,
-  pendingCountsByRun,
-  type StepFacets,
-} from "../src/lib/review/pending.js";
+import type { StepFacets } from "../src/lib/review/pending.js";
 import {
   findNext,
   type NextInput,
@@ -29,6 +25,7 @@ import { selectPendingTargets } from "../src/lib/review/targets.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import { pendingCountsByBuild, pendingCountsByRun } from "./pending-oracle.js";
 import {
   addReviewBuild,
   addReviewRun,

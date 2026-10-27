@@ -29,6 +29,7 @@ import {
   assessRun,
   UNREVIEWABLE_LIFECYCLE_LIST,
 } from "./legality.js";
+import { pendingStepCondition, storedPendingRun } from "./pending.js";
 
 /**
  * The reads behind the decision core: the runs it locks, the checkpoints it
@@ -403,6 +404,9 @@ export type SelectionScope =
   | { projectId: string; buildId: string }
   | { projectId: string; buildId: string; diffSignature: string };
 
+/** A build's group: its checkpoints that share one diff signature. */
+export type GroupScope = Extract<SelectionScope, { diffSignature: string }>;
+
 /** The runs a scope ranges over, as a WHERE condition on `test_runs`. */
 function scopeRuns(scope: SelectionScope) {
   if ("runId" in scope) return eq(testRuns.id, scope.runId);
@@ -556,6 +560,80 @@ export async function selectPendingTargets(
       capped: c.legal.length > cap,
       cap,
     },
+  };
+}
+
+/** A member of a checkpoint's group, with the names the group read lists. */
+export interface CheckpointTarget extends ReviewTarget {
+  /** The step's (checkpoint's) name. */
+  name: string;
+  viewport: string;
+  /** Its run's test name. */
+  testName: string;
+}
+
+/**
+ * The members of a build's group (its steps with `diffSignature`) that
+ * "approve" would act on, in capture order, the first `limit` of them, and
+ * `total`, how many there are. One statement.
+ *
+ * It selects exactly what `selectPendingTargets` selects over the same group
+ * scope (`collectLegalTargets` for "approve"): the pending steps
+ * (`pendingStepCondition`) whose diff did not fail (`diff_failed`, the one
+ * pending step approve refuses). The run's stored counter is the pre-filter
+ * every step pick uses (`storedPendingRun`, `test_runs_pending_idx`): a run
+ * stored at 0 has no pending step. `group-selection-equivalence.test.ts`
+ * holds the two selections together.
+ *
+ * `limit` must be at least 1: the total is read off the selected rows.
+ * Read-only and unlocked, like `selectPendingTargets`.
+ */
+export async function selectGroupTargets(
+  db: DB | Tx,
+  args: GroupScope & { limit: number },
+): Promise<{ targets: CheckpointTarget[]; total: number }> {
+  if (!(args.limit >= 1)) {
+    throw new Error("selectGroupTargets: limit must be at least 1");
+  }
+  const rows = await db
+    .select({
+      runId: screenshots.runId,
+      screenshotId: screenshots.id,
+      name: screenshots.name,
+      viewport: screenshots.viewport,
+      testName: testRuns.name,
+      // Over every member, before the LIMIT.
+      total: sql<number>`count(*) over ()`.mapWith(Number),
+    })
+    .from(testRuns)
+    .innerJoin(screenshots, eq(screenshots.runId, testRuns.id))
+    .where(
+      and(
+        eq(testRuns.buildId, args.buildId),
+        eq(testRuns.projectId, args.projectId),
+        storedPendingRun(),
+        eq(screenshots.projectId, args.projectId),
+        eq(screenshots.diffSignature, args.diffSignature),
+        pendingStepCondition(),
+        isNull(screenshots.diffFailedAt),
+      ),
+    )
+    .orderBy(
+      asc(testRuns.createdAt),
+      asc(testRuns.id),
+      asc(screenshots.createdAt),
+      asc(screenshots.id),
+    )
+    .limit(args.limit);
+  return {
+    targets: rows.map((r) => ({
+      runId: r.runId,
+      screenshotId: r.screenshotId,
+      name: r.name,
+      viewport: r.viewport,
+      testName: r.testName,
+    })),
+    total: rows[0]?.total ?? 0,
   };
 }
 

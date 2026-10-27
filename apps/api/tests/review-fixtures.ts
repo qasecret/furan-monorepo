@@ -186,7 +186,8 @@ async function insertRun(
     spec.lifecycle ??
     rollupRunStatus({ lifecycle: "running", override, checkpoints });
   // The stored pending counters a writer would have left for these rows
-  // (spec 2026-10-27 §3.1): no decision and no failed diff yet.
+  // (spec 2026-10-27 §3.1): no decision and no failed diff yet. The step
+  // count too, as upload and complete keep it (`checkpoint_count`).
   const counters = computeRunCounters(
     { lifecycle, override, checkpoints },
     lifecycle,
@@ -203,6 +204,7 @@ async function insertRun(
       branchName: ctx.branch,
       pendingSteps: counters.pendingSteps,
       failedSteps: counters.failedSteps,
+      checkpointCount: spec.checkpoints.length,
       createdAt: nextCaptureTime(),
     })
     .returning({ id: testRuns.id });
@@ -481,7 +483,8 @@ export async function addReviewBuild(
  * `diff_failed_at`, a decision, an override, a step) and then reads anything
  * served from the counters must call this first. Like the app, it writes the
  * rollup status too, so a run seeded with a status that is not its rollup
- * gets the rollup.
+ * gets the rollup. It does not touch `checkpoint_count`: a step added by SQL
+ * must bump that itself.
  */
 export async function syncRunCounters(
   db: DB,

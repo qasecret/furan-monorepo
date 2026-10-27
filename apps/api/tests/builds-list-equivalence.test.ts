@@ -19,10 +19,7 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../src/lib/keyset-cursor.js";
-import {
-  pendingBuildIds,
-  pendingCountsByBuild,
-} from "../src/lib/review/pending.js";
+import { pendingBuildIds } from "../src/lib/review/pending.js";
 import type { Context } from "../src/trpc/context.js";
 import { buildsRouter } from "../src/trpc/v1/builds.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
@@ -33,6 +30,7 @@ import {
   type CapturedStatement,
 } from "./capturing-db.js";
 import { createTestApp, type TestApp } from "./helpers.js";
+import { pendingCountsByBuild } from "./pending-oracle.js";
 import {
   addReviewBuild,
   addReviewRun,
