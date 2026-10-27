@@ -6,7 +6,6 @@ import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
 import { ownerCreds } from "../../src/seed/load-seed.js";
 
-
 const ENGINES = [
   { engine: "odiff", cap: "diff.engine.odiff" },
   { engine: "pixelmatch", cap: "diff.engine.pixelmatch" },
@@ -34,7 +33,9 @@ test.describe("diff: L1 engines", () => {
       const project = await api.createProject(admin, {
         name: `e2e-engine-${engine}-${Date.now()}`,
       });
-      await api.setProjectConfig(admin, project.id, { imageComparison: engine });
+      await api.setProjectConfig(admin, project.id, {
+        imageComparison: engine,
+      });
 
       const base = await capture(api, {
         pat,

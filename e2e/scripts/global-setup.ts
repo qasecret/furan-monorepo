@@ -23,7 +23,8 @@ export default async function globalSetup(): Promise<void> {
   try {
     const seed = loadSeed();
     const complete =
-      seed.principals.length === EXPECTED_PRINCIPALS && seed.projects.length > 0;
+      seed.principals.length === EXPECTED_PRINCIPALS &&
+      seed.projects.length > 0;
     const authChecks = [
       api.probe("GET", "/users/me", { auth: seed.bootstrapAdminJwt }),
       ...seed.principals.map((p) =>

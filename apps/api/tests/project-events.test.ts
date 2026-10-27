@@ -127,11 +127,9 @@ function readSseHead(
           code: res.statusCode ?? 0,
           contentType: String(res.headers["content-type"] ?? ""),
           allowOrigin: res.headers["access-control-allow-origin"] as
-            | string
-            | undefined,
+            string | undefined,
           allowCredentials: res.headers["access-control-allow-credentials"] as
-            | string
-            | undefined,
+            string | undefined,
           vary: res.headers["vary"] as string | undefined,
         });
         res.destroy();

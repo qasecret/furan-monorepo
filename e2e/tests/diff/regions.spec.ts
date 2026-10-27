@@ -41,7 +41,14 @@ test("diff: an ignore region suppresses a masked-area change", async ({}, testIn
     fixture: "baseline",
   });
   await api.approveRunWithIgnore(admin, base.runId, [
-    { x: 40, y: 40, width: 120, height: 120, viewport: "400x300", mode: "ignore" },
+    {
+      x: 40,
+      y: 40,
+      width: 120,
+      height: 120,
+      viewport: "400x300",
+      mode: "ignore",
+    },
   ]);
 
   // The changed square falls entirely inside the ignore box → masked → passed.

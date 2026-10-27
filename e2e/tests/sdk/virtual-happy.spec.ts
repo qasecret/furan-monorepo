@@ -6,7 +6,6 @@ import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
 import { ownerCreds } from "../../src/seed/load-seed.js";
 
-
 /**
  * The core SDK-trigger → diff-pipeline spine, driven by the virtual-SDK:
  *   first capture → manual first-baseline ("new"),

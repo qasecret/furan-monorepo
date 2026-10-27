@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import type { HeadResult, Storage, StorageObject } from "./types.js";

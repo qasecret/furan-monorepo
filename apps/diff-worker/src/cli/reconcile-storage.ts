@@ -15,10 +15,7 @@ import { parseArgs } from "node:util";
 import { createDb } from "@furan/db";
 import { createStorage } from "@furan/storage";
 
-import {
-  gatherReferencedKeys,
-  reconcileOrphans,
-} from "../orphan-reconcile.js";
+import { gatherReferencedKeys, reconcileOrphans } from "../orphan-reconcile.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({

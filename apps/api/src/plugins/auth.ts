@@ -23,8 +23,7 @@ export type { UserRole };
  * surfaces). `tokenId` is the matched `tokens.id`, present only for a PAT.
  */
 export type AuthedUser = { id: string; role: UserRole } & (
-  | { via: "jwt" }
-  | { via: "pat"; tokenId: string }
+  { via: "jwt" } | { via: "pat"; tokenId: string }
 );
 
 declare module "fastify" {

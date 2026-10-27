@@ -22,14 +22,12 @@ function solidPng(
 }
 
 const mockProvider: VlmProvider = {
-  generate: vi.fn(
-    async (): Promise<VlmProviderResponse> => ({
-      content: JSON.stringify({
-        identical: false,
-        description: "Color changed from white to red",
-      }),
+  generate: vi.fn(async (): Promise<VlmProviderResponse> => ({
+    content: JSON.stringify({
+      identical: false,
+      description: "Color changed from white to red",
     }),
-  ),
+  })),
 };
 
 describe("runVlm", () => {
@@ -81,12 +79,10 @@ describe("runVlm", () => {
     // Claude/Gemini routinely emit ```json … ``` despite the prompt. The raw
     // JSON.parse used to reject this as parse_error and fall back to L1.
     const fencedProvider: VlmProvider = {
-      generate: vi.fn(
-        async (): Promise<VlmProviderResponse> => ({
-          content:
-            '```json\n{ "identical": false, "description": "blue to red shift" }\n```',
-        }),
-      ),
+      generate: vi.fn(async (): Promise<VlmProviderResponse> => ({
+        content:
+          '```json\n{ "identical": false, "description": "blue to red shift" }\n```',
+      })),
     };
     const result = await runVlm(baseline, candidate, {
       provider: fencedProvider,
@@ -107,7 +103,7 @@ describe("runVlm", () => {
 describe("extractJsonObject", () => {
   it("unwraps fenced, prose-preambled, and bare JSON", () => {
     expect(extractJsonObject('```json\n{"a":1}\n```')).toBe('{"a":1}');
-    expect(extractJsonObject("```\n{\"a\":1}\n```")).toBe('{"a":1}');
+    expect(extractJsonObject('```\n{"a":1}\n```')).toBe('{"a":1}');
     expect(extractJsonObject('Here is the result:\n{"a":1}\nDone.')).toBe(
       '{"a":1}',
     );

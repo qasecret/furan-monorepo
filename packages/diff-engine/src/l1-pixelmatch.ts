@@ -10,8 +10,7 @@ export async function runL1Pixelmatch(
   baseline: Buffer,
   candidate: Buffer,
   ignoreAreas:
-    | Array<{ x: number; y: number; width: number; height: number }>
-    | undefined,
+    Array<{ x: number; y: number; width: number; height: number }> | undefined,
   engineConfig: EngineConfig,
 ): Promise<L1Result> {
   const baselineBytes = applyIgnoreMask(baseline, ignoreAreas ?? []);

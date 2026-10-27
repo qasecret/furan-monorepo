@@ -58,9 +58,7 @@ export interface AnthropicVlmConfig extends BaseVlmConfig {
 }
 
 export type VlmProviderConfig =
-  | OllamaVlmConfig
-  | GeminiVlmConfig
-  | AnthropicVlmConfig;
+  OllamaVlmConfig | GeminiVlmConfig | AnthropicVlmConfig;
 
 export const DEFAULT_VLM_PROMPT = `You are provided with three images:
 1. First image: baseline screenshot

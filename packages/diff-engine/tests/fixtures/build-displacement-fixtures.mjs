@@ -26,8 +26,10 @@ function makeBaseline() {
   for (let y = 0; y < HEIGHT; y++) {
     for (let x = 0; x < WIDTH; x++) {
       const idx = (y * WIDTH + x) * 4;
-      const v = ((Math.sin(x / 8) + Math.sin(y / 12) + Math.sin((x + y) / 16)) *
-        60 + 128) | 0;
+      const v =
+        ((Math.sin(x / 8) + Math.sin(y / 12) + Math.sin((x + y) / 16)) * 60 +
+          128) |
+        0;
       img.data[idx] = v;
       img.data[idx + 1] = v;
       img.data[idx + 2] = v;
@@ -100,8 +102,10 @@ function makeBaselineLarge() {
   for (let y = 0; y < LARGE; y++) {
     for (let x = 0; x < LARGE; x++) {
       const idx = (y * LARGE + x) * 4;
-      const v = ((Math.sin(x / 8) + Math.sin(y / 12) + Math.sin((x + y) / 16)) *
-        60 + 128) | 0;
+      const v =
+        ((Math.sin(x / 8) + Math.sin(y / 12) + Math.sin((x + y) / 16)) * 60 +
+          128) |
+        0;
       img.data[idx] = v;
       img.data[idx + 1] = v;
       img.data[idx + 2] = v;

@@ -16,10 +16,7 @@ import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import { Counter, Histogram, type Registry } from "prom-client";
 
-import {
-  gatherReferencedKeys,
-  reconcileOrphans,
-} from "./orphan-reconcile.js";
+import { gatherReferencedKeys, reconcileOrphans } from "./orphan-reconcile.js";
 
 type Logger = Telemetry["logger"];
 

@@ -47,8 +47,7 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   // --- L1 pre-alignment (Tier 1.4 follow-up) ---
   let candidateImage = input.candidate.image;
   let displacementVector:
-    | { dx: number; dy: number; confidence: number }
-    | undefined;
+    { dx: number; dy: number; confidence: number } | undefined;
   if (input.ignoreDisplacements) {
     const det = detectGlobalDisplacement(
       input.baseline.image,

@@ -13,8 +13,7 @@ export async function runL1LooksSame(
   baseline: Buffer,
   candidate: Buffer,
   ignoreAreas:
-    | Array<{ x: number; y: number; width: number; height: number }>
-    | undefined,
+    Array<{ x: number; y: number; width: number; height: number }> | undefined,
   engineConfig: EngineConfig,
 ): Promise<L1Result> {
   const baselineBytes = applyIgnoreMask(baseline, ignoreAreas ?? []);
