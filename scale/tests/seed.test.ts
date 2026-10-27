@@ -139,61 +139,8 @@ async function storedCounters(
 }
 
 describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
-  it("stores every run's pending counters as pendingStepCondition counts them", async () => {
-    const scratch = await createScratch(adminUrl as string, {
-      minFreeGiB: MIN_FREE_GIB.smoke,
-    });
-    const { db, close } = createDb({ url: scratch.url });
-    const root = await mkdtemp(join(tmpdir(), "furan-scale-counters-"));
-    const storage = createHddStorage({ root });
-    try {
-      const seeded = await seed(db, shapes.smoke, storage, { reuse: false });
-
-      for (const projectId of [seeded.projectId, seeded.resolvedProjectId]) {
-        const canonical = await canonicalCounters(db, projectId);
-        expect(await storedCounters(db, projectId)).toEqual(canonical);
-      }
-      // Not vacuous: the main project has pending runs, and most of the
-      // worst-case project's are resolved.
-      const main = await canonicalCounters(db, seeded.projectId);
-      expect([...main.values()].some((c) => c.pending > 0)).toBe(true);
-      const worst = await canonicalCounters(db, seeded.resolvedProjectId);
-      expect([...worst.values()].some((c) => c.pending > 0)).toBe(true);
-      expect([...worst.values()].some((c) => c.pending === 0)).toBe(true);
-
-      // The app's writer agrees on every run (statuses, merge and counters).
-      await verifyStatuses(db, seeded.projectId, 10_000);
-      await verifyStatuses(db, seeded.resolvedProjectId, 10_000);
-
-      // A stale counter is reported as one, and left as it was.
-      const [stale] = [...main.entries()].find(([, c]) => c.pending > 0)!;
-      await db
-        .update(testRuns)
-        .set({ pendingSteps: 0 })
-        .where(eq(testRuns.id, stale));
-      const drift = await verifyStatuses(db, seeded.projectId, 10_000).then(
-        () => null,
-        (e: unknown) => e,
-      );
-      expect(drift).toBeInstanceOf(SeedDriftError);
-      expect((drift as SeedDriftError).drift).toEqual([
-        expect.objectContaining({ runId: stale, moved: ["counters"] }),
-      ]);
-      expect((drift as Error).message).toMatch(/counters 0\/\d+ -> \d+\/\d+/);
-      const [after] = await db
-        .select({ pending: testRuns.pendingSteps })
-        .from(testRuns)
-        .where(eq(testRuns.id, stale));
-      expect(after!.pending).toBe(0);
-    } finally {
-      await close();
-      await scratch.drop();
-      await scratch.release();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 300_000);
-
-  it("seeds the expected rows, consistent statuses and usable spots", async () => {
+  // One smoke seed for every check: a seed takes most of this file's time.
+  it("seeds the expected rows, consistent statuses and counters, and usable spots", async () => {
     const scratch = await createScratch(adminUrl as string, {
       minFreeGiB: MIN_FREE_GIB.smoke,
     });
@@ -324,9 +271,23 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
         shape.nightlies + shape.prBatches,
       );
 
-      // Every run's status is what recomputeRunStatus derives.
+      // Every run's status is what recomputeRunStatus derives (statuses,
+      // merge and counters).
       await verifyStatuses(db, seeded.projectId, 10_000);
       await verifyStatuses(db, seeded.resolvedProjectId, 10_000);
+
+      // Every run's pending counters are what pendingStepCondition counts.
+      for (const projectId of [seeded.projectId, seeded.resolvedProjectId]) {
+        const canonical = await canonicalCounters(db, projectId);
+        expect(await storedCounters(db, projectId)).toEqual(canonical);
+      }
+      // Not vacuous: the main project has pending runs, and most of the
+      // worst-case project's are resolved.
+      const main = await canonicalCounters(db, seeded.projectId);
+      expect([...main.values()].some((c) => c.pending > 0)).toBe(true);
+      const worst = await canonicalCounters(db, seeded.resolvedProjectId);
+      expect([...worst.values()].some((c) => c.pending > 0)).toBe(true);
+      expect([...worst.values()].some((c) => c.pending === 0)).toBe(true);
 
       // Users: the reviewers and the browser login.
       expect(seeded.reviewers).toHaveLength(shape.reviewers);
@@ -468,6 +429,34 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
       expect(
         await bcrypt.compare(again.browserLogin.password, reviewer0After!.hash),
       ).toBe(true);
+
+      // A stale counter is reported as one, and left as it was.
+      const [stale, staleCounters] = [...main.entries()].find(
+        ([, c]) => c.pending > 0,
+      )!;
+      await db
+        .update(testRuns)
+        .set({ pendingSteps: 0 })
+        .where(eq(testRuns.id, stale));
+      const drift = await verifyStatuses(db, seeded.projectId, 10_000).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(drift).toBeInstanceOf(SeedDriftError);
+      expect((drift as SeedDriftError).drift).toEqual([
+        expect.objectContaining({ runId: stale, moved: ["counters"] }),
+      ]);
+      expect((drift as Error).message).toMatch(/counters 0\/\d+ -> \d+\/\d+/);
+      const [afterStale] = await db
+        .select({ pending: testRuns.pendingSteps })
+        .from(testRuns)
+        .where(eq(testRuns.id, stale));
+      expect(afterStale!.pending).toBe(0);
+      // Put back, so the status check below reports the status alone.
+      await db
+        .update(testRuns)
+        .set({ pendingSteps: staleCounters.pending })
+        .where(eq(testRuns.id, stale));
 
       // A status the rollup would change is reported, and left as it was.
       const [victim] = await db
