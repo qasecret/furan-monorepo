@@ -100,14 +100,14 @@ test("diff: Layout match-level tolerates a content-only change", async ({}, test
 });
 
 // DEFERRED (axe produced no regions): the read path DOES exist — the tRPC query
-// runs.getById returns diffRegions[] with a `source` field, so observing
+// runs.getStep returns a step's regions[] with a `source` field, so observing
 // source='axe' regions is straightforward. The blocker is upstream: a baseline
 // capture with domHtml + accessibilityLevel/Version yielded ZERO diff_regions
-// (verified via runs.getById). Open questions: does the axe pass run on a
+// (verified via the run's regions). Open questions: does the axe pass run on a
 // first-baseline ("new") run or only when there's a diff; is the opt-in the
 // upload fields or a project/checkpoint accessibilitySettings; and does axe-core
 // under jsdom flag this DOM (some rules need computed styles jsdom lacks). Nail
-// the axe-emit path, then assert source='axe' via runs.getById + un-skip.
+// the axe-emit path, then assert source='axe' via runs.getStep + un-skip.
 test.skip("diff: axe a11y surfaces accessibility regions", async ({}, testInfo) => {
   testInfo.annotations.push(...coverAnnotations(["diff.axe_a11y"]));
   const { admin, pat } = ownerCreds();

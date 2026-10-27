@@ -25,6 +25,7 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
 const overrideMutate = vi.fn();
 const invalidate = vi.fn();
 const invalidateListCheckpoints = vi.fn();
+const invalidateStep = vi.fn();
 // What else an override refreshes: the review loop's queries.
 const loopInvalidate = vi.hoisted(() => ({
   reviewNext: vi.fn(),
@@ -38,9 +39,42 @@ const getCheckpointGroupData = vi.fn();
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-// What the two queries the hook reads answer, set per test.
+// What the queries the hook reads answer, set per test: the step list, the
+// run header, and the step's own read (`runs.getStep`).
 let checkpoints: unknown[] | undefined;
 let runData: Record<string, unknown> | undefined;
+let stepRead: ((checkpointId: string) => unknown) | undefined;
+/**
+ * By default the step's own read of a listed step: the server holds one
+ * review per step, which the list carries in part and the read in full.
+ */
+const stepFromList = (checkpointId: string) => {
+  const item = (
+    checkpoints as Array<Record<string, unknown>> | undefined
+  )?.find((i) => i.id === checkpointId);
+  return (
+    item && {
+      step: {
+        id: item.id,
+        name: item.name,
+        diffFailedAt: item.diffFailedAt ?? null,
+        diffError: item.diffError ?? null,
+      },
+      baselineContext: {
+        baselineScreenshot: null,
+        baselineSource: null,
+        variationIgnoreAreas: null,
+      },
+      regions: [],
+      review: {
+        verdict: item.verdict ?? null,
+        state: item.state ?? null,
+        decision: item.decision ?? null,
+      },
+      newerCapture: item.newerCapture ?? null,
+    }
+  );
+};
 let overrideState = { isPending: false };
 let overrideOnError: ((e: unknown) => void) | undefined;
 
@@ -50,6 +84,7 @@ vi.mock("@/lib/trpc", () => ({
       runs: {
         getById: { invalidate },
         listCheckpoints: { invalidate: invalidateListCheckpoints },
+        getStep: { invalidate: invalidateStep },
         list: { invalidate: loopInvalidate.runsList },
         facets: { invalidate: loopInvalidate.runsFacets },
       },
@@ -70,6 +105,13 @@ vi.mock("@/lib/trpc", () => ({
       },
       getById: {
         useQuery: () => ({ data: runData, isLoading: false, error: null }),
+      },
+      getStep: {
+        useQuery: (input: { checkpointId: string }) => ({
+          data: (stepRead ?? stepFromList)(input.checkpointId),
+          isLoading: false,
+          error: null,
+        }),
       },
       overrideStatus: {
         useMutation: (opts?: {
@@ -209,6 +251,8 @@ beforeEach(() => {
   overrideMutate.mockReset();
   invalidate.mockReset();
   invalidateListCheckpoints.mockReset();
+  invalidateStep.mockReset();
+  stepRead = undefined;
   for (const fn of Object.values(loopInvalidate)) fn.mockReset();
   getCheckpointGroupData.mockReset();
   getCheckpointGroupData.mockReturnValue(undefined);
@@ -522,9 +566,10 @@ describe("ApprovalBar: a run with a status override", () => {
       expect(fn).not.toHaveBeenCalled();
     }
     fireEvent.click(button("reset-override"));
-    // The run's own queries, as before.
+    // The run's own queries, as before, and its steps' own reads.
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: RUN_ID });
+    expect(invalidateStep).toHaveBeenCalledWith({ runId: RUN_ID });
     // An override moves the run's steps in or out of review, like a decision.
     for (const [name, fn] of Object.entries(loopInvalidate)) {
       expect(fn, name).toHaveBeenCalledTimes(1);
@@ -1217,18 +1262,16 @@ describe("useReviewActions", () => {
     expect(review.decide).not.toHaveBeenCalled();
   });
 
-  it("falls back to the run detail's review fields before the list has loaded", () => {
+  it("decides from the step's own read before the list has loaded", () => {
+    const read = stepFromList(CP);
     checkpoints = undefined;
-    runData = run({
-      checkpointContexts: {
-        [CP]: {
-          verdict: "unresolved",
-          state: "unresolved",
-          decision: null,
-          newerCapture: null,
-        },
-      },
-    });
+    stepRead = (id) => (id === CP ? read : undefined);
+    actionsFor().approve();
+    expect(review.decide).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the step list before the step's own read is in", () => {
+    stepRead = () => undefined;
     actionsFor().approve();
     expect(review.decide).toHaveBeenCalledTimes(1);
   });

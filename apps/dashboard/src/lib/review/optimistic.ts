@@ -16,46 +16,55 @@ import type { RouterOutputs } from "@/lib/trpc";
 
 export type CheckpointItem =
   RouterOutputs["runs"]["listCheckpoints"]["items"][number];
+/** One step as the viewer reads it (`runs.getStep`). */
+export type StepDetail = RouterOutputs["runs"]["getStep"];
+/** The run header (`runs.getById`). */
 export type RunDetail = RouterOutputs["runs"]["getById"];
 export type RunsListPage = RouterOutputs["runs"]["list"];
 export type BuildDetail = RouterOutputs["builds"]["getById"];
 
-/** The review fields a checkpoint has in every cached view of it. */
+/** The review fields a step has in the step list. */
 export type Review = Pick<CheckpointItem, "verdict" | "state" | "decision">;
+/** A step's review as `runs.getStep` has it: the decision in full. */
+export type StepReview = StepDetail["review"];
 
 export interface Actor {
   id: string;
   name: string;
 }
 
-function decideOne<T extends Review>(
-  c: T,
+/** The step list's decision: what its cards draw (`listedReview`). */
+function listedDecision(
+  kind: CheckpointDecisionKind,
+  actionId: string,
+): NonNullable<CheckpointItem["decision"]> {
+  return { actionId, kind, undo: { allowed: true } };
+}
+
+/** The viewer's decision: who decided and when, too. */
+function viewedDecision(
   kind: CheckpointDecisionKind,
   actor: Actor,
   actionId: string,
-): T {
+): NonNullable<StepReview["decision"]> {
   return {
-    ...c,
-    state: kind,
-    decision: {
-      id: `optimistic:${actionId}`,
-      actionId,
-      kind,
-      actor,
-      at: new Date().toISOString(),
-      source: "viewer",
-      legacy: false,
-      undo: { allowed: true },
-    },
+    id: `optimistic:${actionId}`,
+    ...listedDecision(kind, actionId),
+    actor,
+    at: new Date().toISOString(),
+    source: "viewer",
+    legacy: false,
   };
 }
 
-function revertOne<T extends Review>(c: T): T {
-  return { ...c, state: c.verdict, decision: null };
+/**
+ * Rewrites one step's review fields in each view of it, or returns them as
+ * they are: `item` in the step list, `review` in the step's own read.
+ */
+interface Rewrite {
+  item(id: string, c: CheckpointItem): CheckpointItem;
+  review(id: string, r: StepReview): StepReview;
 }
-
-/** Rewrites one checkpoint's review fields, or returns it as it is. */
-type Rewrite = <T extends Review>(id: string, c: T) => T;
 
 /**
  * The run status the checkpoints imply: the same rollup the server stores
@@ -79,41 +88,27 @@ export function runStatusFor(
 }
 
 /**
- * One change, applied to the two views that list a run's checkpoints. Both
- * halves return what they were given, untouched, when the change reaches
- * nothing in it, so a caller can skip writing it back.
+ * One change, applied to the two views of a run's steps: its step list, and
+ * each step read on its own. Both halves return what they were given,
+ * untouched, when the change reaches nothing in it, so a caller can skip
+ * writing it back.
  */
 export interface ReviewChange {
   /** `runs.listCheckpoints`: the items. */
   items(items: CheckpointItem[]): CheckpointItem[];
-  /**
-   * `runs.getById`: each checkpoint's context, plus the recomputed `status`.
-   * Pass the patched `items` when they are loaded; the status is then derived
-   * from them, otherwise from the patched contexts.
-   */
-  run(run: RunDetail, items?: CheckpointItem[]): RunDetail;
+  /** `runs.getStep`: the step's review. */
+  step(view: StepDetail): StepDetail;
 }
 
 function changeOf(rewrite: Rewrite): ReviewChange {
   return {
     items: (items) => {
-      const next = items.map((i) => rewrite(i.id, i));
+      const next = items.map((i) => rewrite.item(i.id, i));
       return next.some((n, k) => n !== items[k]) ? next : items;
     },
-    run: (run, items) => {
-      const entries = Object.entries(run.checkpointContexts);
-      const rewritten = entries.map(([id, c]) => [id, rewrite(id, c)] as const);
-      if (rewritten.every(([, c], k) => c === entries[k]?.[1])) return run;
-      const checkpointContexts = Object.fromEntries(rewritten);
-      return {
-        ...run,
-        checkpointContexts,
-        status: runStatusFor(
-          items ?? Object.values(checkpointContexts),
-          run.status,
-          run.statusOverride,
-        ),
-      };
+    step: (view) => {
+      const review = rewrite.review(view.step.id, view.review);
+      return review === view.review ? view : { ...view, review };
     },
   };
 }
@@ -125,43 +120,103 @@ export function decisionChange(
   actor: Actor,
   actionId: string,
 ): ReviewChange {
-  return changeOf((id, c) =>
-    ids.has(id) ? decideOne(c, kind, actor, actionId) : c,
-  );
+  return changeOf({
+    item: (id, c) =>
+      ids.has(id)
+        ? { ...c, state: kind, decision: listedDecision(kind, actionId) }
+        : c,
+    review: (id, r) =>
+      ids.has(id)
+        ? {
+            ...r,
+            state: kind,
+            decision: viewedDecision(kind, actor, actionId),
+          }
+        : r,
+  });
 }
 
 /** Takes back every decision made under `actionId`. */
 export function revertChange(actionId: string): ReviewChange {
-  return changeOf((_id, c) =>
-    c.decision?.actionId === actionId ? revertOne(c) : c,
-  );
-}
-
-/** A checkpoint's review state and decision: what a decision or an undo moves. */
-export type ReviewFields = Pick<Review, "state" | "decision">;
-
-/** Puts back the state and decision `captured` holds, per checkpoint id. */
-export function restoreChange(
-  captured: ReadonlyMap<string, ReviewFields>,
-): ReviewChange {
-  return changeOf((id, c) => {
-    const fields = captured.get(id);
-    return fields ? { ...c, ...fields } : c;
+  return changeOf({
+    item: (_id, c) =>
+      c.decision?.actionId === actionId
+        ? { ...c, state: c.verdict, decision: null }
+        : c,
+    review: (_id, r) =>
+      r.decision?.actionId === actionId
+        ? { ...r, state: r.verdict, decision: null }
+        : r,
   });
 }
 
-/** The state and decision of every checkpoint in `rows` decided under `actionId`. */
-export function decidedBy(
-  rows: Iterable<readonly [string, Review]>,
-  actionId: string,
-): Map<string, ReviewFields> {
-  const found = new Map<string, ReviewFields>();
-  for (const [id, c] of rows) {
-    if (c.decision?.actionId === actionId) {
-      found.set(id, { state: c.state, decision: c.decision });
+/**
+ * The state and decision each view holds of some steps, by step id: what a
+ * decision or an undo moves, and what a failed one puts back.
+ */
+export interface ReviewFields {
+  /** In the step list. */
+  items: ReadonlyMap<string, Pick<CheckpointItem, "state" | "decision">>;
+  /** In the steps' own reads. */
+  steps: ReadonlyMap<string, Pick<StepReview, "state" | "decision">>;
+}
+
+/** Puts back the state and decision `captured` holds, per view and step id. */
+export function restoreChange(captured: ReviewFields): ReviewChange {
+  return changeOf({
+    item: (id, c) => {
+      const fields = captured.items.get(id);
+      return fields ? { ...c, ...fields } : c;
+    },
+    review: (id, r) => {
+      const fields = captured.steps.get(id);
+      return fields ? { ...r, ...fields } : r;
+    },
+  });
+}
+
+/**
+ * The state and decision of every step in `items` and `steps` (the step
+ * views, by step id) that `keep` holds, per view.
+ */
+export function fieldsOf(
+  items: Iterable<CheckpointItem>,
+  steps: Iterable<StepDetail>,
+  keep: (decision: { actionId: string } | null, id: string) => boolean,
+): ReviewFields {
+  const fromItems = new Map<
+    string,
+    Pick<CheckpointItem, "state" | "decision">
+  >();
+  for (const c of items) {
+    if (keep(c.decision, c.id)) {
+      fromItems.set(c.id, { state: c.state, decision: c.decision });
     }
   }
-  return found;
+  const fromSteps = new Map<string, Pick<StepReview, "state" | "decision">>();
+  for (const v of steps) {
+    if (keep(v.review.decision, v.step.id)) {
+      fromSteps.set(v.step.id, {
+        state: v.review.state,
+        decision: v.review.decision,
+      });
+    }
+  }
+  return { items: fromItems, steps: fromSteps };
+}
+
+/** The state and decision of every step in the views decided under `actionId`. */
+export function decidedBy(
+  items: Iterable<CheckpointItem>,
+  steps: Iterable<StepDetail>,
+  actionId: string,
+): ReviewFields {
+  return fieldsOf(items, steps, (d) => d?.actionId === actionId);
+}
+
+/** The ids `fields` holds, in either view. */
+export function fieldIds(fields: ReviewFields): string[] {
+  return [...new Set([...fields.items.keys(), ...fields.steps.keys()])];
 }
 
 export function applyDecision(

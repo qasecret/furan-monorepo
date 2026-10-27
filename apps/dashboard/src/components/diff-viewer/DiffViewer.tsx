@@ -35,6 +35,13 @@ import { StaleStepCallout } from "./StaleStepCallout";
 import { stepDiffKey } from "./step-diff-key";
 import { stepNumber } from "./step-number";
 import { TestInfoSidebar } from "./TestInfoSidebar";
+import {
+  isNoSuchStep,
+  useCachedStep,
+  usePrefetchSteps,
+  useStep,
+  type StepView,
+} from "./use-viewer-step";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
@@ -170,21 +177,22 @@ export function DiffViewer({
 
   // ADR-038: fetch the checkpoint list for the rail
   const checkpointsQuery = trpc.runs.listCheckpoints.useQuery({ runId });
+  const railItems = checkpointsQuery.data?.items;
 
+  // The run header (spec 2026-10-27 §5): the run's own fields and its build's
+  // runner (`runByName`), for the INFO sidebar. One step at a time is read on
+  // its own, below.
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
   // The run's diff % is its worst step's: the step on screen shows its own
   // (spec §9), and the run's only for a step from before per-step diffs.
-  const runDiffPercent =
-    (data as { diffPercent?: number | null } | undefined)?.diffPercent ?? null;
+  const runDiffPercent = data?.diffPercent ?? null;
 
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
   // `state` is the review state (new / passed / unresolved / approved /
-  // rejected), null until the step has been diffed; `diffPercent` is the
-  // step's own.
+  // rejected), null until the step has been diffed.
   const checkpointSummaries = useMemo(
-    () =>
-      summarizeCheckpoints(checkpointsQuery.data?.items ?? [], runDiffPercent),
-    [checkpointsQuery.data, runDiffPercent],
+    () => summarizeCheckpoints(railItems ?? []),
+    [railItems],
   );
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
@@ -195,74 +203,58 @@ export function DiffViewer({
   );
   const project = projectQuery.data;
 
-  // "Run by" for the INFO sidebar lives on the build (test_runs has no
-  // userId column); builds.getById already exposes runByName, so reuse it
-  // instead of widening the runs.getById payload.
-  const buildQuery = trpc.builds.getById.useQuery(
-    { buildId: data?.buildId ?? "" },
-    { enabled: !!data?.buildId },
-  );
-
   // `_first` is the placeholder before the checkpoint list resolves.
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
-  // The step on screen in the checkpoint list: its facets, review state and
-  // failed diff.
-  const stepItem = checkpointsQuery.data?.items?.find(
-    (c) => c.id === activeCheckpointId,
+  // The step on screen in the checkpoint list: its facets, label and review
+  // state until its own read is in.
+  const stepItem = railItems?.find((c) => c.id === activeCheckpointId);
+
+  // The step on screen, read on its own (`runs.getStep`): its row, the
+  // baseline it is compared against, its regions and its review. The steps
+  // either side of it in the rail are fetched ahead (below), so moving to
+  // one shows it from the cache.
+  const selectedStep = useStep(runId, activeCheckpointId);
+  const stepView: StepView | undefined = selectedStep.data;
+  // An id the run has no step for (a stale or foreign link): the rail's first
+  // step is shown in its place, read-only (no review, no Save), as the viewer
+  // always has.
+  const noSuchStep = isNoSuchStep(selectedStep.error);
+  const firstStepId = railItems?.[0]?.id;
+  const fallbackStep = useStep(
+    runId,
+    noSuchStep && firstStepId !== activeCheckpointId ? firstStepId : undefined,
   );
+  const shownStep: StepView | undefined =
+    stepView ?? (noSuchStep ? fallbackStep.data : undefined);
+  const candidateScreenshot = shownStep?.step ?? null;
+  // A read that failed for another reason (the network, the server), with no
+  // step to show: said like the header's.
+  const stepError =
+    shownStep === undefined && !noSuchStep ? selectedStep.error : null;
+  // Still on its way: the first step (`_first`, the rail), the step, or the
+  // step shown in its place.
+  const stepLoading =
+    activeCheckpointId === undefined
+      ? checkpointsQuery.isLoading
+      : shownStep === undefined &&
+        (selectedStep.isLoading ||
+          (noSuchStep &&
+            (checkpointsQuery.isLoading || fallbackStep.isLoading)));
 
-  // Select the candidate by selectedCheckpointId, falling back to the
-  // first screenshot. Before the fix this was hardcoded to screenshots[0],
-  // so the viewer always rendered the first checkpoint's image no matter
-  // which row was selected in the rail.
-  const candidateScreenshot = useMemo(() => {
-    const shots = data?.screenshots ?? [];
-    if (selectedCheckpointId && selectedCheckpointId !== "_first") {
-      const match = shots.find(
-        (s) => (s as { id?: string }).id === selectedCheckpointId,
-      );
-      if (match) return match;
-    }
-    return shots[0] ?? null;
-  }, [data?.screenshots, selectedCheckpointId]);
-
-  // Per-checkpoint baseline + variation context. Server populates
-  // `checkpointContexts` keyed by screenshot id. Top-level fields on
-  // `data` are kept for back-compat (and as a fallback) but only carry
-  // the FIRST checkpoint's resolution.
-  //
   // The context is the SELECTED step's (the one Save writes to), not the
-  // displayed candidate's, which falls back to the first screenshot. Its
-  // saved regions come only from its own context: until that has loaded they
-  // are empty, never step 1's, and Save waits (`stepContextLoaded`).
-  const contextKey = activeCheckpointId ?? candidateScreenshot?.id;
-  const { currentContext, stepContextLoaded } = useMemo(() => {
-    const ctxs =
-      (
-        data as {
-          checkpointContexts?: Record<
-            string,
-            {
-              baselineScreenshot: typeof candidateScreenshot;
-              baselineSource: string | null;
-              variationIgnoreAreas: unknown[] | null;
-            }
-          >;
-        } | null
-      )?.checkpointContexts ?? {};
-    const own = contextKey ? ctxs[contextKey] : undefined;
-    if (own) return { currentContext: own, stepContextLoaded: true };
-    return {
-      currentContext: {
-        baselineScreenshot: data?.baselineScreenshot ?? null,
-        baselineSource: data?.baselineSource ?? null,
-        // Never the run-level (step 1) regions for another step.
+  // displayed candidate's, which may stand in for an id the run lacks. Its
+  // saved regions come only from its own read: never another step's, and
+  // Save waits until it is in (`stepContextLoaded`).
+  const stepContextLoaded = stepView !== undefined;
+  const currentContext = stepView
+    ? stepView.baselineContext
+    : {
+        baselineScreenshot:
+          shownStep?.baselineContext.baselineScreenshot ?? null,
+        baselineSource: shownStep?.baselineContext.baselineSource ?? null,
         variationIgnoreAreas: null,
-      },
-      stepContextLoaded: false,
-    };
-  }, [data, contextKey]);
+      };
 
   const baselineScreenshot = currentContext.baselineScreenshot;
   // Without a baseline (a new test) only side by side is available (R2).
@@ -403,11 +395,12 @@ export function DiffViewer({
       ? loop.card
       : null;
 
-  // T11: SSE — invalidate runs.getById on terminal worker events so the
-  // viewer picks up freshly written diff regions, baselineSource, etc. A step
+  // T11: SSE — the worker's events reach the viewer's reads: the run header
+  // (its status) and the steps read on their own, the one on screen and the
+  // neighbours fetched ahead (their regions, numbers, verdict). A step
   // settling (its result, or its diff failing for good) also moves the step
-  // list, which holds each step's review state, numbers and failure: a
-  // retried step leaves "being diffed" only through it.
+  // list, which holds each step's review state and failure: a retried step
+  // leaves "being diffed" only through it.
   const onSseEvent = useCallback(
     (e: RunEvent) => {
       if (
@@ -419,6 +412,15 @@ export function DiffViewer({
       }
       if (e.type === "run.checkpoint_diffed") {
         void utils.runs.listCheckpoints.invalidate({ runId });
+        // The step that settled.
+        const checkpointId = (e as { screenshotId?: unknown }).screenshotId;
+        void utils.runs.getStep.invalidate(
+          typeof checkpointId === "string"
+            ? { runId, checkpointId }
+            : { runId },
+        );
+      } else if (e.type === "capture.completed" || e.type === "run.completed") {
+        void utils.runs.getStep.invalidate({ runId });
       }
     },
     [utils, runId],
@@ -426,7 +428,8 @@ export function DiffViewer({
   useRunEvents(runId, onSseEvent);
 
   // ADR-031: hydrate the ignore-region editor's saved slices from the
-  // run + variation payload. The store's hydrateSavedIgnoreAreas
+  // step's variation (its read's baseline context). The run has no saved
+  // regions of its own (ADR-038). The store's hydrateSavedIgnoreAreas
   // preserves drafts + markedForDeletion when unsaved changes exist
   // (guards against silent loss on react-query refetch / SSE refresh).
   const hydrateSavedIgnoreAreas = useViewerStore(
@@ -437,16 +440,6 @@ export function DiffViewer({
     // Server payload may predate the paddingPx column (legacy rows have
     // no paddingPx); hydrateSavedIgnoreAreas applies `?? 0` so we widen
     // the cast and let the store normalize.
-    const runRegions = (data?.ignoreAreas ?? []) as Array<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      viewport: string;
-      paddingPx?: number;
-      kind?: "ignore" | "dynamic-text";
-      pattern?: string;
-    }>;
     const variationRegions = (currentContext.variationIgnoreAreas ??
       []) as Array<{
       x: number;
@@ -459,22 +452,14 @@ export function DiffViewer({
       pattern?: string;
     }>;
     hydrateSavedIgnoreAreas(
-      runRegions.map((r) => ({
-        ...r,
-        paddingPx: r.paddingPx ?? 0,
-        kind: r.kind ?? "ignore",
-      })),
+      [],
       variationRegions.map((r) => ({
         ...r,
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind ?? "ignore",
       })),
     );
-  }, [
-    data?.ignoreAreas,
-    currentContext.variationIgnoreAreas,
-    hydrateSavedIgnoreAreas,
-  ]);
+  }, [currentContext.variationIgnoreAreas, hydrateSavedIgnoreAreas]);
 
   // F-a/3: lazily fetch the candidate's element-map sidecar when in
   // ignore-edit mode AND the screenshot row has a key. Old runs that
@@ -502,9 +487,7 @@ export function DiffViewer({
     },
     [setSelectedIgnoreId, deleteSelected],
   );
-  const elementMapKey =
-    (candidateScreenshot as { elementMapKey?: string | null } | null)
-      ?.elementMapKey ?? null;
+  const elementMapKey = candidateScreenshot?.elementMapKey ?? null;
   // Load the element map eagerly whenever a sidecar exists for the
   // candidate. Previously gated on `ignoreEditMode !== "off"`, but the
   // toolbar's "Pick element" affordance needs to know up front whether
@@ -530,20 +513,33 @@ export function DiffViewer({
   // screenshots.diffImageKey (and the worst step's also to testRuns.diffName,
   // which only a run with a single screenshot may borrow). `legacyMissing`:
   // a step of a multi-step run diffed before steps kept their own images.
+  // The run's step count is the rail's length, never `checkpoint_count`
+  // (0 on runs from before it was kept): a step with no image of its own
+  // waits for the rail, so it is never handed the run's image meanwhile.
+  const diffName = data?.diffName ?? null;
+  const stepCount = railItems?.length;
+  const diffKeyOf = useCallback(
+    (
+      step: StepView["step"] | null,
+    ): { key: string | null; legacyMissing: boolean } =>
+      (step?.diffImageKey ?? null) === null && stepCount === undefined
+        ? { key: null, legacyMissing: false }
+        : stepDiffKey(step, { diffName, screenshotCount: stepCount ?? 0 }),
+    [diffName, stepCount],
+  );
+  // With no step at all (a run with none), the run's own image stands.
   const { key: diffOverlayKey, legacyMissing: diffImageLegacyMissing } =
-    stepDiffKey(candidateScreenshot, {
-      diffName: data?.diffName ?? null,
-      screenshotCount: data?.screenshots.length ?? 0,
-    });
+    candidateScreenshot !== null || stepCount === 0
+      ? diffKeyOf(candidateScreenshot)
+      : { key: null, legacyMissing: false };
   const baselineSource = currentContext.baselineSource;
 
   const uniqueViewports = useMemo(() => {
-    const shots = data?.screenshots ?? [];
-    const vps = shots
-      .map((s) => (s as { viewport?: string | null }).viewport ?? null)
+    const vps = (railItems ?? [])
+      .map((s) => s.viewport)
       .filter((v): v is string => Boolean(v));
     return Array.from(new Set(vps));
-  }, [data?.screenshots]);
+  }, [railItems]);
 
   // Initialize / re-sync the editor viewport to this run's actual viewport.
   // The store viewport is stamped onto every ignore region drawn on the
@@ -557,9 +553,7 @@ export function DiffViewer({
   useEffect(() => {
     if (uniqueViewports.length === 0) return;
     if (activeViewport && uniqueViewports.includes(activeViewport)) return;
-    const preferred = (
-      candidateScreenshot as { viewport?: string | null } | null
-    )?.viewport;
+    const preferred = candidateScreenshot?.viewport;
     const next =
       preferred && uniqueViewports.includes(preferred)
         ? preferred
@@ -581,42 +575,30 @@ export function DiffViewer({
       diffOverlayKey,
     ],
   );
-  // The steps either side, fetched ahead once this one is in: the next, then
-  // the previous, each with its own baseline and its own diff image.
-  const prefetch = useMemo<ImageSetRequest[]>(() => {
-    const shots = data?.screenshots ?? [];
-    const contexts =
-      (
-        data as {
-          checkpointContexts?: Record<
-            string,
-            { baselineScreenshot: { imageKey?: string | null } | null }
-          >;
-        } | null
-      )?.checkpointContexts ?? {};
-    const at = checkpointSummaries.findIndex(
-      (c) => c.id === selectedCheckpointId,
-    );
-    if (at < 0) return [];
-    const ahead: ImageSetRequest[] = [];
-    for (const step of [
-      checkpointSummaries[at + 1],
-      checkpointSummaries[at - 1],
-    ]) {
-      if (!step) continue;
-      const shot = shots.find((s) => (s as { id?: string }).id === step.id);
-      if (!shot) continue;
-      ahead.push({
-        baseline: contexts[step.id]?.baselineScreenshot?.imageKey ?? null,
-        current: shot.imageKey ?? null,
-        diff: stepDiffKey(shot, {
-          diffName: data?.diffName ?? null,
-          screenshotCount: shots.length,
-        }).key,
-      });
-    }
-    return ahead;
-  }, [data, checkpointSummaries, selectedCheckpointId]);
+  // The steps either side in the rail: their reads are fetched ahead now
+  // (spec 2026-10-27 §5), and their images once this step's are in, the
+  // next, then the previous, each with its own baseline and own diff image.
+  const railAt = checkpointSummaries.findIndex(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const nextStepId =
+    railAt >= 0 ? checkpointSummaries[railAt + 1]?.id : undefined;
+  const prevStepId =
+    railAt > 0 ? checkpointSummaries[railAt - 1]?.id : undefined;
+  usePrefetchSteps(runId, [nextStepId, prevStepId]);
+  const nextStep = useCachedStep(runId, nextStepId);
+  const prevStep = useCachedStep(runId, prevStepId);
+  const prefetch = useMemo<ImageSetRequest[]>(
+    () =>
+      [nextStep, prevStep]
+        .filter((v): v is StepView => v !== undefined)
+        .map((v) => ({
+          baseline: v.baselineContext.baselineScreenshot?.imageKey ?? null,
+          current: v.step.imageKey ?? null,
+          diff: diffKeyOf(v.step).key,
+        })),
+    [nextStep, prevStep, diffKeyOf],
+  );
   const imageSet = useImageSet(imageRequest, prefetch);
 
   // v1.1.20+: per-checkpoint region filter. Two checkpoints in one run
@@ -628,12 +610,12 @@ export function DiffViewer({
   // gracefully. Must stay above the early returns below to keep hook
   // order stable across loading/error/empty states.
   const regions = useMemo(() => {
-    const all = (data?.diffRegions ?? []) as DiffRegion[];
+    const all = (shownStep?.regions ?? []) as DiffRegion[];
     if (!selectedCheckpointId || selectedCheckpointId === "_first") return all;
     return all.filter(
       (r) => !r.screenshotId || r.screenshotId === selectedCheckpointId,
     );
-  }, [data?.diffRegions, selectedCheckpointId]);
+  }, [shownStep?.regions, selectedCheckpointId]);
 
   // Each step, and each of its viewports, opens at fit with nothing selected
   // (spec §6.2). The view-state store outlives the viewer's remount, so the
@@ -683,8 +665,10 @@ export function DiffViewer({
   // says why, and a viewer who may review can retry it, from the stage or the
   // palette. This step's retry in flight is the one retry, and the palette
   // action waits for it; another step's retry does not hold this one up.
+  // The step's own read says, else the step list until it is in.
+  const failure = stepView?.step ?? stepItem;
   const failedDiff =
-    stepItem?.diffFailedAt != null ? diffErrorCode(stepItem.diffError) : null;
+    failure?.diffFailedAt != null ? diffErrorCode(failure.diffError) : null;
   const retryingHere =
     activeCheckpointId !== undefined && retryDiff.isPending(activeCheckpointId);
   const retryFailedDiff =
@@ -715,11 +699,15 @@ export function DiffViewer({
     available: viewerMode.available,
   });
 
-  if (isLoading)
+  // The header first, then the step on screen: until both are in there is
+  // nothing to show of the step (a neighbour fetched ahead is in already).
+  if (isLoading || stepLoading)
     return <div className="p-4 text-sm text-fg-secondary">Loading…</div>;
-  if (error)
+  if (error ?? stepError)
     return (
-      <div className="p-4 text-sm text-destructive">Error: {error.message}</div>
+      <div className="p-4 text-sm text-destructive">
+        Error: {(error ?? stepError)?.message}
+      </div>
     );
   if (!data)
     return <div className="p-4 text-sm text-fg-secondary">No run data.</div>;
@@ -768,13 +756,9 @@ export function DiffViewer({
 
   // INFO sidebar metadata (reference TestStep): test details, environment,
   // execution. Environment lives per-checkpoint on the candidate screenshot
-  // (ADR-038); "Run by" + app name come from the build/project siblings.
-  const cand = candidateScreenshot as {
-    os?: string | null;
-    browser?: string | null;
-    viewport?: string | null;
-    matchLevel?: string | null;
-  } | null;
+  // (ADR-038); "Run by" comes from the run header (its build's runner), the
+  // app name from the project.
+  const cand = candidateScreenshot;
   const runMeta = data as {
     createdAt?: string | Date | null;
     updatedAt?: string | Date | null;
@@ -790,9 +774,7 @@ export function DiffViewer({
           stepItem?.name ?? ""
         }`.trim()
       : null;
-  const runByName =
-    (buildQuery.data as { runByName?: string | null } | undefined)?.runByName ??
-    null;
+  const runByName = data.runByName;
   const appName = (project as { name?: string } | undefined)?.name ?? null;
 
   // The metadata strip below the toolbar only carries signal in non-default
@@ -815,26 +797,30 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
+  // The selected step's own row, once read: its numbers (spec §9).
+  const stepRow = stepView?.step;
   // The step on screen's own diff %, for the sidebar (R46): the run's is its
   // worst step's, another step's, and stands in only for a legacy step.
-  const stepDiffPercent = stepNumber(stepItem, "diffPercent", runDiffPercent);
+  const stepDiffPercent = stepNumber(stepRow, "diffPercent", runDiffPercent);
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
   // percent above 0. Which percent (R50, R54): a step diffed per step has
-  // its own. A legacy step (generation 0, or the step list not loaded yet)
-  // has none, and borrows the run's only when the run has one screenshot:
-  // on a run of several, the run's % may be a sibling's, which would turn
-  // "No pixel changes" into "No diff image was kept" for an unchanged step.
-  const legacyStep = stepItem === undefined || stepItem.diffGeneration === 0;
+  // its own. A legacy step (generation 0, or the step not read yet) has
+  // none, and borrows the run's only when the run has one screenshot (the
+  // rail's count): on a run of several, the run's % may be a sibling's,
+  // which would turn "No pixel changes" into "No diff image was kept" for an
+  // unchanged step.
+  const legacyStep = stepRow === undefined || stepRow.diffGeneration === 0;
   const stepHasDiff =
     regions.some(isPixelDiffRegion) ||
     (legacyStep
-      ? data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0
-      : (stepItem.diffPercent ?? 0) > 0);
+      ? stepCount === 1 && (runDiffPercent ?? 0) > 0
+      : (stepRow.diffPercent ?? 0) > 0);
   // R52: a step with no verdict yet (new mid-run, or just retried) has not
-  // been compared, so Diff says nothing about it. Unknown while the step
-  // list loads.
-  const awaitingDiff = stepItem !== undefined && stepItem.state === null;
+  // been compared, so Diff says nothing about it. Unknown until the step or
+  // the step list says.
+  const awaitingDiff =
+    (stepView !== undefined || stepItem !== undefined) && review.state === null;
 
   const viewer = (
     <div
@@ -1081,11 +1067,11 @@ export function DiffViewer({
                   pixelDiffPercent={stepDiffPercent}
                   regions={regions}
                   vlmDescription={stepNumber(
-                    stepItem,
+                    stepRow,
                     "vlmDescription",
                     data?.vlmDescription,
                   )}
-                  testVariationId={stepItem?.testVariationId ?? null}
+                  testVariationId={stepRow?.testVariationId ?? null}
                   currentBaselineKey={data.baselineName ?? null}
                   runId={runId}
                 />

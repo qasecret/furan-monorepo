@@ -17,6 +17,7 @@ async function openRegionSettings(): Promise<void> {
 
 const setIgnoreAreasMutate = vi.fn();
 const invalidate = vi.fn();
+const invalidateStep = vi.fn();
 let isPending = false;
 
 vi.mock("sonner", () => ({
@@ -26,7 +27,10 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
-      runs: { getById: { invalidate } },
+      runs: {
+        getById: { invalidate },
+        getStep: { invalidate: invalidateStep },
+      },
     }),
     runs: {
       setIgnoreAreas: {
@@ -90,6 +94,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
   beforeEach(() => {
     setIgnoreAreasMutate.mockReset();
     invalidate.mockReset();
+    invalidateStep.mockReset();
     isPending = false;
     sessionStorage.clear();
     useViewerStore.setState({
@@ -226,6 +231,8 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
     });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
+    // Every step read: a variation's regions show in each run that captured it.
+    expect(invalidateStep).toHaveBeenCalledWith();
   });
 
   test("Save merges drafts and excludes markedForDeletion (variation scope)", () => {

@@ -219,6 +219,45 @@ d("review read model", () => {
     return row!;
   }
 
+  /**
+   * The run's steps in the step list's order, each with its review as the
+   * viewer reads it from `runs.getStep` (the decision with its actor and
+   * undo, the newer capture with its run, step and build). The list's own
+   * review fields must be getStep's, cut to what the list carries: the
+   * decision's action, kind and whether the viewer may undo it, and the
+   * newer capture's build name (spec 2026-10-27 §5).
+   */
+  async function stepsOf(viewer: ReviewUser, runId: string) {
+    const c = as(viewer);
+    const { items } = await c.runs.listCheckpoints.query({ runId });
+    return {
+      items: await Promise.all(
+        items.map(async (item) => {
+          const { review, newerCapture } = await c.runs.getStep.query({
+            runId,
+            checkpointId: item.id,
+          });
+          expect({
+            verdict: item.verdict,
+            state: item.state,
+            decision: item.decision,
+            newerCapture: item.newerCapture,
+          }).toEqual({
+            verdict: review.verdict,
+            state: review.state,
+            decision: review.decision && {
+              actionId: review.decision.actionId,
+              kind: review.decision.kind,
+              undo: { allowed: review.decision.undo.allowed },
+            },
+            newerCapture: newerCapture && { buildName: newerCapture.buildName },
+          });
+          return { ...item, ...review, newerCapture };
+        }),
+      ),
+    };
+  }
+
   beforeAll(async () => {
     h = await createTestApp();
     // Quiet the request log; outcomes are asserted through responses and rows.
@@ -238,10 +277,10 @@ d("review read model", () => {
   });
 
   // -------------------------------------------------------------------------
-  // runs.listCheckpoints
+  // The per-step review: runs.getStep, and the part the step list carries
   // -------------------------------------------------------------------------
 
-  describe("runs.listCheckpoints", () => {
+  describe("runs.listCheckpoints and runs.getStep", () => {
     test("after approving 1 of 3, the states are [approved, unresolved, unresolved] with the approver as the actor", async () => {
       const s = await seed({
         checkpoints: [
@@ -252,9 +291,7 @@ d("review read model", () => {
       });
       const actionId = await approve(s, s.runId, [s.shots.a!.id]);
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
 
       expect(items.map((i) => i.state)).toEqual([
         "approved",
@@ -309,9 +346,7 @@ d("review read model", () => {
           },
         ],
       });
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items.map((i) => [i.viewport, i.browser, i.os, i.device])).toEqual(
         [
           ["1280x720", "chromium", null, null],
@@ -333,9 +368,7 @@ d("review read model", () => {
       await approve(s, s.runId, [s.shots.a!.id]);
       await reject(s, s.runId, [s.shots.b!.id]);
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items.map((i) => i.state)).toEqual([
         "approved",
         "rejected",
@@ -348,9 +381,7 @@ d("review read model", () => {
         checkpoints: [{ name: "r", verdict: null }],
         lifecycle: "running",
       });
-      const res = await as(running.editor).runs.listCheckpoints.query({
-        runId: running.runId,
-      });
+      const res = await stepsOf(running.editor, running.runId);
       expect(res.items).toMatchObject([
         { verdict: null, state: null, decision: null },
       ]);
@@ -366,9 +397,7 @@ d("review read model", () => {
           ],
           lifecycle,
         });
-        const { items } = await as(s.editor).runs.listCheckpoints.query({
-          runId: s.runId,
-        });
+        const { items } = await stepsOf(s.editor, s.runId);
         expect(items.map((i) => i.state)).toEqual(["unresolved", null]);
       },
     );
@@ -387,9 +416,7 @@ d("review read model", () => {
         .set({ status: "passed" })
         .where(eq(testRuns.id, s.runId));
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items.map((i) => i.state)).toEqual(["unresolved", "passed"]);
     });
 
@@ -402,9 +429,7 @@ d("review read model", () => {
           { name: "no-baseline", verdict: "unresolved" },
         ],
       });
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items.map((i) => i.state)).toEqual(["new", "unresolved"]);
     });
 
@@ -430,9 +455,7 @@ d("review read model", () => {
         source: "inbox",
       });
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items.map((i) => i.state)).toEqual([
         "rejected",
         "rejected",
@@ -457,9 +480,7 @@ d("review read model", () => {
       });
       // No snapshot, so no one can undo these, whoever asks (an admin
       // included): the reason names the decision, not the viewer.
-      const asAdmin = await as(s.admin).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const asAdmin = await stepsOf(s.admin, s.runId);
       for (const list of [items, asAdmin.items]) {
         expect(list[1]!.decision!.undo).toEqual({
           allowed: false,
@@ -483,9 +504,7 @@ d("review read model", () => {
         .set({ revertedAt: new Date(), revertedBy: s.editor.id })
         .where(eq(checkpointDecisions.screenshotId, s.shots.a!.id));
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items[0]).toMatchObject({ state: "unresolved", decision: null });
     });
 
@@ -495,8 +514,7 @@ d("review read model", () => {
       });
       await approve(s, s.runId, [s.shots.a!.id]);
       const actorName = async () =>
-        (await as(s.editor).runs.listCheckpoints.query({ runId: s.runId }))
-          .items[0]!.decision!.actor!.name;
+        (await stepsOf(s.editor, s.runId)).items[0]!.decision!.actor!.name;
 
       expect(await actorName()).toBe(s.editor.name);
       await h.db
@@ -524,9 +542,7 @@ d("review read model", () => {
         checkpoints: [{ name: "a", verdict: "unresolved" }],
       });
 
-      const older = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const older = await stepsOf(s.editor, s.runId);
       const [a, b, c] = older.items;
       expect(a!.newerCapture).toEqual({
         runId: run2.runId,
@@ -538,9 +554,7 @@ d("review read model", () => {
       expect(c!.newerCapture).toBeNull();
 
       // The newer run's own checkpoint has nothing newer.
-      const newer = await as(s.editor).runs.listCheckpoints.query({
-        runId: run2.runId,
-      });
+      const newer = await stepsOf(s.editor, run2.runId);
       expect(newer.items.map((i) => i.newerCapture)).toEqual([null]);
     });
 
@@ -568,9 +582,7 @@ d("review read model", () => {
         .set({ buildId: other!.id })
         .where(eq(testRuns.id, run3.runId));
 
-      const first = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const first = await stepsOf(s.editor, s.runId);
       expect(first.items[0]!.newerCapture).toEqual({
         runId: run3.runId,
         checkpointId: run3.shots.a!.id,
@@ -578,13 +590,9 @@ d("review read model", () => {
         buildName: "Release 42",
       });
       // From run 2, only run 3 is newer.
-      const second = await as(s.editor).runs.listCheckpoints.query({
-        runId: run2.runId,
-      });
+      const second = await stepsOf(s.editor, run2.runId);
       expect(second.items[0]!.newerCapture?.runId).toBe(run3.runId);
-      const third = await as(s.editor).runs.listCheckpoints.query({
-        runId: run3.runId,
-      });
+      const third = await stepsOf(s.editor, run3.runId);
       expect(third.items[0]!.newerCapture).toBeNull();
     });
 
@@ -601,8 +609,7 @@ d("review read model", () => {
         );
       };
       const newerOf = async (runId: string) =>
-        (await as(s.editor).runs.listCheckpoints.query({ runId })).items[0]!
-          .newerCapture?.runId ?? null;
+        (await stepsOf(s.editor, runId)).items[0]!.newerCapture?.runId ?? null;
 
       // 300us apart inside one millisecond: a JS Date would call them equal.
       await stamp(s.runId, "2026-01-01T00:00:00.000100Z");
@@ -638,9 +645,7 @@ d("review read model", () => {
         ],
       });
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       const [a, b] = items;
       expect(a!.newerCapture).toMatchObject({
         runId: run3.runId,
@@ -677,9 +682,7 @@ d("review read model", () => {
         imageKey: `alias-${s.tag}.png`,
         verdict: "unresolved",
       });
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items[0]!.newerCapture).toBeNull();
     });
 
@@ -711,18 +714,14 @@ d("review read model", () => {
         status: "passed",
       });
 
-      const res = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const res = await stepsOf(s.editor, s.runId);
       expect(res.items[0]!.newerCapture?.buildName).toBe("#9");
 
       await h.db
         .update(builds)
         .set({ number: null })
         .where(eq(builds.id, other!.id));
-      const res2 = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const res2 = await stepsOf(s.editor, s.runId);
       expect(res2.items[0]!.newerCapture?.buildName).toBe("ci-012345678");
     });
 
@@ -741,14 +740,14 @@ d("review read model", () => {
   // -------------------------------------------------------------------------
 
   describe("decision.undo", () => {
-    /** `name`'s decision as `viewer` reads it from the checkpoint list. */
+    /** `name`'s decision as `viewer` reads it (`stepsOf`). */
     async function undoOf(
       s: ReviewSeed,
       viewer: ReviewUser,
       name: string,
       runId: string = s.runId,
     ) {
-      const { items } = await as(viewer).runs.listCheckpoints.query({ runId });
+      const { items } = await stepsOf(viewer, runId);
       const item = items.find((i) => i.name === name);
       expect(item?.decision).not.toBeNull();
       return item!.decision!.undo;
@@ -895,9 +894,7 @@ d("review read model", () => {
         .set({ before: sql`'{"unexpected": true}'::jsonb` })
         .where(eq(checkpointDecisions.screenshotId, s.shots.b!.id));
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
 
       expect(items.map((i) => i.decision!.undo)).toEqual([
         { allowed: false, reason: "history_expired" },
@@ -912,9 +909,7 @@ d("review read model", () => {
       const actionId = await approve(s, s.runId, [s.shots.a!.id]);
       await as(s.editor).review.revert.mutate({ actionId });
 
-      const { items } = await as(s.editor).runs.listCheckpoints.query({
-        runId: s.runId,
-      });
+      const { items } = await stepsOf(s.editor, s.runId);
       expect(items[0]).toMatchObject({ state: "unresolved", decision: null });
     });
 
@@ -1052,11 +1047,11 @@ d("review read model", () => {
   });
 
   // -------------------------------------------------------------------------
-  // runs.getById
+  // runs.getStep
   // -------------------------------------------------------------------------
 
-  describe("runs.getById", () => {
-    test("checkpointContexts carry the review fields beside the baseline context", async () => {
+  describe("runs.getStep", () => {
+    test("a step's review sits beside its baseline context", async () => {
       const s = await seed({
         checkpoints: [
           { name: "a", verdict: "unresolved", withBaseline: true },
@@ -1068,16 +1063,20 @@ d("review read model", () => {
         checkpoints: [{ name: "b", verdict: "new" }],
       });
 
-      const run = await as(s.editor).runs.getById.query({ runId: s.runId });
-      const ctxA = run.checkpointContexts[s.shots.a!.id]!;
-      const ctxB = run.checkpointContexts[s.shots.b!.id]!;
+      const step = (id: string) =>
+        as(s.editor).runs.getStep.query({ runId: s.runId, checkpointId: id });
+      const viewA = await step(s.shots.a!.id);
+      const viewB = await step(s.shots.b!.id);
 
-      // The pre-existing context is still there.
-      expect(ctxA).toHaveProperty("baselineScreenshot");
-      expect(ctxA).toHaveProperty("baselineSource");
-      expect(ctxA).toHaveProperty("variationIgnoreAreas");
+      // The baseline context is there.
+      expect(viewA.baselineContext).toHaveProperty("baselineScreenshot");
+      expect(viewA.baselineContext).toHaveProperty("baselineSource");
+      expect(viewA.baselineContext).toHaveProperty("variationIgnoreAreas");
       // And the review fields.
-      expect(ctxA).toMatchObject({
+      expect({
+        ...viewA.review,
+        newerCapture: viewA.newerCapture,
+      }).toMatchObject({
         verdict: "unresolved",
         state: "approved",
         decision: {
@@ -1090,7 +1089,10 @@ d("review read model", () => {
         },
         newerCapture: null,
       });
-      expect(ctxB).toMatchObject({
+      expect({
+        ...viewB.review,
+        newerCapture: viewB.newerCapture,
+      }).toMatchObject({
         verdict: "new",
         state: "new",
         decision: null,

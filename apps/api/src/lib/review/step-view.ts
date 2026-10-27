@@ -23,8 +23,8 @@ import { loadStepReview, type CheckpointReviewView } from "./reads.js";
 /**
  * The diff viewer's read of one step (spec 2026-10-27 §5): the step, the
  * baseline it is compared against, its regions and its review. `runs.getStep`
- * returns it; `runs.getById` still builds the same baseline context for every
- * step of the run (`resolveCheckpointContext`) until the viewer moves over.
+ * returns it; the run header (`runs.getById`) and the step list
+ * (`runs.listCheckpoints`) carry none of it.
  */
 
 /** A saved ignore region as the viewer reads it, in image-pixel space. */
@@ -145,9 +145,9 @@ export async function resolveCheckpointContext(
 
 /** One step as the diff viewer shows it (`runs.getStep`). */
 export interface StepView {
-  /** The step's row, as `runs.getById` lists it in `screenshots`. */
+  /** The step's row. */
   step: ScreenshotRow;
-  /** As `runs.getById`'s `checkpointContexts[step]` has it. */
+  /** What the step is compared against (`resolveCheckpointContext`). */
   baselineContext: CheckpointContext;
   /**
    * The step's diff regions and the run's regions on no step (rows from

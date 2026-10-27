@@ -14,19 +14,23 @@ import {
   hasUnsavedIgnoreChanges,
 } from "./ignore-area-payload";
 import { deriveReviewHeader, type ReviewView } from "./review-header-state";
+import {
+  useStep,
+  useStepAgreesWithList,
+  type StepView,
+} from "./use-viewer-step";
 import { useViewerStore } from "./useViewerStore";
 
 import { plural } from "@/lib/format";
-import type { CheckpointItem } from "@/lib/review/optimistic";
 import { describeOverrideError } from "@/lib/review/review-copy";
 import { useReviewMutations } from "@/lib/review/use-review-mutations";
 import { trpc } from "@/lib/trpc";
 
-type Decision = NonNullable<CheckpointItem["decision"]>;
+type Decision = NonNullable<StepView["review"]["decision"]>;
 
 /** Mark as Bug's word, in the editor, on where its note went (spec §8, R26). */
 const NOTE_ADDED = "Note added to Comments";
-type NewerCapture = NonNullable<CheckpointItem["newerCapture"]>;
+type NewerCapture = NonNullable<StepView["newerCapture"]>;
 
 export interface UseReviewActionsArgs {
   runId: string;
@@ -37,8 +41,8 @@ export interface UseReviewActionsArgs {
    */
   checkpointId?: string;
   /**
-   * Current `test_runs.status`. Defaults to the run's own status as the
-   * `runs.getById` query reports it, and to `running` — the safest value,
+   * Current `test_runs.status`. Defaults to the run's own status as the run
+   * header (`runs.getById`) reports it, and to `running` — the safest value,
    * since it disables every action — until that has loaded.
    */
   status?: RunStatus;
@@ -154,6 +158,7 @@ export function useReviewActions({
   // The same queries the viewer reads, so these do not fetch twice.
   const checkpoints = trpc.runs.listCheckpoints.useQuery({ runId });
   const runQuery = trpc.runs.getById.useQuery({ runId });
+  const stepQuery = useStep(runId, checkpointId);
 
   // The older-capture question: which step it is open for, and the control to
   // give focus back to.
@@ -172,19 +177,39 @@ export function useReviewActions({
   const listed = checkpointId
     ? items?.find((i) => i.id === checkpointId)
     : undefined;
-  // The run detail carries the same review fields; use them until the list
-  // has loaded. It does not say whether the step's diff failed (a failed diff
-  // is shown from the list alone).
+  // The step's own read (`runs.getStep`) has its review in full: who decided
+  // and whether it can be undone, and the newer capture's run, step and build.
+  // Until it has loaded, the step list says what the step needs (its state,
+  // whether it is decided, whether its diff failed), so the header is not held
+  // back by it; what only the step's read has stays empty meanwhile.
+  const view =
+    stepQuery.data?.step.id === checkpointId ? stepQuery.data : undefined;
+  useStepAgreesWithList(
+    runId,
+    listed && { item: listed, readAt: checkpoints.dataUpdatedAt },
+    view && { view, readAt: stepQuery.dataUpdatedAt },
+  );
   const current:
-    | (Pick<CheckpointItem, "state" | "decision" | "newerCapture"> &
-        Partial<Pick<CheckpointItem, "diffFailedAt">>)
-    | undefined =
-    listed ??
-    (checkpointId ? run?.checkpointContexts?.[checkpointId] : undefined);
+    | {
+        state: StepView["review"]["state"];
+        decided: boolean;
+        diffFailed: boolean;
+      }
+    | undefined = view
+    ? {
+        state: view.review.state,
+        decided: view.review.decision !== null,
+        diffFailed: view.step.diffFailedAt != null,
+      }
+    : listed && {
+        state: listed.state,
+        decided: listed.decision !== null,
+        diffFailed: listed.diffFailedAt != null,
+      };
 
   const state = current?.state ?? null;
-  const decision = current?.decision ?? null;
-  const newerCapture = current?.newerCapture ?? null;
+  const decision = view?.review.decision ?? null;
+  const newerCapture = view?.newerCapture ?? null;
   const statusOverride = run?.statusOverride ?? null;
   const effectiveStatus: RunStatus = status ?? run?.status ?? "running";
 
@@ -194,8 +219,8 @@ export function useReviewActions({
     statusOverride,
     step: current && {
       state,
-      hasDecision: decision !== null,
-      diffFailed: current.diffFailedAt != null,
+      hasDecision: current.decided,
+      diffFailed: current.diffFailed,
     },
     runSteps: items?.map((i) => ({
       state: i.state,
@@ -208,6 +233,7 @@ export function useReviewActions({
   const invalidate = () => {
     void utils.runs.getById.invalidate({ runId });
     void utils.runs.listCheckpoints.invalidate({ runId });
+    void utils.runs.getStep.invalidate({ runId });
   };
   // The run-level override is not a decision, so it is not optimistic and
   // not undoable: the refetch brings the header its new state. It also moves

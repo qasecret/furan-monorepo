@@ -22,8 +22,8 @@ interface Props {
 /**
  * Collapsible per-run comment editor.
  *
- * Reads the current value from the `runs.getById` query cache (no extra
- * fetch). Writes via `runs.setComment`. Save triggers: click the Save
+ * Reads the current value from the run header's query cache
+ * (`runs.getById`, no extra fetch). Writes via `runs.setComment`. Save triggers: click the Save
  * button, or press Cmd/Ctrl+Enter inside the textarea. Empty/whitespace
  * input is normalized to `null` so saving an emptied textarea clears the
  * column.
