@@ -10,9 +10,24 @@ import fallbackPaths from "./viewer-calls.json" with { type: "json" };
  * viewer: `loadViewerCalls` refuses a recording that differs.
  *
  * The JSON holds the paths only; the inputs are built here, as the viewer
- * sends them (`DiffViewer.tsx`, `use-review-loop.ts`,
- * `GroupApprovalCallout.tsx`, and the header's `inbox-badge.tsx`), for one
- * step.
+ * sends them, for one step. Since slice 3 (spec 2026-10-27 §5) the viewer
+ * reads one step at a time:
+ *
+ * - `DiffViewer.tsx`: the step list (`runs.listCheckpoints`), the run header
+ *   (`runs.getById`: the run's own fields and its batch's runner, so no
+ *   `builds.getById`), the project's settings (`projects.getById`), and
+ *   through `use-viewer-step.ts` the step on screen (`runs.getStep`) and the
+ *   steps either side of it in the rail, fetched ahead (`usePrefetchSteps`,
+ *   the next one, then the previous one);
+ * - `use-review-loop.ts`: where the review goes next (`review.next`);
+ * - `GroupApprovalCallout.tsx`: the step's group (`runs.getCheckpointGroup`);
+ * - the protected header's `inbox-badge.tsx` (`builds.pendingCount`).
+ *
+ * Not modelled: what the loop fetches ahead for the step `review.next`
+ * names, when that is neither the step on screen nor a neighbour (its
+ * `runs.getStep`, and another run's `runs.getById` and
+ * `runs.listCheckpoints`). Those are the same procedures, so the path set is
+ * exact; only that request count depends on the review queue.
  */
 
 /** The step a viewer is opened on. */
@@ -21,14 +36,22 @@ export interface ViewerTarget {
   buildId: string;
   runId: string;
   checkpointId: string;
+  /**
+   * The steps either side of it in the rail (`runs.listCheckpoints`' order),
+   * the next one first, as the viewer fetches them ahead (`railNeighbours`).
+   */
+  neighbours: readonly string[];
 }
 
 export interface ViewerCall {
   path: string;
-  /** The input on step 1 of the long run (R4's step). */
-  input: (s: Seeded) => unknown;
-  /** The input on any other step (the reviewers' loop opens its own). */
-  inputAt: (t: ViewerTarget) => unknown;
+  /**
+   * The inputs on step 1 of the long run (R4's step), one per request: one
+   * for most procedures, the step and its neighbours for `runs.getStep`.
+   */
+  inputs: (s: Seeded) => unknown[];
+  /** The inputs on any other step (the reviewers' loop opens its own). */
+  inputsAt: (t: ViewerTarget) => unknown[];
 }
 
 export class ViewerCallDriftError extends Error {
@@ -38,27 +61,33 @@ export class ViewerCallDriftError extends Error {
   }
 }
 
-/** Each procedure's input as the viewer sends it on open. */
-const INPUTS: Readonly<Record<string, (t: ViewerTarget) => unknown>> = {
-  "runs.listCheckpoints": (t) => ({ runId: t.runId }),
-  "runs.getById": (t) => ({ runId: t.runId }),
-  "projects.getById": (t) => ({ projectId: t.projectId }),
-  "builds.getById": (t) => ({ buildId: t.buildId }),
+/** Each procedure's inputs as the viewer sends them on open, one per request. */
+const INPUTS: Readonly<Record<string, (t: ViewerTarget) => unknown[]>> = {
+  "runs.listCheckpoints": (t) => [{ runId: t.runId }],
+  "runs.getById": (t) => [{ runId: t.runId }],
+  "projects.getById": (t) => [{ projectId: t.projectId }],
+  // The step on screen, then each neighbour the viewer fetches ahead.
+  "runs.getStep": (t) =>
+    [t.checkpointId, ...t.neighbours].map((checkpointId) => ({
+      runId: t.runId,
+      checkpointId,
+    })),
   // The loop's question from the step on screen, with the context's facets
   // (none on a plain open).
-  "review.next": (t) => ({
-    projectId: t.projectId,
-    at: { buildId: t.buildId, runId: t.runId, checkpointId: t.checkpointId },
-    facets: {},
-  }),
-  "runs.getCheckpointGroup": (t) => ({
-    runId: t.runId,
-    checkpointId: t.checkpointId,
-  }),
+  "review.next": (t) => [
+    {
+      projectId: t.projectId,
+      at: { buildId: t.buildId, runId: t.runId, checkpointId: t.checkpointId },
+      facets: {},
+    },
+  ],
+  "runs.getCheckpointGroup": (t) => [
+    { runId: t.runId, checkpointId: t.checkpointId },
+  ],
   // Not the viewer's own: the protected header's needs-review badge
   // (`inbox-badge.tsx`), which every page asks for when it opens cold, as the
   // browser suite records it.
-  "builds.pendingCount": (t) => ({ projectId: t.projectId }),
+  "builds.pendingCount": (t) => [{ projectId: t.projectId }],
 };
 
 /** The checked-in call set (`viewer-calls.json`). */
@@ -71,6 +100,23 @@ for (const path of FALLBACK_VIEWER_PATHS) {
   }
 }
 
+/**
+ * The steps the viewer fetches ahead of `checkpointId`: the next one in the
+ * rail, then the previous one, those that exist (`DiffViewer.tsx`'s
+ * `usePrefetchSteps(runId, [nextStepId, prevStepId])`). None for a step the
+ * rail does not hold.
+ */
+export function railNeighbours(
+  rail: readonly string[],
+  checkpointId: string,
+): string[] {
+  const at = rail.indexOf(checkpointId);
+  if (at < 0) return [];
+  return [rail[at + 1], rail[at - 1]].filter(
+    (id): id is string => id !== undefined,
+  );
+}
+
 /** Step 1 of the long run, where R4 opens the viewer. */
 export function viewerTargetOf(s: Seeded): ViewerTarget {
   return {
@@ -78,6 +124,7 @@ export function viewerTargetOf(s: Seeded): ViewerTarget {
     buildId: s.longRunBuildId,
     runId: s.longRunId,
     checkpointId: s.longRunFirstStepId,
+    neighbours: s.longRunFirstStepNeighbours,
   };
 }
 
@@ -85,8 +132,8 @@ function callFor(path: string): ViewerCall {
   const build = INPUTS[path]!;
   return {
     path,
-    input: (s) => build(viewerTargetOf(s)),
-    inputAt: build,
+    inputs: (s) => build(viewerTargetOf(s)),
+    inputsAt: build,
   };
 }
 
