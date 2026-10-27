@@ -67,8 +67,8 @@ const WARMUP_MS = 10_000;
 /** The measured window (at least; it stays open until the probe is done). */
 const WINDOW_MS = 60_000;
 /** The probe's warm-up passes, then its measured ones (spec §2.1). */
-const PROBE_WARMUP = 5;
-const PROBE_CALLS = 50;
+export const PROBE_WARMUP = 5;
+export const PROBE_CALLS = 50;
 /** Samples a timing budget asks for (spec §2.1). */
 const MIN_SAMPLES = 50;
 const HTTP_METRIC = "furan_http_request_duration_seconds";
@@ -205,7 +205,7 @@ interface Reviewer {
   passes: number;
 }
 
-interface Recorder {
+export interface Recorder {
   /** Calls started inside the window. */
   samples: CallSample[];
   statuses: { status: number }[];
@@ -269,9 +269,9 @@ async function countPending(
 
 /**
  * Each step as a viewer opens it: with the steps either side of it in its
- * run's rail, which the viewer fetches ahead.
+ * run's rail, which the viewer fetches ahead. Exported for its unit test.
  */
-async function withNeighbours(
+export async function withNeighbours(
   stack: Stack,
   projectId: string,
   steps: readonly { buildId: string; runId: string; checkpointId: string }[],
@@ -586,9 +586,9 @@ async function runProbe(
  * step's `runs.getStep` and its neighbour's included), one pass after
  * another (5 warm-ups, then 50). R4.time is the slowest procedure's p95, a
  * procedure's requests pooled; R4.size the decoded JSON of the largest
- * measured pass.
+ * measured pass. Exported for its unit test.
  */
-async function measureViewerOpen(
+export async function measureViewerOpen(
   stack: Stack,
   seeded: Seeded,
   viewerCalls: ViewerCall[],
