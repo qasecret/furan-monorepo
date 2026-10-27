@@ -28,6 +28,24 @@ type Logger = Telemetry["logger"];
 /** How often the reconciler looks for stuck steps and step-less runs. */
 const RECONCILE_INTERVAL_MS = 30_000;
 
+/** At most one `diff_worker_redis_error` log line per this interval. */
+const WORKER_ERROR_LOG_INTERVAL_MS = 60_000;
+
+/** How long `close()` lets a worker that is still connecting finish. */
+const CONNECT_GRACE_MS = 500;
+
+/** Wait for `work`, but no longer than `ms`. */
+async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    work,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
 export interface DiffWorkerRuntimeOptions {
   db: DB;
   storage: Storage;
@@ -203,6 +221,23 @@ export function startDiffWorker(
       ...prefix,
     },
   );
+  // BullMQ re-emits its connections' errors (a Redis blip, or a socket closed
+  // under a command while `close()` runs) as `error` on the worker. With no
+  // listener that emit throws inside BullMQ's loop and surfaces as an
+  // unhandled rejection, which ends the process. The outage itself shows
+  // through the jobs and the depth gauge, so log it, at most once a minute.
+  let lastWorkerErrorLoggedAt: number | undefined;
+  worker.on("error", (err) => {
+    const now = Date.now();
+    if (
+      lastWorkerErrorLoggedAt !== undefined &&
+      now - lastWorkerErrorLoggedAt < WORKER_ERROR_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    lastWorkerErrorLoggedAt = now;
+    logger.warn({ err }, "diff_worker_redis_error");
+  });
 
   // Dead-letter signal: a diff that exhausts its retries leaves a run stuck
   // without a verdict. Surface terminal failures as a metric + error log for
@@ -266,6 +301,15 @@ export function startDiffWorker(
       // The pass re-adds jobs through the queue, and reads Redis and the
       // database the caller closes after this: let it finish first.
       await pass;
+      // BullMQ drops a connection that is still connecting, and that
+      // connection's pending setup then fails with nothing left to catch it
+      // (its close removed every listener): an unhandled rejection. So a
+      // worker closed right after it started gets a moment to finish
+      // connecting; one whose Redis never answers is closed anyway.
+      await settleWithin(
+        Promise.allSettled([worker.waitUntilReady(), queue.waitUntilReady()]),
+        CONNECT_GRACE_MS,
+      );
       try {
         // The worker first, so the gauge still answers while it drains.
         await worker.close();

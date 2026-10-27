@@ -367,6 +367,37 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
   });
 
+  it("a worker connection error is logged, at most once a minute, and never thrown", () => {
+    const warn = vi.fn();
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: { ...noop, warn } as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      handler: stub,
+      reconciler: false,
+    });
+    const worker = runtime.worker;
+
+    // Without a listener, `emit("error")` throws: inside BullMQ's loop that
+    // is an unhandled rejection, which ends the process.
+    expect(() =>
+      worker.emit("error", new Error("Connection is closed.")),
+    ).not.toThrow();
+    worker.emit("error", new Error("Connection is closed."));
+
+    const logged = warn.mock.calls.filter(
+      ([, msg]) => msg === "diff_worker_redis_error",
+    );
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.[0]).toEqual({
+      err: expect.objectContaining({ message: "Connection is closed." }),
+    });
+  });
+
   it("registers the reconcile enqueue counter at 0 when it starts", async () => {
     runtime = startDiffWorker({
       db: {} as DB,
