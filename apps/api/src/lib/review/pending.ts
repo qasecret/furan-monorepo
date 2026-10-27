@@ -185,6 +185,31 @@ export function buildHasPendingStep(
 }
 
 /**
+ * One of the build's steps is pending inside `facets`, asked through the
+ * build's runs whose stored counter is above 0 (`test_runs_pending_idx` on
+ * `(project_id, build_id)`): a `select 1` to wrap in `exists (...)`, or in a
+ * `LATERAL (... limit 1)` that the caller's `LIMIT` can stop early. `buildId`
+ * is the enclosing query's build id, as for `buildHasPendingStep`.
+ *
+ * The step conditions reference the unaliased `screenshots` / `test_runs`,
+ * so this is its own subquery; the only link to the enclosing query is
+ * `buildId`.
+ */
+export function pendingStepOfBuild(
+  projectId: string,
+  buildId: SQL,
+  facets: StepFacets | undefined,
+): SQL {
+  return sql`select 1 from ${testRuns}
+    join ${screenshots} on ${screenshots.runId} = ${testRuns.id}
+    where ${testRuns.buildId} = ${buildId}
+      and ${testRuns.projectId} = ${projectId}
+      and ${screenshots.projectId} = ${projectId}
+      and ${storedPendingRun()}
+      and ${pendingStepCondition(facets)}`;
+}
+
+/**
  * The project's batches with a pending step inside `facets`, other than
  * `exceptBuildId` when given: a `select build_id` with one row per batch, for
  * a derived table or an `IN`.
@@ -223,14 +248,7 @@ export function pendingBuildIds(
   // scan every run of the project.
   return sql`select pending_batch.build_id
     from unnest(array(${stored})) pending_batch(build_id)
-    where exists (
-      select 1 from ${testRuns}
-      join ${screenshots} on ${screenshots.runId} = ${testRuns.id}
-      where ${testRuns.buildId} = pending_batch.build_id
-        and ${testRuns.projectId} = ${projectId}
-        and ${screenshots.projectId} = ${projectId}
-        and ${storedPendingRun()}
-        and ${pendingStepCondition(opts.facets)})`;
+    where exists (${pendingStepOfBuild(projectId, sql`pending_batch.build_id`, opts.facets)})`;
 }
 
 /**

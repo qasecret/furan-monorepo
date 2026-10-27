@@ -1072,5 +1072,50 @@ d("review queue and pending count on the stored counters", () => {
       expect(plan).toContain("Function Scan on unnest pending_builds");
       expect(plan).toContain("Sort Key: b.created_at DESC, b.id DESC");
     }
+
+    // With a facet the candidates are asked newest first and the probe stops
+    // at the first match: of the main world's five pending batches, the
+    // newest (B6) has a mobile pending step, so one is read past the sort.
+    const main = await mainWorld();
+    statements.length = 0;
+    await withUserScope(
+      h.app.db,
+      { userId: main.s.editor.id, role: "editor", projectId: main.s.projectId },
+      (tx) =>
+        findNext(capturing(tx), {
+          projectId: main.s.projectId,
+          facets: mobile,
+        }),
+    );
+    interface PlanNode {
+      "Node Type": string;
+      Alias?: string;
+      "Sort Key"?: string[];
+      "Actual Rows": number;
+      Plans?: PlanNode[];
+    }
+    const [explained] = await h.db.execute<{ "QUERY PLAN": unknown }>(
+      sql`explain (analyze, format json) ${statements[0]!}`,
+    );
+    const raw = explained!["QUERY PLAN"];
+    const [{ Plan }] = (typeof raw === "string" ? JSON.parse(raw) : raw) as [
+      { Plan: PlanNode },
+    ];
+    const nodes: PlanNode[] = [];
+    const walk = (n: PlanNode) => {
+      nodes.push(n);
+      n.Plans?.forEach(walk);
+    };
+    walk(Plan);
+    const candidates = nodes.find(
+      (n) => n["Node Type"] === "Function Scan" && n.Alias === "pending_builds",
+    );
+    const sorted = nodes.find(
+      (n) =>
+        n["Node Type"] === "Sort" && n["Sort Key"]?.[0] === "b.created_at DESC",
+    );
+    expect([candidates?.["Actual Rows"], sorted?.["Actual Rows"]]).toEqual([
+      5, 1,
+    ]);
   });
 });
