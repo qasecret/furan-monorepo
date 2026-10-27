@@ -526,6 +526,48 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("UNAUTHORIZED");
   });
 
+  test("getById: runByName is the build's runner, as builds.getById names them", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const buildId = await getSeedBuildId(h, s.runId);
+    const named = async () => {
+      const run = await client.runs.getById.query({ runId: s.runId });
+      const build = await client.builds.getById.query({ buildId });
+      expect(run.runByName).toBe(build.runByName);
+      return run.runByName;
+    };
+    expect(await named()).toBe("Mem Ber");
+    await h.db
+      .update(users)
+      .set({ firstName: "Solo", lastName: "" })
+      .where(eq(users.id, s.memberId));
+    expect(await named()).toBe("Solo");
+    // A build nobody ran: no name.
+    await h.db
+      .update(builds)
+      .set({ userId: null })
+      .where(eq(builds.id, buildId));
+    expect(await named()).toBeNull();
+  });
+
+  test("getById: runByName never names the runner of another project's build", async () => {
+    // Corrupt data: the run sits in a build of another project.
+    const [other] = await h.db
+      .insert(projects)
+      .values({ name: "beta" })
+      .returning();
+    const [foreignBuild] = await h.db
+      .insert(builds)
+      .values({ projectId: other!.id, userId: s.memberId })
+      .returning();
+    await h.db
+      .update(testRuns)
+      .set({ buildId: foreignBuild!.id })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    const run = await client.runs.getById.query({ runId: s.runId });
+    expect(run.runByName).toBeNull();
+  });
+
   describe("overrideStatus", () => {
     test("status=passed: writes status without touching merge", async () => {
       // Seed: status=unresolved (from helper), merge defaults to false.
