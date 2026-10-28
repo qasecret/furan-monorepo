@@ -80,19 +80,17 @@ declare module "fastify" {
 }
 
 export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
-  // Fastify's default bodyLimit is 1 MB, which is fine for JSON RPCs but
-  // trips the outer content-type-parser before @fastify/multipart can run
-  // its per-file fileSize check (50 MB, set below). The screenshots route
-  // tolerates an oversized `elementMapJson` part by dropping it silently
-  // — that contract is unreachable when the whole multipart envelope is
-  // rejected with 413 first. Lift the bodyLimit to match the multipart
-  // file ceiling so the route owns the truncation behaviour, not Fastify.
+  // 1 MB (Fastify's default, stated so it isn't raised by accident) for every
+  // JSON body, tRPC's included. Only the two screenshot upload routes lift
+  // their own bodyLimit to 50 MB (sdk-runs.ts). A global 50 MB let any
+  // anonymous caller hand zod a 50 MB tRPC input before auth runs
+  // (CVE-2023-54404; see packages/shared-types/src/bounded.ts).
   const app = Fastify({
     loggerInstance: deps.telemetry.logger as unknown as FastifyBaseLogger,
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
-    bodyLimit: 50 * 1024 * 1024,
+    bodyLimit: 1024 * 1024,
     // Bound the time allowed to *receive* a full request (headers + body) so a
     // slow-loris client can't hold a connection open forever. This governs
     // request receipt, NOT handler/response duration, so the long-lived SSE

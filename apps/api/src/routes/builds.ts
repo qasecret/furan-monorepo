@@ -1,5 +1,9 @@
 import { and, builds, desc, eq, projects, sql } from "@furan/db";
-import { buildPropertiesSchema } from "@furan/shared-types";
+import {
+  boundedArray,
+  buildPropertiesSchema,
+  MAX_BUILD_PROPERTIES,
+} from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -31,9 +35,10 @@ export const querySchema = z.object({
    * Repeatable `property=key=value` query param, e.g.
    * `?property=region=us-east-1&property=shard=2`. Each entry AND-joined into
    * a single `properties @> '{...}'` predicate that the GIN index serves.
+   * A build carries at most MAX_BUILD_PROPERTIES, so a filter needs no more.
    */
   property: z
-    .union([z.string(), z.array(z.string())])
+    .union([z.string(), boundedArray(z.string(), MAX_BUILD_PROPERTIES)])
     .optional()
     .transform((v) => (v === undefined ? [] : Array.isArray(v) ? v : [v])),
 });

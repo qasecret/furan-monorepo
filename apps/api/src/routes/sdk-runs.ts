@@ -11,6 +11,7 @@ import {
   testVariations,
   type DB,
 } from "@furan/db";
+import { boundedArray } from "@furan/shared-types";
 import { createStorage, objectKey } from "@furan/storage";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -74,6 +75,9 @@ const accessibilityRect = regionRect.extend({
   type: z.enum(["LargeText", "RegularText", "BoldText", "GraphicalObject"]),
 });
 
+/** The most regions of one kind a checkpoint may carry (as MAX_IGNORE_REGIONS). */
+const MAX_REGIONS_PER_KIND = 50;
+
 export const screenshotFields = z.object({
   name: z.string().min(1).max(255),
   viewport: z.string().min(1).max(64),
@@ -85,11 +89,14 @@ export const screenshotFields = z.object({
     .default("Strict"),
   regions: z
     .object({
-      ignore: z.array(regionRect).default([]),
-      layout: z.array(regionRect).default([]),
-      floating: z.array(floatingRect).default([]),
-      content: z.array(regionRect).default([]),
-      accessibility: z.array(accessibilityRect).default([]),
+      ignore: boundedArray(regionRect, MAX_REGIONS_PER_KIND).default([]),
+      layout: boundedArray(regionRect, MAX_REGIONS_PER_KIND).default([]),
+      floating: boundedArray(floatingRect, MAX_REGIONS_PER_KIND).default([]),
+      content: boundedArray(regionRect, MAX_REGIONS_PER_KIND).default([]),
+      accessibility: boundedArray(
+        accessibilityRect,
+        MAX_REGIONS_PER_KIND,
+      ).default([]),
     })
     .default({
       ignore: [],
@@ -204,6 +211,11 @@ export const telemetryBody = z
 // is also size-limited transitively. We accept either a file part `domHtml`
 // (preferred for binary safety) or a field with the same name.
 const MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024;
+// The two upload routes are the only ones allowed a body past the 1 MB global
+// bodyLimit (app.ts). The multipart route owns its per-part limits, so an
+// oversized `elementMapJson` part is dropped by the handler, not refused with
+// 413 by Fastify; the base64 route's 50 MB body holds a ~37 MB PNG.
+const UPLOAD_BODY_LIMIT = MAX_SCREENSHOT_BYTES;
 const MAX_ELEMENT_MAP_BYTES = 1_000_000;
 
 /**
@@ -709,6 +721,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/runs/:runId/screenshots",
     {
+      bodyLimit: UPLOAD_BODY_LIMIT,
       preHandler: [
         app.authenticate,
         requireProjectMember("write", {
@@ -833,6 +846,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/runs/:runId/screenshots/base64",
     {
+      bodyLimit: UPLOAD_BODY_LIMIT,
       preHandler: [
         app.authenticate,
         requireProjectMember("write", {

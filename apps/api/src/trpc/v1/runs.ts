@@ -25,6 +25,7 @@ import {
   type SQL,
 } from "@furan/db";
 import {
+  boundedArray,
   overrideStatusInputSchema,
   runStatusSchema,
 } from "@furan/shared-types";
@@ -159,7 +160,7 @@ export const ignoreRegionElementSchema = z
 
 /**
  * Total cap on the COMBINED ignore-region list per (scope, run/variation).
- * Enforced by setIgnoreAreas via `.max(50)` on the array; addIgnoreAreas
+ * Enforced by setIgnoreAreas via `boundedArray(…, 50)`; addIgnoreAreas
  * checks `existing.length + incoming.length <= MAX_IGNORE_REGIONS` so
  * append-mode can't exceed the same ceiling.
  */
@@ -181,8 +182,12 @@ const listInput = z.object({
    *
    * Semantics: `undefined` OR an empty array means "no filter" (return
    * all statuses); a non-empty array translates to `status IN (...)`.
+   * At most as many entries as there are statuses.
    */
-  status: runStatusSchema.array().optional(),
+  status: boundedArray(
+    runStatusSchema,
+    runStatusSchema.options.length,
+  ).optional(),
   /** Optional filter to runs under a single build (drill-in from Builds tab). */
   buildId: z.string().uuid().optional(),
   /**
@@ -894,10 +899,10 @@ export const runsRouter = t.router({
         runId: z.string().uuid(),
         scope: z.enum(["run", "variation"]),
         checkpointId: z.string().uuid().optional(),
-        ignoreAreas: z
-          .array(ignoreRegionElementSchema)
-          .max(MAX_IGNORE_REGIONS)
-          .nullable(),
+        ignoreAreas: boundedArray(
+          ignoreRegionElementSchema,
+          MAX_IGNORE_REGIONS,
+        ).nullable(),
       }),
     )
     .use(authed)
@@ -952,10 +957,10 @@ export const runsRouter = t.router({
     .input(
       z.object({
         runId: z.string().uuid(),
-        tempIgnoreAreas: z
-          .array(ignoreRegionElementSchema)
-          .max(MAX_IGNORE_REGIONS)
-          .nullable(),
+        tempIgnoreAreas: boundedArray(
+          ignoreRegionElementSchema,
+          MAX_IGNORE_REGIONS,
+        ).nullable(),
       }),
     )
     .use(authed)
@@ -1032,7 +1037,10 @@ export const runsRouter = t.router({
         checkpointId: z.string().uuid().optional(),
         // No `.nullable()` — append-mode of "append nothing" is meaningless.
         // Empty array is allowed (no-op) so idempotent retries don't error.
-        ignoreAreas: z.array(ignoreRegionElementSchema).max(MAX_IGNORE_REGIONS),
+        ignoreAreas: boundedArray(
+          ignoreRegionElementSchema,
+          MAX_IGNORE_REGIONS,
+        ),
       }),
     )
     .use(authed)
