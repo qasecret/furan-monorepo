@@ -70,6 +70,7 @@
                   "items": {
                     "properties": {
                       "createdAt": {
+                        "format": "date-time",
                         "type": "string"
                       },
                       "id": {
@@ -80,6 +81,7 @@
                         "type": "string"
                       },
                       "lastUsedAt": {
+                        "format": "date-time",
                         "type": [
                           "string",
                           "null"
@@ -149,6 +151,7 @@
                 "schema": {
                   "properties": {
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "id": {
@@ -576,6 +579,7 @@
                         "type": "integer"
                       },
                       "createdAt": {
+                        "format": "date-time",
                         "type": "string"
                       },
                       "diffThreshold": {
@@ -632,6 +636,7 @@
                         ]
                       },
                       "updatedAt": {
+                        "format": "date-time",
                         "type": "string"
                       }
                     },
@@ -719,6 +724,7 @@
                       "type": "integer"
                     },
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "diffThreshold": {
@@ -775,6 +781,7 @@
                       ]
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     }
                   },
@@ -879,6 +886,7 @@
                       "type": "integer"
                     },
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "diffThreshold": {
@@ -935,6 +943,7 @@
                       ]
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     }
                   },
@@ -1085,6 +1094,7 @@
                             ]
                           },
                           "createdAt": {
+                            "format": "date-time",
                             "type": "string"
                           },
                           "environment": {
@@ -1129,6 +1139,7 @@
                             ]
                           },
                           "updatedAt": {
+                            "format": "date-time",
                             "type": "string"
                           },
                           "userId": {
@@ -1294,6 +1305,7 @@
                       ]
                     },
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "environment": {
@@ -1338,6 +1350,7 @@
                       ]
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "userId": {
@@ -1387,6 +1400,7 @@
                       ]
                     },
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "environment": {
@@ -1431,6 +1445,7 @@
                       ]
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "userId": {
@@ -1553,6 +1568,7 @@
                 "schema": {
                   "properties": {
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "id": {
@@ -2064,6 +2080,7 @@
                   "items": {
                     "properties": {
                       "createdAt": {
+                        "format": "date-time",
                         "type": "string"
                       },
                       "defaultProjectId": {
@@ -2100,6 +2117,7 @@
                         "type": "string"
                       },
                       "updatedAt": {
+                        "format": "date-time",
                         "type": "string"
                       }
                     },
@@ -2217,6 +2235,7 @@
                 "schema": {
                   "properties": {
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "defaultProjectId": {
@@ -2253,6 +2272,7 @@
                       "type": "string"
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     }
                   },
@@ -2335,6 +2355,7 @@
                 "schema": {
                   "properties": {
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "defaultProjectId": {
@@ -2473,6 +2494,7 @@
                 "schema": {
                   "properties": {
                     "createdAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "defaultProjectId": {
@@ -2509,6 +2531,7 @@
                       "type": "string"
                     },
                     "updatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     }
                   },

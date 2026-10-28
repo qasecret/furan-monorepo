@@ -5,10 +5,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createTestApp, type TestApp } from "./helpers.js";
 
 /**
- * CVE-2023-54404: zod 3 parses every element of an oversized array before
- * rejecting it, and tRPC parses input before `authed` runs. These requests are
- * all anonymous: an oversized input must fail on its size alone (one issue, a
- * small response), and no JSON body past 1 MB may reach a parser at all.
+ * CVE-2023-54404: zod before 4.6.6 parsed every element of an oversized array
+ * before rejecting it, and tRPC parses input before `authed` runs. These
+ * requests are all anonymous: an oversized input must fail on its size alone
+ * (one issue, a small response), and no JSON body past 1 MB may reach a parser
+ * at all.
  */
 describe("request input bounds", () => {
   let h: TestApp;
@@ -29,14 +30,14 @@ describe("request input bounds", () => {
   }
 
   test("an oversized tRPC array fails on its size, before any element is parsed", async () => {
-    // ~400 KB: under the body limit, and 30,000 bad elements that zod 3 would
-    // otherwise turn into 30,000 issues (a multi-MB error response).
+    // ~400 KB: under the body limit, and 30,000 bad elements that an unbounded
+    // parse would turn into 30,000 issues (a multi-MB error response).
     const res = await approve(Array(30_000).fill("not-a-uuid"));
 
     expect(res.statusCode).toBe(400);
     expect(res.body.length).toBeLessThan(5_000);
-    expect(res.body).toContain("Array must contain at most 500 element(s)");
-    expect(res.body).not.toContain("Invalid uuid");
+    expect(res.body).toContain("Too big: expected array to have <=500 items");
+    expect(res.body).not.toContain("Invalid UUID");
   });
 
   test("an input at the cap passes validation and is refused by auth", async () => {

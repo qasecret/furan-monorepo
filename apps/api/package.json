@@ -28,7 +28,7 @@
     "openapi:snapshot": "tsx scripts/snapshot.ts"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.0",
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.1.1",
     "@fastify/jwt": "^10.2.2",
@@ -47,7 +47,7 @@
     "fastify": "^5.12.7",
     "fastify-plugin": "^6.0.1",
     "json-stable-stringify": "^1.1.1",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^10.1.0",

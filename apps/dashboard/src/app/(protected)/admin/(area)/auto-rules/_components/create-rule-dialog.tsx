@@ -38,7 +38,7 @@ import { trpc } from "@/lib/trpc";
 const schema = z.object({
   label: z.string().min(1, "Label is required").max(200),
   selector: z.string().min(1, "CSS selector is required"),
-  maxDiff: z.coerce.number().min(0).max(100).optional(),
+  maxDiff: z.coerce.number<number>().min(0).max(100).optional(),
   action: z.enum(["auto_approve", "flag"]),
 });
 
