@@ -1,21 +1,25 @@
 import { z } from "zod";
 
+import { boundedRecord } from "./bounded.js";
+
+/** The most K/V properties one build may carry. */
+export const MAX_BUILD_PROPERTIES = 20;
+
 /**
  * K/V properties attached to a build. Constrained at the boundary:
  * 1–20 keys, key 1–64 chars matching /^[a-zA-Z0-9_.-]+$/, value ≤ 256 chars.
+ * The key count is checked before any key or value is parsed.
  */
-export const buildPropertiesSchema = z
-  .record(
-    z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[a-zA-Z0-9_.-]+$/),
-    z.string().max(256),
-  )
-  .refine((p) => Object.keys(p).length <= 20, {
-    message: "max 20 properties per build",
-  });
+export const buildPropertiesSchema = boundedRecord(
+  z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9_.-]+$/),
+  z.string().max(256),
+  MAX_BUILD_PROPERTIES,
+  `max ${MAX_BUILD_PROPERTIES} properties per build`,
+);
 
 export type BuildProperties = z.infer<typeof buildPropertiesSchema>;
 

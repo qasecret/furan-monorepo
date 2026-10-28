@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { boundedArray } from "./bounded.js";
 import { runStatusSchema } from "./run-status.js";
 
 export const inboxStatusFilter = z.enum(["all-open", "unresolved", "failed"]);
@@ -8,9 +9,15 @@ export type InboxStatusFilter = z.infer<typeof inboxStatusFilter>;
 export const inboxWindowFilter = z.enum(["24h", "7d", "30d", "all"]);
 export type InboxWindowFilter = z.infer<typeof inboxWindowFilter>;
 
+/**
+ * The most projects one inbox filter may name: the per-user assignment cap
+ * (`members.setUserProjects`).
+ */
+export const INBOX_PROJECT_IDS_MAX = 200;
+
 export const inboxListInput = z.object({
   status: inboxStatusFilter.default("all-open"),
-  projectIds: z.array(z.string().uuid()).nullish(),
+  projectIds: boundedArray(z.string().uuid(), INBOX_PROJECT_IDS_MAX).nullish(),
   window: inboxWindowFilter.default("7d"),
   cursor: z.string().nullish(),
   limit: z.number().int().min(1).max(100).default(50),
@@ -19,7 +26,7 @@ export const inboxListInput = z.object({
 export type InboxListInput = z.infer<typeof inboxListInput>;
 
 export const inboxCountInput = z.object({
-  projectIds: z.array(z.string().uuid()).nullish(),
+  projectIds: boundedArray(z.string().uuid(), INBOX_PROJECT_IDS_MAX).nullish(),
   window: inboxWindowFilter.default("7d"),
 });
 export type InboxCountInput = z.infer<typeof inboxCountInput>;

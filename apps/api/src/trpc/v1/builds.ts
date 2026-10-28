@@ -1,6 +1,8 @@
 import { and, builds, eq, sql, type SQL } from "@furan/db";
 import {
+  boundedRecord,
   buildAggregateStatusSchema,
+  MAX_BUILD_PROPERTIES,
   type BuildAggregateStatus,
 } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
@@ -29,7 +31,12 @@ const listInput = z.object({
   limit: z.number().int().min(1).max(100).default(25),
   branch: z.string().min(1).max(200).optional(),
   status: buildAggregateStatusSchema.optional(),
-  properties: z.record(z.string(), z.string()).optional(),
+  /** A build carries at most MAX_BUILD_PROPERTIES, so a filter needs no more. */
+  properties: boundedRecord(
+    z.string(),
+    z.string(),
+    MAX_BUILD_PROPERTIES,
+  ).optional(),
   /**
    * `true` keeps the builds that need review: at least one pending step (spec
    * §3.1; `pendingStepCondition`). `false` or omitted is no filter. Combines

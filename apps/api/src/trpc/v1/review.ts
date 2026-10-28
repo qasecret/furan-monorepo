@@ -9,7 +9,7 @@ import {
   type DB,
   type Tx,
 } from "@furan/db";
-import type { ApproveBuildPreview } from "@furan/shared-types";
+import { boundedArray, type ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
 import {
@@ -77,16 +77,16 @@ const REASON_MAX = 500;
 
 const uuid = z.string().uuid();
 const actionIdSchema = uuid;
-const checkpointIdsSchema = z.array(uuid).min(1).max(CHECKPOINT_IDS_MAX);
+const checkpointIdsSchema = boundedArray(uuid, CHECKPOINT_IDS_MAX, { min: 1 });
 
 const approveInput = z.object({
   runId: uuid,
   actionId: actionIdSchema,
   checkpointIds: checkpointIdsSchema.optional(),
-  ignoreAreas: z
-    .array(ignoreRegionElementSchema)
-    .max(MAX_IGNORE_REGIONS)
-    .optional(),
+  ignoreAreas: boundedArray(
+    ignoreRegionElementSchema,
+    MAX_IGNORE_REGIONS,
+  ).optional(),
 });
 const rejectInput = z.object({
   runId: uuid,
@@ -126,7 +126,7 @@ const nextInput = z.object({
       device: z.string().min(1).max(64).optional(),
     })
     .optional(),
-  excludeBuildIds: z.array(uuid).max(EXCLUDE_BUILDS_MAX).optional(),
+  excludeBuildIds: boundedArray(uuid, EXCLUDE_BUILDS_MAX).optional(),
 });
 const approveBuildInput = z.object({
   buildId: uuid,

@@ -11,6 +11,7 @@ export const PHASE = "1.A-skeleton" as const;
 // can import without taking a build dependency on apps/api.
 export type AppRouter = AnyRouter;
 
+export * from "./bounded.js";
 export * from "./run-status.js";
 export * from "./build.js";
 export * from "./region-patterns.js";

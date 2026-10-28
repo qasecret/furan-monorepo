@@ -981,6 +981,21 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(res.statusCode).toBe(413);
   });
 
+  test("POST /runs/:id/screenshots/base64 accepts a body past the 1 MB global limit", async () => {
+    // ~2 MB of JSON: only the upload routes lift their bodyLimit (app.ts).
+    const png = Buffer.concat([TINY_PNG, Buffer.alloc(1_500_000)]);
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${s.runId}/screenshots/base64`,
+      headers: {
+        Authorization: `Bearer ${s.memberJwt}`,
+        "Content-Type": "application/json",
+      },
+      payload: { pngBase64: png.toString("base64"), name: "large-body" },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
   // ---------------------------------------------------------------------------
   // POST /_telemetry/sdk
   // ---------------------------------------------------------------------------

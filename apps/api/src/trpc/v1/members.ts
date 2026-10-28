@@ -1,4 +1,5 @@
 import { and, asc, eq, projectMembers, users } from "@furan/db";
+import { boundedArray } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -172,7 +173,7 @@ export const membersRouter = t.router({
         // transaction. 200 matches the codebase's other bulk caps
         // (BULK_CAP / GROUP_APPROVE_CAP) and is far above any real
         // per-user project count.
-        projectIds: z.array(z.string().uuid()).max(200),
+        projectIds: boundedArray(z.string().uuid(), 200),
         defaultProjectId: z.string().uuid().nullable(),
       }),
     )
