@@ -36,6 +36,27 @@ async function clientForwardedFor(): Promise<string | undefined> {
   return xff;
 }
 
+/**
+ * Whether the session cookie gets `Secure`. In production it does, except
+ * when the browser is on plain http: the one-file install at
+ * `http://localhost:8080`, or `http://<host>:8080` from another machine. A
+ * browser on plain http rejects a `Secure` cookie (WebKit even on loopback,
+ * where Chromium and Firefox make an exception), so the user would be sent
+ * back to /login. There `Secure` protects nothing: the cookie would not be
+ * set at all, and the password itself just crossed the same connection. A
+ * cookie set over https stays `Secure`, so it is never sent over http later.
+ *
+ * The browser's `Origin` says where it is, whatever the proxies in front
+ * forward, and Next already requires it to match the host for a Server Action.
+ * No Origin, or one that doesn't parse, keeps `Secure`.
+ */
+async function sessionCookieSecure(): Promise<boolean> {
+  if (process.env.NODE_ENV !== "production") return false;
+  const origin = (await headers()).get("origin");
+  if (!origin || !URL.canParse(origin)) return true;
+  return new URL(origin).protocol !== "http:";
+}
+
 export interface LoginState {
   error?: string;
   /**
@@ -87,7 +108,7 @@ export async function loginAction(
   store.set(JWT_COOKIE, body.token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await sessionCookieSecure(),
     maxAge: 60 * 60 * 24 * 7,
     path: "/",
   });
