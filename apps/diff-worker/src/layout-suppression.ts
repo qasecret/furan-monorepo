@@ -145,12 +145,10 @@ export function classifyLayoutClusters(
   opts: LayoutOpts = {},
 ): LayoutVerdict[] {
   if (!candidateMap || !baselineMap) {
-    return clusterBboxes.map(
-      (): LayoutVerdict => ({
-        decision: "keep",
-        reason: "degraded_no_map",
-      }),
-    );
+    return clusterBboxes.map((): LayoutVerdict => ({
+      decision: "keep",
+      reason: "degraded_no_map",
+    }));
   }
   return clusterBboxes.map((bbox) =>
     classifyCluster(bbox, candidateMap, baselineMap, opts),

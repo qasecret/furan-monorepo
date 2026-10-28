@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   await sharp(svg("#1e40ff")).png().toFile(`${DIR}identical.png`);
   // changed swaps the square to red → a bounded, predictable pixel diff.
   await sharp(svg("#ff2020")).png().toFile(`${DIR}changed.png`);
-   
+
   console.log("fixtures written: baseline.png, identical.png, changed.png");
 }
 

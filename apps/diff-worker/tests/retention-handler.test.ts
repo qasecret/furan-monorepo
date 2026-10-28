@@ -83,7 +83,7 @@ desc("handleRetentionJob (integration)", () => {
         role: "admin",
       })
       .returning();
-    userId = u.id;
+    userId = u!.id;
     const [p] = await db
       .insert(projects)
       .values({
@@ -92,24 +92,24 @@ desc("handleRetentionJob (integration)", () => {
         retentionDays: 7,
       })
       .returning();
-    projectId = p.id;
+    projectId = p!.id;
 
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId: u.id, isRunning: false })
+      .values({ projectId: p!.id, userId: u!.id, isRunning: false })
       .returning();
-    buildId = b.id;
+    buildId = b!.id;
     const [v] = await db
       .insert(testVariations)
       .values({
         name: "v",
-        projectId: p.id,
+        projectId: p!.id,
         branchName: "main",
         browser: "chromium",
         viewport: "1280x720",
       })
       .returning();
-    variationId = v.id;
+    variationId = v!.id;
   }, 30_000);
 
   afterEach(async () => {
@@ -146,7 +146,6 @@ desc("handleRetentionJob (integration)", () => {
       .values({
         name: "recent",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "main",
         status: "passed",
@@ -158,7 +157,6 @@ desc("handleRetentionJob (integration)", () => {
       .values({
         name: "old-10d",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "main",
         status: "passed",
@@ -170,7 +168,6 @@ desc("handleRetentionJob (integration)", () => {
       .values({
         name: "old-30d",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "main",
         status: "passed",
@@ -189,13 +186,13 @@ desc("handleRetentionJob (integration)", () => {
       .select({ id: testRuns.id })
       .from(testRuns)
       .where(eq(testRuns.projectId, projectId));
-    expect(remaining.map((r) => r.id).sort()).toEqual([recent.id].sort());
+    expect(remaining.map((r) => r.id).sort()).toEqual([recent!.id].sort());
     expect(await counterValue(metrics.deletedRuns, projectId)).toBe(2);
 
     // Reference the captured ids so eslint doesn't whine about unused
     // returning() values.
-    expect(old1.id).toBeDefined();
-    expect(old2.id).toBeDefined();
+    expect(old1!.id).toBeDefined();
+    expect(old2!.id).toBeDefined();
   }, 30_000);
 
   test("project with retentionDays=0 is skipped (no deletes, no metric)", async () => {
@@ -210,7 +207,6 @@ desc("handleRetentionJob (integration)", () => {
     await db.insert(testRuns).values({
       name: "ancient",
       projectId,
-      testVariationId: variationId,
       buildId,
       branchName: "main",
       status: "passed",
@@ -244,7 +240,6 @@ desc("handleRetentionJob (integration)", () => {
       .values({
         name: "old",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "main",
         status: "passed",
@@ -266,7 +261,7 @@ desc("handleRetentionJob (integration)", () => {
         .from(testRuns)
         .where(eq(testRuns.projectId, projectId));
       expect(remaining.length).toBe(1);
-      expect(remaining[0].id).toBe(oldRun.id);
+      expect(remaining[0]!.id).toBe(oldRun!.id);
       expect(await counterValue(metrics.deletedRuns, projectId)).toBe(0);
       expect(await counterValue(metrics.lockSkipped, projectId)).toBe(1);
 
@@ -285,7 +280,6 @@ desc("handleRetentionJob (integration)", () => {
     await db.insert(testRuns).values({
       name: "old-a",
       projectId,
-      testVariationId: variationId,
       buildId,
       branchName: "main",
       status: "passed",
@@ -294,7 +288,6 @@ desc("handleRetentionJob (integration)", () => {
     await db.insert(testRuns).values({
       name: "old-b",
       projectId,
-      testVariationId: variationId,
       buildId,
       branchName: "main",
       status: "passed",
@@ -338,7 +331,6 @@ desc("handleRetentionJob (integration)", () => {
       .values({
         name: "old-with-screenshot",
         projectId,
-        testVariationId: variationId,
         buildId,
         branchName: "main",
         status: "passed",
@@ -349,13 +341,13 @@ desc("handleRetentionJob (integration)", () => {
     // Synthesize unique bytes per test run via the uniq suffix so we
     // never collide with a stale screenshots row from a prior failed run.
     const uniqBytes = Buffer.from(
-      `retention-test-${old.id}-${Date.now()}`,
+      `retention-test-${old!.id}-${Date.now()}`,
       "utf8",
     );
     const imageKey = objectKey(uniqBytes);
     await storage.put(imageKey, uniqBytes, "image/png");
     await db.insert(screenshots).values({
-      runId: old.id,
+      runId: old!.id,
       projectId,
       testVariationId: variationId,
       name: "checkpoint-1",

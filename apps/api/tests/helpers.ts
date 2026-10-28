@@ -108,9 +108,9 @@ const COMPOSE_ENV_CANDIDATES = [
  * both lookups no-op and the test honours the shell creds.
  */
 function loadMinioCredsFromRunningContainer(): {
-  user?: string;
-  password?: string;
-  bucket?: string;
+  user?: string | undefined;
+  password?: string | undefined;
+  bucket?: string | undefined;
 } {
   // Common dev container names: docker compose default + the compose
   // project name override. `printenv` exits non-zero if the var is unset,
@@ -167,8 +167,8 @@ function ensureMinioBucket(bucket: string): void {
 }
 
 function loadMinioCredsFromComposeEnv(): {
-  user?: string;
-  password?: string;
+  user?: string | undefined;
+  password?: string | undefined;
 } {
   for (const path of COMPOSE_ENV_CANDIDATES) {
     if (!existsSync(path)) continue;

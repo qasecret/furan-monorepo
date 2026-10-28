@@ -15,6 +15,7 @@ import {
   testVariations,
   users,
   type DB,
+  type RunStatus,
 } from "@furan/db";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import type { inferRouterInputs } from "@trpc/server";
@@ -104,16 +105,16 @@ async function seed(h: TestApp): Promise<Seeded> {
 
   await h.db
     .insert(projectMembers)
-    .values({ userId: member.id, projectId: project.id });
+    .values({ userId: member!.id, projectId: project!.id });
 
   const [build] = await h.db
     .insert(builds)
-    .values({ projectId: project.id, userId: member.id, isRunning: true })
+    .values({ projectId: project!.id, userId: member!.id, isRunning: true })
     .returning();
 
   const [variation] = await h.db
     .insert(testVariations)
-    .values({ name: "home", projectId: project.id })
+    .values({ name: "home", projectId: project!.id })
     .returning();
 
   // 26 runs total. Index 0 is the OLDEST, index 25 the NEWEST.
@@ -127,7 +128,7 @@ async function seed(h: TestApp): Promise<Seeded> {
     // i=0 → oldest (now - 25_000ms); i=25 → newest (now).
     const createdAt = new Date(now - (total - 1 - i) * 1000);
     let branchName = "main";
-    let status: string = "new";
+    let status: RunStatus = "new";
     if (i === total - 2) {
       // 2nd newest: feature/x + passed
       branchName = "feature/x";
@@ -140,8 +141,8 @@ async function seed(h: TestApp): Promise<Seeded> {
     const [row] = await h.db
       .insert(testRuns)
       .values({
-        buildId: build.id,
-        projectId: project.id,
+        buildId: build!.id,
+        projectId: project!.id,
         status,
         branchName,
         name: `run-${i}`,
@@ -149,17 +150,17 @@ async function seed(h: TestApp): Promise<Seeded> {
         updatedAt: createdAt,
       })
       .returning();
-    runIdsAsc.push(row.id);
+    runIdsAsc.push(row!.id);
   }
 
   return {
-    memberId: member.id,
-    memberJwt: h.app.jwt.sign({ sub: member.id, role: "editor" }),
-    nonMemberId: nonMember.id,
-    nonMemberJwt: h.app.jwt.sign({ sub: nonMember.id, role: "editor" }),
-    projectId: project.id,
-    variationId: variation.id,
-    buildId: build.id,
+    memberId: member!.id,
+    memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    nonMemberId: nonMember!.id,
+    nonMemberJwt: h.app.jwt.sign({ sub: nonMember!.id, role: "editor" }),
+    projectId: project!.id,
+    variationId: variation!.id,
+    buildId: build!.id,
     runIdsAsc,
   };
 }

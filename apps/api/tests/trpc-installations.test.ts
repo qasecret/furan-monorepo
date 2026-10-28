@@ -91,12 +91,12 @@ async function seed(h: TestApp): Promise<Seeded> {
     .returning();
 
   return {
-    adminId: admin.id,
-    adminJwt: h.app.jwt.sign({ sub: admin.id, role: "admin" }),
-    editorId: editor.id,
-    editorJwt: h.app.jwt.sign({ sub: editor.id, role: "editor" }),
-    projectId: project.id,
-    installationRowId: installation.id,
+    adminId: admin!.id,
+    adminJwt: h.app.jwt.sign({ sub: admin!.id, role: "admin" }),
+    editorId: editor!.id,
+    editorJwt: h.app.jwt.sign({ sub: editor!.id, role: "editor" }),
+    projectId: project!.id,
+    installationRowId: installation!.id,
     installationNumericId,
   };
 }

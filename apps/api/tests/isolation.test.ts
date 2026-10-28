@@ -52,7 +52,7 @@ describe("project-isolation matrix", () => {
           isActive: true,
         })
         .returning();
-      return u.id;
+      return u!.id;
     };
 
     const adminId = await seedUser("admin@t.example", "admin");
@@ -73,8 +73,8 @@ describe("project-isolation matrix", () => {
       .insert(projects)
       .values({ name: "beta" })
       .returning();
-    projectAId = pA.id;
-    projectBId = pB.id;
+    projectAId = pA!.id;
+    projectBId = pB!.id;
 
     await h.db
       .insert(projectMembers)
@@ -156,7 +156,7 @@ describe("project-isolation matrix", () => {
     expect(res.statusCode).toBe(200);
     const list = res.json() as Array<{ id: string }>;
     expect(list.length).toBe(1);
-    expect(list[0].id).toBe(projectAId);
+    expect(list[0]!.id).toBe(projectAId);
   });
 
   test("8. GET /projects as guest -> []", async () => {

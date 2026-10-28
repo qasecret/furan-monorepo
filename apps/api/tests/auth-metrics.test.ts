@@ -27,7 +27,9 @@ describe("recordAuthFailure", () => {
     // Registering twice for the same registry must not throw or duplicate.
     recordAuthFailure(reg, "invalid_pat");
     const metrics = await reg.getMetricsAsJSON();
-    const series = metrics.filter((m) => m.name === "furan_auth_failures_total");
+    const series = metrics.filter(
+      (m) => m.name === "furan_auth_failures_total",
+    );
     expect(series).toHaveLength(1);
   });
 });

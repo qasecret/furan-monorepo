@@ -86,9 +86,9 @@ describe("RBAC hooks", () => {
       })
       .returning();
 
-    adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
-    editorJwt = h.app.jwt.sign({ sub: editor.id, role: "editor" });
-    guestJwt = h.app.jwt.sign({ sub: guest.id, role: "guest" });
+    adminJwt = h.app.jwt.sign({ sub: admin!.id, role: "admin" });
+    editorJwt = h.app.jwt.sign({ sub: editor!.id, role: "editor" });
+    guestJwt = h.app.jwt.sign({ sub: guest!.id, role: "guest" });
 
     const [pA] = await h.db
       .insert(projects)
@@ -98,11 +98,11 @@ describe("RBAC hooks", () => {
       .insert(projects)
       .values({ name: "beta" })
       .returning();
-    memberProjectId = pA.id;
-    nonMemberProjectId = pB.id;
+    memberProjectId = pA!.id;
+    nonMemberProjectId = pB!.id;
 
     await h.db.insert(projectMembers).values({
-      userId: editor.id,
+      userId: editor!.id,
       projectId: memberProjectId,
     });
   });

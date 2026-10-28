@@ -17,10 +17,7 @@ type Logger = Telemetry["logger"];
  */
 function accountLoginOf(
   account:
-    | { login?: string }
-    | { slug?: string; name?: string }
-    | null
-    | undefined,
+    { login?: string } | { slug?: string; name?: string } | null | undefined,
 ): string {
   if (!account) return "";
   if ("login" in account && typeof account.login === "string") {

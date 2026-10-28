@@ -6,7 +6,6 @@ import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
 import { ownerCreds } from "../../src/seed/load-seed.js";
 
-
 test.describe("branch: baseline fallback + merge", () => {
   const api = new ApiClient(API);
   let admin = "";
@@ -66,7 +65,12 @@ test.describe("branch: baseline fallback + merge", () => {
     });
     await api.approveRun(admin, base.runId);
 
-    const merged = await api.mergeBranches(admin, project.id, "main", "release");
+    const merged = await api.mergeBranches(
+      admin,
+      project.id,
+      "main",
+      "release",
+    );
     expect(typeof merged.buildId).toBe("string");
     expect(merged.runCount).toBeGreaterThanOrEqual(1);
   });

@@ -1186,7 +1186,7 @@ d("revertAction", () => {
         "replaces the regions",
         [{ x: 7, y: 8, width: 90, height: 100, viewport: VIEWPORT }],
       ],
-      ["clears the regions", null],
+      ["clears the regions", []],
     ])(
       "an approve whose reviewer-drawn ignore areas %s records them as written, and the undo restores the variation",
       async (_label, ignoreAreas) => {

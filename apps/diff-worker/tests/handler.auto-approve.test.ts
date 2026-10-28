@@ -81,7 +81,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         role: "admin",
       })
       .returning();
-    userId = u.id;
+    userId = u!.id;
   });
   afterAll(async () => {
     await redis.quit();
@@ -104,19 +104,18 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId, isRunning: false })
+      .values({ projectId: p!.id, userId, isRunning: false })
       .returning();
     const [v] = await db
       .insert(testVariations)
-      .values({ name: "home", projectId: p.id })
+      .values({ name: "home", projectId: p!.id })
       .returning();
 
     const [br] = await db
       .insert(testRuns)
       .values({
-        buildId: b.id,
-        projectId: p.id,
-        testVariationId: v.id,
+        buildId: b!.id,
+        projectId: p!.id,
         status: "passed",
         branchName: "main",
         name: "home",
@@ -127,8 +126,8 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     // never writes a row above a baseline created after the candidate run.
     await db.insert(baselines).values({
       baselineName: "home",
-      testVariationId: v.id,
-      testRunId: br.id,
+      testVariationId: v!.id,
+      testRunId: br!.id,
       userId,
       branchName: "main",
     });
@@ -136,9 +135,8 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     const [cr] = await db
       .insert(testRuns)
       .values({
-        buildId: b.id,
-        projectId: p.id,
-        testVariationId: v.id,
+        buildId: b!.id,
+        projectId: p!.id,
         status: "new",
         branchName: "main",
         name: "home",
@@ -146,10 +144,10 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .returning();
 
     return {
-      projectId: p.id,
-      baselineRunId: br.id,
-      candidateRunId: cr.id,
-      variationId: v.id,
+      projectId: p!.id,
+      baselineRunId: br!.id,
+      candidateRunId: cr!.id,
+      variationId: v!.id,
     };
   }
 
@@ -294,9 +292,9 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .from(testRuns)
       .where(eq(testRuns.id, ctx.candidateRunId))
       .limit(1);
-    expect(row.status).toBe("passed");
-    expect(row.diffPercent).toBe(0);
-    expect(row.merge).toBe(true);
+    expect(row!.status).toBe("passed");
+    expect(row!.diffPercent).toBe(0);
+    expect(row!.merge).toBe(true);
 
     const auto = await db
       .select()
@@ -345,14 +343,14 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .returning();
     await db.insert(baselines).values({
       baselineName: "home",
-      testVariationId: mobile.id,
+      testVariationId: mobile!.id,
       testRunId: ctx.baselineRunId,
       userId,
       branchName: "main",
     });
     await seedMismatchedScreenshots({
       ...ctx,
-      mobileVariationId: mobile.id,
+      mobileVariationId: mobile!.id,
       mismatchOnMobile: true,
     });
 
@@ -382,7 +380,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .from(testRuns)
       .where(eq(testRuns.id, ctx.candidateRunId))
       .limit(1);
-    expect(row.status).toBe("unresolved");
+    expect(row!.status).toBe("unresolved");
   });
 
   it("autoApproveFeature=false falls through to engine path", async () => {
@@ -420,18 +418,17 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .returning();
     const [b] = await db
       .insert(builds)
-      .values({ projectId: p.id, userId, isRunning: false })
+      .values({ projectId: p!.id, userId, isRunning: false })
       .returning();
     const [v] = await db
       .insert(testVariations)
-      .values({ name: "home", projectId: p.id })
+      .values({ name: "home", projectId: p!.id })
       .returning();
     const [cr] = await db
       .insert(testRuns)
       .values({
-        buildId: b.id,
-        projectId: p.id,
-        testVariationId: v.id,
+        buildId: b!.id,
+        projectId: p!.id,
         status: "running",
         branchName: "main",
         name: "home",
@@ -444,9 +441,9 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     const imageKey = `${uniq}-fb-${objectKey(fixtureBytes)}`;
     await storage.put(imageKey, fixtureBytes, "image/png");
     await db.insert(screenshots).values({
-      runId: cr.id,
-      projectId: p.id,
-      testVariationId: v.id,
+      runId: cr!.id,
+      projectId: p!.id,
+      testVariationId: v!.id,
       name: "home",
       imageKey,
       viewport: "1280x720",
@@ -459,7 +456,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     // path). The distinguishing signal is the test_runs.status value:
     // first-baseline → "new", auto-approve → "passed".
 
-    await diffRunPerStep({ runId: cr.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: cr!.id, projectId: p!.id }, mockLogger, {
       db,
       storage,
       redis,
@@ -468,7 +465,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     const updated = await db
       .select()
       .from(testRuns)
-      .where(eq(testRuns.id, cr.id))
+      .where(eq(testRuns.id, cr!.id))
       .limit(1);
     // Must NOT be "passed" (that would mean auto-approve fired).
     expect(updated[0]!.status).toBe("new");
@@ -477,7 +474,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     const auto = await db
       .select()
       .from(baselines)
-      .where(eq(baselines.testRunId, cr.id));
+      .where(eq(baselines.testRunId, cr!.id));
     expect(auto.length).toBe(1);
     expect(auto[0]!.userId).toBeNull();
   });
@@ -606,7 +603,6 @@ desc("handleDiffJob — auto-approve (integration)", () => {
           .values({
             buildId: b!.id,
             projectId: p!.id,
-            testVariationId: v!.id,
             status,
             branchName: "main",
             name: "home",

@@ -30,9 +30,24 @@ export interface SeedResult {
 }
 
 const ROLES: { role: Role; email: string; first: string; last: string }[] = [
-  { role: "owner", email: "e2e-owner@furan.test", first: "Ovie", last: "Owner" },
-  { role: "admin", email: "e2e-admin2@furan.test", first: "Adah", last: "Admin" },
-  { role: "editor", email: "e2e-editor@furan.test", first: "Edie", last: "Editor" },
+  {
+    role: "owner",
+    email: "e2e-owner@furan.test",
+    first: "Ovie",
+    last: "Owner",
+  },
+  {
+    role: "admin",
+    email: "e2e-admin2@furan.test",
+    first: "Adah",
+    last: "Admin",
+  },
+  {
+    role: "editor",
+    email: "e2e-editor@furan.test",
+    first: "Edie",
+    last: "Editor",
+  },
   { role: "guest", email: "e2e-guest@furan.test", first: "Gus", last: "Guest" },
 ];
 
@@ -69,7 +84,13 @@ export async function seedAll(): Promise<SeedResult> {
     }
     const login = await api.loginJwt(spec.email, USER_PASSWORD);
     const pat = await api.mintPat(login.token, `e2e-${spec.role}`);
-    principals.push({ email: spec.email, role: spec.role, id, pat, jwt: login.token });
+    principals.push({
+      email: spec.email,
+      role: spec.role,
+      id,
+      pat,
+      jwt: login.token,
+    });
   }
 
   const projects: { name: string; id: string }[] = [];

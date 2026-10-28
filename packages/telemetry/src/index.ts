@@ -187,10 +187,8 @@ export function installProcessErrorHandlers(
   logger: Logger,
   opts: ProcessErrorHandlerOptions = {},
 ): void {
-  const { onUnhandledRejection, onUncaughtException } = makeProcessErrorHandlers(
-    logger,
-    opts,
-  );
+  const { onUnhandledRejection, onUncaughtException } =
+    makeProcessErrorHandlers(logger, opts);
   process.on("unhandledRejection", onUnhandledRejection);
   process.on("uncaughtException", onUncaughtException);
 }

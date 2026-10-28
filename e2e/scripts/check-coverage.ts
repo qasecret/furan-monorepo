@@ -48,9 +48,7 @@ function main(): void {
     );
   }
   if (failed.length > 0) {
-    console.error(
-      `  REGRESSED: ${failed.map((r) => r.id).join(", ")}`,
-    );
+    console.error(`  REGRESSED: ${failed.map((r) => r.id).join(", ")}`);
     process.exit(1);
   }
   console.log("[check-coverage] OK — no regressed capabilities");

@@ -44,7 +44,7 @@ describe("runCompletedBlockKit", () => {
       const second = payload.blocks[1] as {
         fields: Array<{ text: string }>;
       };
-      expect(second.fields[0].text).toContain(emoji);
+      expect(second.fields[0]!.text).toContain(emoji);
       expect(payload.attachments?.[0]?.color).toBe(color);
     });
   }
@@ -57,7 +57,7 @@ describe("runCompletedBlockKit", () => {
     const second = payload.blocks[1] as {
       fields: Array<{ text: string }>;
     };
-    expect(second.fields[1].text).toContain("12.35%");
+    expect(second.fields[1]!.text).toContain("12.35%");
   });
 
   test("renders em-dash when diffPercent is null", () => {
@@ -65,7 +65,7 @@ describe("runCompletedBlockKit", () => {
     const second = payload.blocks[1] as {
       fields: Array<{ text: string }>;
     };
-    expect(second.fields[1].text).toContain("—");
+    expect(second.fields[1]!.text).toContain("—");
   });
 
   test("severity-counts block renders all four coloured-dot emojis", () => {
@@ -87,9 +87,9 @@ describe("runCompletedBlockKit", () => {
       elements: Array<{ type: string; url: string; text: { text: string } }>;
     };
     expect(actions.elements).toHaveLength(1);
-    expect(actions.elements[0].type).toBe("button");
-    expect(actions.elements[0].url).toBe(url);
-    expect(actions.elements[0].text.text).toBe("View in dashboard");
+    expect(actions.elements[0]!.type).toBe("button");
+    expect(actions.elements[0]!.url).toBe(url);
+    expect(actions.elements[0]!.text.text).toBe("View in dashboard");
   });
 
   test("header section references the branch name", () => {
@@ -107,6 +107,6 @@ describe("runCompletedBlockKit", () => {
     const second = payload.blocks[1] as {
       fields: Array<{ text: string }>;
     };
-    expect(second.fields[0].text).toContain("Furan: no visual changes");
+    expect(second.fields[0]!.text).toContain("Furan: no visual changes");
   });
 });

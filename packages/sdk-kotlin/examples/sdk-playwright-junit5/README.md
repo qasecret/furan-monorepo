@@ -7,8 +7,8 @@ the same way a downstream user would.
 
 ## Layout
 
-- `build.gradle.kts` — declares `io.github.qasecret:furan-playwright:$sdkVersion`
-  + `com.microsoft.playwright:playwright` from `mavenLocal()` / `mavenCentral()`.
+- `build.gradle.kts` — declares `io.github.qasecret:furan-playwright:$sdkVersion` +
+  `com.microsoft.playwright:playwright` from `mavenLocal()` / `mavenCentral()`.
   The version is read at config time from `../../version.txt` so it tracks
   release-please bumps automatically.
 - `settings.gradle.kts` — standalone root project (`sdk-playwright-junit5`).

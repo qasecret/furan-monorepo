@@ -34,9 +34,7 @@ export interface ProjectBroadcastEvent {
  * Phase 5 will tighten payload typing for the dashboard side.
  */
 export type RunEventType =
-  | "run.checkpoint_added"
-  | "run.checkpoint_diffed"
-  | "run.completed";
+  "run.checkpoint_added" | "run.checkpoint_diffed" | "run.completed";
 
 export interface RunBroadcastEvent {
   type: RunEventType;

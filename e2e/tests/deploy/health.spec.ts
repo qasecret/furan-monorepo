@@ -3,7 +3,6 @@ import { expect, test } from "@playwright/test";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
 
-
 test.describe("deploy: health", () => {
   test("GET /livez returns 200", async ({ request }, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["deploy.livez"]));

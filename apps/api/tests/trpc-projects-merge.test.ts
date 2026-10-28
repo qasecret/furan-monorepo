@@ -95,25 +95,25 @@ async function seed(h: TestApp): Promise<Seeded> {
     .returning();
   await h.db
     .insert(projectMembers)
-    .values({ userId: member.id, projectId: project.id });
+    .values({ userId: member!.id, projectId: project!.id });
 
   // Pre-existing build on the source branch — runs in the test all hang off this
   // so we don't have to create one per variation in the per-test setup.
   const [fromBuild] = await h.db
     .insert(builds)
     .values({
-      projectId: project.id,
-      userId: member.id,
+      projectId: project!.id,
+      userId: member!.id,
       branchName: "feature/x",
       ciBuildId: "from-build",
     })
     .returning();
 
   return {
-    memberJwt: h.app.jwt.sign({ sub: member.id, role: "editor" }),
-    nonMemberJwt: h.app.jwt.sign({ sub: nonMember.id, role: "editor" }),
-    projectId: project.id,
-    fromBuildId: fromBuild.id,
+    memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    nonMemberJwt: h.app.jwt.sign({ sub: nonMember!.id, role: "editor" }),
+    projectId: project!.id,
+    fromBuildId: fromBuild!.id,
   };
 }
 
@@ -162,9 +162,9 @@ async function seedVariationWithBaseline(
   const viewports = extra?.viewports ?? [extra?.viewport ?? "1280x720"];
   for (const vp of viewports) {
     await h.db.insert(screenshots).values({
-      runId: r.id,
+      runId: r!.id,
       projectId: s.projectId,
-      testVariationId: v.id,
+      testVariationId: v!.id,
       name,
       imageKey: `${imageKey}-${vp}`,
       viewport: vp,
@@ -172,11 +172,11 @@ async function seedVariationWithBaseline(
     });
   }
   await h.db.insert(baselines).values({
-    testVariationId: v.id,
-    testRunId: r.id,
+    testVariationId: v!.id,
+    testRunId: r!.id,
     branchName: "feature/x",
   });
-  return v.id;
+  return v!.id;
 }
 
 d("tRPC projects.mergeBranchBaselines", () => {
@@ -294,8 +294,10 @@ d("tRPC projects.mergeBranchBaselines", () => {
     expect(copies.every((sh) => sh.diffGeneration === 1)).toBe(true);
     expect(copies.every((sh) => sh.diffQueuedAt instanceof Date)).toBe(true);
     expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
-    const byStep = (a: { screenshotId: string }, b: { screenshotId: string }) =>
-      a.screenshotId.localeCompare(b.screenshotId);
+    const byStep = (
+      a: { screenshotId?: string },
+      b: { screenshotId?: string },
+    ) => (a.screenshotId ?? "").localeCompare(b.screenshotId ?? "");
     expect(
       h.diffQueueAdd.mock.calls
         .map(([, p, o]) => ({ ...p, jobId: o?.jobId }))
@@ -548,7 +550,7 @@ d("tRPC projects.mergeBranchBaselines", () => {
       })
       .returning();
     await h.db.insert(screenshots).values({
-      runId: olderRun.id,
+      runId: olderRun!.id,
       projectId: s.projectId,
       testVariationId: v1,
       name: "v1",
@@ -558,7 +560,7 @@ d("tRPC projects.mergeBranchBaselines", () => {
     });
     await h.db.insert(baselines).values({
       testVariationId: v1,
-      testRunId: olderRun.id,
+      testRunId: olderRun!.id,
       branchName: "feature/x",
       createdAt: new Date(Date.now() - 60_000),
     });

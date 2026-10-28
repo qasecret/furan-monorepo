@@ -37,7 +37,7 @@ describe("PAT lifecycle", () => {
         isActive: true,
       })
       .returning();
-    aliceId = alice.id;
+    aliceId = alice!.id;
     aliceJwt = h.app.jwt.sign({ sub: aliceId, role: "admin" });
   });
 

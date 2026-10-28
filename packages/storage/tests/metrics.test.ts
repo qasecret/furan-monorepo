@@ -57,11 +57,7 @@ describe("instrumentStorage", () => {
 
   test("head returning null (missing object) is not an error", async () => {
     const reg = new Registry();
-    const s = instrumentStorage(
-      stub({ head: async () => null }),
-      reg,
-      "s3",
-    );
+    const s = instrumentStorage(stub({ head: async () => null }), reg, "s3");
     expect(await s.head("missing")).toBeNull();
     expect(await errorCount(reg, "head", "s3")).toBe(0);
   });
@@ -71,11 +67,7 @@ describe("instrumentStorage", () => {
     const boom = async () => {
       throw new Error("io");
     };
-    const s = instrumentStorage(
-      stub({ get: boom, delete: boom }),
-      reg,
-      "hdd",
-    );
+    const s = instrumentStorage(stub({ get: boom, delete: boom }), reg, "hdd");
     await expect(s.get("k")).rejects.toThrow();
     await expect(s.delete("k")).rejects.toThrow();
     expect(await errorCount(reg, "get", "hdd")).toBe(1);

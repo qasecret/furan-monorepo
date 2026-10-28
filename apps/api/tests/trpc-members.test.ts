@@ -121,26 +121,26 @@ async function seed(h: TestApp): Promise<Seeded> {
   // admin-bypass in projectMember middleware; editorOutsider is NOT a member.
   await h.db
     .insert(projectMembers)
-    .values({ userId: editorMember.id, projectId: project.id });
+    .values({ userId: editorMember!.id, projectId: project!.id });
 
   return {
-    adminId: admin.id,
-    adminJwt: h.app.jwt.sign({ sub: admin.id, role: "admin" }),
-    editorMemberId: editorMember.id,
+    adminId: admin!.id,
+    adminJwt: h.app.jwt.sign({ sub: admin!.id, role: "admin" }),
+    editorMemberId: editorMember!.id,
     editorMemberJwt: h.app.jwt.sign({
-      sub: editorMember.id,
+      sub: editorMember!.id,
       role: "editor",
     }),
-    editorOutsiderId: editorOutsider.id,
+    editorOutsiderId: editorOutsider!.id,
     editorOutsiderJwt: h.app.jwt.sign({
-      sub: editorOutsider.id,
+      sub: editorOutsider!.id,
       role: "editor",
     }),
-    editorCandidateId: editorCandidate.id,
-    editorCandidateEmail: editorCandidate.email,
-    guestCandidateId: guestCandidate.id,
-    guestCandidateEmail: guestCandidate.email,
-    projectId: project.id,
+    editorCandidateId: editorCandidate!.id,
+    editorCandidateEmail: editorCandidate!.email,
+    guestCandidateId: guestCandidate!.id,
+    guestCandidateEmail: guestCandidate!.email,
+    projectId: project!.id,
   };
 }
 
@@ -370,19 +370,19 @@ async function seedAssign(h: TestApp): Promise<AssignSeeded> {
 
   // target starts in {A, B}.
   await h.db.insert(projectMembers).values([
-    { userId: target.id, projectId: projectA.id },
-    { userId: target.id, projectId: projectB.id },
+    { userId: target!.id, projectId: projectA!.id },
+    { userId: target!.id, projectId: projectB!.id },
   ]);
 
   return {
-    adminId: admin.id,
-    adminJwt: h.app.jwt.sign({ sub: admin.id, role: "admin" }),
-    editorId: editor.id,
-    editorJwt: h.app.jwt.sign({ sub: editor.id, role: "editor" }),
-    targetUserId: target.id,
-    projectAId: projectA.id,
-    projectBId: projectB.id,
-    projectCId: projectC.id,
+    adminId: admin!.id,
+    adminJwt: h.app.jwt.sign({ sub: admin!.id, role: "admin" }),
+    editorId: editor!.id,
+    editorJwt: h.app.jwt.sign({ sub: editor!.id, role: "editor" }),
+    targetUserId: target!.id,
+    projectAId: projectA!.id,
+    projectBId: projectB!.id,
+    projectCId: projectC!.id,
   };
 }
 

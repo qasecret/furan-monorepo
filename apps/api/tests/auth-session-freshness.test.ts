@@ -42,10 +42,10 @@ describe("JWT session freshness", () => {
         isActive: true,
       })
       .returning();
-    userId = u.id;
+    userId = u!.id;
     // Token minted while the user was an active admin — the claim we must not
     // blindly trust later.
-    staleAdminJwt = h.app.jwt.sign({ sub: u.id, role: "admin" });
+    staleAdminJwt = h.app.jwt.sign({ sub: u!.id, role: "admin" });
   });
 
   test("an unchanged admin token still works (role resolved from DB)", async () => {

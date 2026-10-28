@@ -10,6 +10,7 @@ import {
   testRuns,
   withUserScope,
   type DB,
+  type Tx,
 } from "@furan/db";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
@@ -71,7 +72,9 @@ d("the active-decision flag on review steps", () => {
   const deps = () => ({ registry: h.telemetry.metrics, logger });
 
   /** Each step's flag, read as the owner (so RLS never hides a row). */
-  async function flags(s: ReviewSeed): Promise<Record<string, boolean>> {
+  async function flags(
+    s: ReviewSeed,
+  ): Promise<Record<string, boolean | undefined>> {
     const rows = await h.db.execute<{ id: string; flag: boolean }>(
       sql`select id, has_active_decision as flag from screenshots where run_id = ${s.runId}`,
     );
@@ -106,9 +109,10 @@ d("the active-decision flag on review steps", () => {
     return withUserScope(
       db,
       { userId: s.editor.id, role: "editor", projectId: s.projectId },
+      // `withUserScope` hands its transaction over typed as `DB`.
       (tx) =>
         decideCheckpoints(
-          tx,
+          tx as unknown as Tx,
           {
             actor: actorOf(s.editor),
             projectId: s.projectId,
@@ -136,7 +140,7 @@ d("the active-decision flag on review steps", () => {
       { userId: s.editor.id, role: "editor", projectId: s.projectId },
       (tx) =>
         revertAction(
-          tx,
+          tx as unknown as Tx,
           { actor: actorOf(s.editor), actionId, projectId: s.projectId },
           deps(),
         ),

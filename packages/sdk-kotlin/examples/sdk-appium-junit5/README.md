@@ -7,8 +7,8 @@ multi-module build — it consumes the published
 
 ## Layout
 
-- `build.gradle.kts` — declares `io.github.qasecret:furan-appium:$sdkVersion`
-  + `io.appium:java-client` from `mavenLocal()` / `mavenCentral()`. The version
+- `build.gradle.kts` — declares `io.github.qasecret:furan-appium:$sdkVersion` +
+  `io.appium:java-client` from `mavenLocal()` / `mavenCentral()`. The version
   is read at config time from `../../version.txt` so it tracks release-please
   bumps automatically.
 - `settings.gradle.kts` — standalone root project (`sdk-appium-junit5`).

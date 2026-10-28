@@ -92,22 +92,22 @@ async function seed(h: TestApp): Promise<Seeded> {
 
   await h.db
     .insert(projectMembers)
-    .values({ userId: editorMember.id, projectId: project.id });
+    .values({ userId: editorMember!.id, projectId: project!.id });
 
   return {
-    adminId: admin.id,
-    adminJwt: h.app.jwt.sign({ sub: admin.id, role: "admin" }),
-    editorMemberId: editorMember.id,
+    adminId: admin!.id,
+    adminJwt: h.app.jwt.sign({ sub: admin!.id, role: "admin" }),
+    editorMemberId: editorMember!.id,
     editorMemberJwt: h.app.jwt.sign({
-      sub: editorMember.id,
+      sub: editorMember!.id,
       role: "editor",
     }),
-    editorOutsiderId: editorOutsider.id,
+    editorOutsiderId: editorOutsider!.id,
     editorOutsiderJwt: h.app.jwt.sign({
-      sub: editorOutsider.id,
+      sub: editorOutsider!.id,
       role: "editor",
     }),
-    projectId: project.id,
+    projectId: project!.id,
   };
 }
 

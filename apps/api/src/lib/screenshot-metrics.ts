@@ -22,10 +22,7 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
 }
 
 export type ElementMapOutcome =
-  | "ok"
-  | "too_large"
-  | "invalid_json"
-  | "storage_error";
+  "ok" | "too_large" | "invalid_json" | "storage_error";
 
 export function recordElementMapOutcome(
   registry: Registry,

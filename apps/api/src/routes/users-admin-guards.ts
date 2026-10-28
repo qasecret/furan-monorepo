@@ -34,8 +34,7 @@ export interface UserUpdateGuardInput {
 }
 
 export type UserUpdateGuard =
-  | { ok: true }
-  | { ok: false; status: number; error: string };
+  { ok: true } | { ok: false; status: number; error: string };
 
 /**
  * Whether `update` would strip the target's ACTIVE access for the tier matched

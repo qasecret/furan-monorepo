@@ -133,9 +133,9 @@ describe("deliver", () => {
     expect(init.headers["X-Furan-Signature"]).toBe(expectedSig);
 
     expect(inserted).toHaveLength(1);
-    expect(inserted[0].status).toBe("delivered");
-    expect(inserted[0].attempts).toBe(1);
-    expect(inserted[0].lastError).toBeNull();
+    expect(inserted[0]!.status).toBe("delivered");
+    expect(inserted[0]!.attempts).toBe(1);
+    expect(inserted[0]!.lastError).toBeNull();
   });
 
   test("404 marks DLQ immediately after 1 attempt with lastError HTTP 404", async () => {
@@ -146,8 +146,8 @@ describe("deliver", () => {
 
     expect(out).toEqual({ status: "dlq", attempts: 1 });
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(inserted[0].status).toBe("dlq");
-    expect(inserted[0].lastError).toBe("HTTP 404");
+    expect(inserted[0]!.status).toBe("dlq");
+    expect(inserted[0]!.lastError).toBe("HTTP 404");
   });
 
   test("429 retries up to 5 attempts then DLQ", async () => {
@@ -158,8 +158,8 @@ describe("deliver", () => {
 
     expect(out).toEqual({ status: "dlq", attempts: 5 });
     expect(fetchFn).toHaveBeenCalledTimes(5);
-    expect(inserted[0].status).toBe("dlq");
-    expect(inserted[0].lastError).toBe("HTTP 429");
+    expect(inserted[0]!.status).toBe("dlq");
+    expect(inserted[0]!.lastError).toBe("HTTP 429");
   });
 
   test("500 retries up to 5 attempts then DLQ", async () => {
@@ -170,7 +170,7 @@ describe("deliver", () => {
 
     expect(out).toEqual({ status: "dlq", attempts: 5 });
     expect(fetchFn).toHaveBeenCalledTimes(5);
-    expect(inserted[0].lastError).toBe("HTTP 500");
+    expect(inserted[0]!.lastError).toBe("HTTP 500");
   });
 
   test("network error retries up to 5 attempts then DLQ", async () => {
@@ -183,7 +183,7 @@ describe("deliver", () => {
 
     expect(out).toEqual({ status: "dlq", attempts: 5 });
     expect(fetchFn).toHaveBeenCalledTimes(5);
-    expect(inserted[0].lastError).toBe("ECONNREFUSED");
+    expect(inserted[0]!.lastError).toBe("ECONNREFUSED");
   });
 
   test("500 then 200 on attempt 2 delivers in 2 attempts", async () => {
@@ -198,8 +198,8 @@ describe("deliver", () => {
 
     expect(out).toEqual({ status: "delivered", attempts: 2 });
     expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(inserted[0].status).toBe("delivered");
-    expect(inserted[0].attempts).toBe(2);
+    expect(inserted[0]!.status).toBe("delivered");
+    expect(inserted[0]!.attempts).toBe(2);
   });
 
   test("inactive webhook → DLQ without fetching", async () => {
@@ -212,7 +212,7 @@ describe("deliver", () => {
 
     expect(out.status).toBe("dlq");
     expect(fetchFn).not.toHaveBeenCalled();
-    expect(inserted[0].lastError).toBe("inactive");
+    expect(inserted[0]!.lastError).toBe("inactive");
   });
 
   test("webhook with null secret → DLQ without fetching", async () => {
@@ -225,7 +225,7 @@ describe("deliver", () => {
 
     expect(out.status).toBe("dlq");
     expect(fetchFn).not.toHaveBeenCalled();
-    expect(inserted[0].lastError).toBe("no_secret");
+    expect(inserted[0]!.lastError).toBe("no_secret");
   });
 
   test("408 Request Timeout is treated as retryable", async () => {

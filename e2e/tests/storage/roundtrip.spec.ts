@@ -10,7 +10,6 @@ import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
 import { ownerCreds } from "../../src/seed/load-seed.js";
 
-
 const BASELINE_PNG = fileURLToPath(
   new URL("../../src/fixtures/baseline.png", import.meta.url),
 );

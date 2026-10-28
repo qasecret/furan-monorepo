@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createDiffJobMetrics } from "../src/job-metrics.js";
 
-import { histogramSeries } from "./helpers/metrics.js";
+import { histogramSeries, type Sample } from "./helpers/metrics.js";
 
 describe("createDiffJobMetrics", () => {
   it("records duration by outcome", async () => {
@@ -105,7 +105,7 @@ describe("createDiffJobMetrics", () => {
     const metrics = createDiffJobMetrics(registry);
 
     metrics.observeAttempt(
-      { timestamp: 1_000, processedOn: undefined, attemptsMade: 0 },
+      { timestamp: 1_000, attemptsMade: 0 },
       "completed",
       0.2,
       1,

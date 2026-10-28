@@ -104,27 +104,27 @@ async function seed(h: TestApp): Promise<Seeded> {
 
   await h.db
     .insert(projectMembers)
-    .values({ userId: member.id, projectId: project.id });
+    .values({ userId: member!.id, projectId: project!.id });
 
   const [build] = await h.db
     .insert(builds)
     .values({
-      projectId: project.id,
-      userId: member.id,
+      projectId: project!.id,
+      userId: member!.id,
       isRunning: true,
     })
     .returning();
 
   const [variation] = await h.db
     .insert(testVariations)
-    .values({ name: "home", projectId: project.id })
+    .values({ name: "home", projectId: project!.id })
     .returning();
 
   const [run] = await h.db
     .insert(testRuns)
     .values({
-      buildId: build.id,
-      projectId: project.id,
+      buildId: build!.id,
+      projectId: project!.id,
       // Per spec §3.3 (run-status-enum) only terminal review states are
       // reviewer-overridable. `unresolved` is the canonical "diff-worker
       // found differences, awaiting review" status — i.e. the state most
@@ -136,13 +136,13 @@ async function seed(h: TestApp): Promise<Seeded> {
     .returning();
 
   return {
-    memberId: member.id,
-    memberJwt: h.app.jwt.sign({ sub: member.id, role: "editor" }),
-    nonMemberId: nonMember.id,
-    nonMemberJwt: h.app.jwt.sign({ sub: nonMember.id, role: "editor" }),
-    runId: run.id,
-    projectId: project.id,
-    variationId: variation.id,
+    memberId: member!.id,
+    memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    nonMemberId: nonMember!.id,
+    nonMemberJwt: h.app.jwt.sign({ sub: nonMember!.id, role: "editor" }),
+    runId: run!.id,
+    projectId: project!.id,
+    variationId: variation!.id,
   };
 }
 
@@ -214,9 +214,9 @@ async function seedCheckpoint(
   const [shot] = await h.db
     .insert(screenshots)
     .values({
-      runId: run.id,
+      runId: run!.id,
       projectId: opts.projectId,
-      testVariationId: variation.id,
+      testVariationId: variation!.id,
       name: opts.name,
       viewport,
       browser: "chromium",
@@ -234,16 +234,16 @@ async function seedCheckpoint(
   if (effectiveBaselineName !== null) {
     await h.db.insert(baselines).values({
       baselineName: effectiveBaselineName,
-      testVariationId: variation.id,
-      testRunId: run.id,
-      branchName: run.branchName ?? undefined,
+      testVariationId: variation!.id,
+      testRunId: run!.id,
+      branchName: run!.branchName ?? undefined,
     });
   }
   if (opts.unresolved) {
     await h.db.insert(diffRegions).values({
-      runId: run.id,
+      runId: run!.id,
       projectId: opts.projectId,
-      screenshotId: shot.id,
+      screenshotId: shot!.id,
       severity: "high",
       category: "layout",
       source: "l2_dom",
@@ -307,7 +307,7 @@ d("tRPC runs router", () => {
     const olderShot = await h.db
       .insert(screenshots)
       .values({
-        runId: olderRun.id,
+        runId: olderRun!.id,
         projectId: s.projectId,
         testVariationId: s.variationId,
         name: "older",
@@ -323,11 +323,11 @@ d("tRPC runs router", () => {
       .values({
         baselineName: "older",
         testVariationId: s.variationId,
-        testRunId: olderRun.id,
+        testRunId: olderRun!.id,
         branchName: "feature/x",
       })
       .returning();
-    expect(bl.id).toBeDefined();
+    expect(bl!.id).toBeDefined();
 
     // Link the current run to the same variation so getById can resolve
     // the baseline via the first checkpoint's testVariationId.
@@ -391,7 +391,7 @@ d("tRPC runs router", () => {
       .returning();
 
     await h.db.insert(screenshots).values({
-      runId: olderRun.id,
+      runId: olderRun!.id,
       projectId: s.projectId,
       testVariationId: devVar!.id,
       name: candidateVar!.name,
@@ -403,7 +403,7 @@ d("tRPC runs router", () => {
     await h.db.insert(baselines).values({
       baselineName: "older",
       testVariationId: devVar!.id,
-      testRunId: olderRun.id,
+      testRunId: olderRun!.id,
       branchName: "develop",
     });
 
@@ -1189,7 +1189,7 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreRegions).toEqual([validRegion]);
+      expect(vRow!.ignoreRegions).toEqual([validRegion]);
 
       // The run's step, at its next version, under its job id.
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
@@ -1243,7 +1243,7 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreRegions).toEqual([validRegion]);
+      expect(vRow!.ignoreRegions).toEqual([validRegion]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
       expect(h.diffQueueAdd).toHaveBeenCalledWith(
@@ -1290,7 +1290,7 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreRegions).toBeNull();
+      expect(vRow!.ignoreRegions).toBeNull();
     });
 
     test("ignoreAreas: null clears the target variation column (scope=variation, ADR-038)", async () => {
@@ -1325,7 +1325,7 @@ d("tRPC runs router", () => {
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
       // ADR-038: column renamed to ignore_regions.
-      expect(vRow.ignoreRegions).toBeNull();
+      expect(vRow!.ignoreRegions).toBeNull();
     });
 
     test("rejects > 50 regions", async () => {
@@ -1795,7 +1795,7 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreRegions).toEqual([r1]);
+      expect(vRow!.ignoreRegions).toEqual([r1]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
       expect(
@@ -1839,7 +1839,7 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreRegions).toEqual([r1, r2]);
+      expect(vRow!.ignoreRegions).toEqual([r1, r2]);
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
     });
 
@@ -1875,7 +1875,7 @@ d("tRPC runs router", () => {
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
       // ADR-038: column renamed to ignore_regions; stored as jsonb (not a JSON string).
-      expect(vRow.ignoreRegions).toEqual([r1, r2]);
+      expect(vRow!.ignoreRegions).toEqual([r1, r2]);
     });
 
     test("rejects with BAD_REQUEST when combined total would exceed MAX_IGNORE_REGIONS (50)", async () => {
@@ -2187,7 +2187,7 @@ d("tRPC runs router", () => {
         .values({ projectId: s.projectId, userId: s.memberId, isRunning: true })
         .returning();
       await seedCheckpoint(h, {
-        buildId: otherBuild.id,
+        buildId: otherBuild!.id,
         projectId: s.projectId,
         name: "xbuild",
         signature: SIG,
@@ -2196,15 +2196,15 @@ d("tRPC runs router", () => {
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.getCheckpointGroup.query({
-        runId: seedCp.run.id,
-        checkpointId: seedCp.shot.id,
+        runId: seedCp.run!.id,
+        checkpointId: seedCp.shot!.id,
       });
       expect(res.checkpointCount).toBe(2);
       expect(res.runCount).toBe(2);
       expect(new Set(res.checkpoints.map((c) => c.id))).toEqual(
-        new Set([m1.shot.id, m2.shot.id]),
+        new Set([m1.shot!.id, m2.shot!.id]),
       );
-      const first = res.checkpoints.find((c) => c.id === m1.shot.id)!;
+      const first = res.checkpoints.find((c) => c.id === m1.shot!.id)!;
       expect(first).toHaveProperty("testName");
       expect(first).toHaveProperty("viewport");
       expect(res.capped).toBe(false);
@@ -2228,8 +2228,8 @@ d("tRPC runs router", () => {
       });
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.getCheckpointGroup.query({
-        runId: seedCp.run.id,
-        checkpointId: seedCp.shot.id,
+        runId: seedCp.run!.id,
+        checkpointId: seedCp.shot!.id,
       });
       expect(res).toEqual({
         checkpoints: [],
@@ -2257,7 +2257,7 @@ d("tRPC runs router", () => {
       });
       const client = makeClient(baseUrl, s.memberJwt);
       const err = await client.runs.getCheckpointGroup
-        .query({ runId: a.run.id, checkpointId: b.shot.id })
+        .query({ runId: a.run!.id, checkpointId: b.shot!.id })
         .catch((e) => e);
       expect(err?.data?.code).toBe("BAD_REQUEST");
     });
@@ -2274,7 +2274,7 @@ d("tRPC runs router", () => {
       const client = makeClient(baseUrl, s.memberJwt);
       const err = await client.runs.getCheckpointGroup
         .query({
-          runId: seedCp.run.id,
+          runId: seedCp.run!.id,
           checkpointId: "00000000-0000-0000-0000-000000000000",
         })
         .catch((e) => e);
@@ -2311,11 +2311,11 @@ d("tRPC runs router", () => {
       });
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.getCheckpointGroup.query({
-        runId: seedCp.run.id,
-        checkpointId: seedCp.shot.id,
+        runId: seedCp.run!.id,
+        checkpointId: seedCp.shot!.id,
       });
       expect(new Set(res.checkpoints.map((c) => c.id))).toEqual(
-        new Set([m1.shot.id, fresh.shot.id]),
+        new Set([m1.shot!.id, fresh.shot!.id]),
       );
       expect(res.checkpointCount).toBe(2);
     });
@@ -2331,7 +2331,7 @@ d("tRPC runs router", () => {
       });
       const client = makeClient(baseUrl, s.nonMemberJwt);
       const err = await client.runs.getCheckpointGroup
-        .query({ runId: cp.run.id, checkpointId: cp.shot.id })
+        .query({ runId: cp.run!.id, checkpointId: cp.shot!.id })
         .catch((e) => e);
       expect(err?.data?.code).toBe("FORBIDDEN");
     });
@@ -2434,26 +2434,26 @@ d("tRPC runs router", () => {
       const client = makeClient(baseUrl, s.memberJwt);
 
       const before = await client.runs.listCheckpoints.query({
-        runId: cp.run.id,
+        runId: cp.run!.id,
       });
       expect(before.items[0]?.state).toBe("unresolved");
 
       await h.db
         .update(testRuns)
         .set({ status: "passed" })
-        .where(eq(testRuns.id, cp.run.id));
+        .where(eq(testRuns.id, cp.run!.id));
       const forced = await client.runs.listCheckpoints.query({
-        runId: cp.run.id,
+        runId: cp.run!.id,
       });
       expect(forced.items[0]?.state).toBe("unresolved");
 
       await client.review.approve.mutate({
-        runId: cp.run.id,
+        runId: cp.run!.id,
         actionId: randomUUID(),
-        checkpointIds: [cp.shot.id],
+        checkpointIds: [cp.shot!.id],
       });
       const after = await client.runs.listCheckpoints.query({
-        runId: cp.run.id,
+        runId: cp.run!.id,
       });
       expect(after.items[0]).toMatchObject({
         state: "approved",
@@ -2479,7 +2479,9 @@ d("tRPC runs router", () => {
       });
 
       const client = makeClient(baseUrl, s.memberJwt);
-      const res = await client.runs.listCheckpoints.query({ runId: cp.run.id });
+      const res = await client.runs.listCheckpoints.query({
+        runId: cp.run!.id,
+      });
       expect(res.items[0]?.state).toBe("unresolved");
       expect(res.items[0]?.verdict).toBe("unresolved");
     });
@@ -3050,17 +3052,17 @@ d("tRPC runs router", () => {
       await h.db
         .update(testVariations)
         .set({ ignoreRegions: [savedRegion] })
-        .where(eq(testVariations.id, a.variation.id));
+        .where(eq(testVariations.id, a.variation!.id));
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.review.approveGroup.mutate({
-        runId: a.run.id,
-        checkpointId: a.shot.id,
+        runId: a.run!.id,
+        checkpointId: a.shot!.id,
         actionId: randomUUID(),
       });
       expect(res.decided).toHaveLength(1);
 
-      expect((await variationRow(a.variation.id)).ignoreRegions).toEqual([
+      expect((await variationRow(a.variation!.id)).ignoreRegions).toEqual([
         savedRegion,
       ]);
     });
@@ -3122,16 +3124,16 @@ d("tRPC runs router", () => {
     /** Approve `cp` the way `via` does, with the member's client. */
     function approveVia(
       via: ApproveVia,
-      cp: { run: { id: string }; shot: { id: string } },
+      cp: Awaited<ReturnType<typeof seedCheckpoint>>,
     ) {
       const client = makeClient(baseUrl, s.memberJwt);
       if (via === "inbox.approve")
-        return client.inbox.approve.mutate({ runId: cp.run.id });
+        return client.inbox.approve.mutate({ runId: cp.run!.id });
       return client.review.approve.mutate({
-        runId: cp.run.id,
+        runId: cp.run!.id,
         actionId: randomUUID(),
         ...(via === "review.approve (one checkpoint)"
-          ? { checkpointIds: [cp.shot.id] }
+          ? { checkpointIds: [cp.shot!.id] }
           : {}),
       });
     }
@@ -3170,12 +3172,12 @@ d("tRPC runs router", () => {
         const [run] = await h.db
           .select()
           .from(testRuns)
-          .where(eq(testRuns.id, cp.run.id));
+          .where(eq(testRuns.id, cp.run!.id));
         expect(run!.status).toBe("passed");
         const bl = await h.db
           .select()
           .from(baselines)
-          .where(eq(baselines.testRunId, cp.run.id));
+          .where(eq(baselines.testRunId, cp.run!.id));
         expect(bl.map((b) => b.userId)).toEqual([s.memberId]);
       },
     );
@@ -3200,7 +3202,7 @@ d("tRPC runs router", () => {
           await h.db
             .update(testRuns)
             .set({ status })
-            .where(eq(testRuns.id, cp.run.id));
+            .where(eq(testRuns.id, cp.run!.id));
 
           const err = await approveVia(procedure, cp).catch((e) => e);
           expect(err?.data?.code).toBe("PRECONDITION_FAILED");
@@ -3209,12 +3211,12 @@ d("tRPC runs router", () => {
           const [run] = await h.db
             .select()
             .from(testRuns)
-            .where(eq(testRuns.id, cp.run.id));
+            .where(eq(testRuns.id, cp.run!.id));
           expect(run!.status).toBe(status);
           const bl = await h.db
             .select()
             .from(baselines)
-            .where(eq(baselines.testRunId, cp.run.id));
+            .where(eq(baselines.testRunId, cp.run!.id));
           expect(bl).toHaveLength(0);
         }
       },
@@ -3235,13 +3237,13 @@ d("tRPC runs router", () => {
         await h.db
           .update(testRuns)
           .set({ status })
-          .where(eq(testRuns.id, cp.run.id));
+          .where(eq(testRuns.id, cp.run!.id));
 
         const res = await makeClient(
           baseUrl,
           s.memberJwt,
         ).review.approve.mutate({
-          runId: cp.run.id,
+          runId: cp.run!.id,
           actionId: randomUUID(),
         });
         expect(res.decided).toEqual([]);
@@ -3249,13 +3251,13 @@ d("tRPC runs router", () => {
         const [run] = await h.db
           .select()
           .from(testRuns)
-          .where(eq(testRuns.id, cp.run.id));
+          .where(eq(testRuns.id, cp.run!.id));
         expect(run!.status).toBe(status);
         expect(
           await h.db
             .select()
             .from(baselines)
-            .where(eq(baselines.testRunId, cp.run.id)),
+            .where(eq(baselines.testRunId, cp.run!.id)),
         ).toHaveLength(0);
       }
     });
