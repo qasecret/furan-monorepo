@@ -122,7 +122,7 @@ docker compose --env-file .env -f infra/docker/compose.yml up -d
 
 This pulls and starts eight long-running services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
 
-> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.31`) or use `--mode from-head`.
+> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.32`) or use `--mode from-head`.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 
@@ -241,14 +241,14 @@ The reference workflow runs your test suite, uploads diffs, posts a sticky PR co
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
 
 ```bash
-docker pull qasecret/furan-api:v1.1.31
-docker pull qasecret/furan-dashboard:v1.1.31
-docker pull qasecret/furan-capture-worker:v1.1.31
-docker pull qasecret/furan-diff-worker:v1.1.31
-docker pull qasecret/furan-integrations:v1.1.31
+docker pull qasecret/furan-api:v1.1.32
+docker pull qasecret/furan-dashboard:v1.1.32
+docker pull qasecret/furan-capture-worker:v1.1.32
+docker pull qasecret/furan-diff-worker:v1.1.32
+docker pull qasecret/furan-integrations:v1.1.32
 ```
 
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.31`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.31`), and ships with an SBOM artifact.
+GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.32`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.32`), and ships with an SBOM artifact.
 
 ## Common first-install problems
 
@@ -301,7 +301,7 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 
 ## Status and roadmap
 
-**v1.1.31 is the current release** (2026-10-28) — a security release that also ships the new review flow. Everyone on v1.1.30 or earlier should upgrade: Next.js 15.5.28 fixes a critical advisory (GHSA-2464-fhr4-w9xw, remote code execution through image optimization) and a Server Actions denial of service; undici, Fastify, fast-uri and ip-address are patched; and request bodies are capped at 1 MB (50 MB only for screenshot uploads), with every list in a request size-checked before it is validated. Review: decide per checkpoint and undo until the decision is superseded; a review loop that walks pending steps (J/K, Next pending, Start reviewing) with a command palette and a keyboard cursor; and a diff viewer with five comparison modes (including Swipe and Flicker), the mode kept in the link, and a resizable details rail. Pipeline: each step is diffed in its own job against its own baseline, a failed step shows why and can be retried, and approvals cover every checkpoint, keep saved ignore regions and are audited. Also new: light and graphite-dark themes on semantic design tokens, `/metrics` series for diff jobs, queue depth and HTTP/tRPC latency, and a one-file install whose nginx lets screenshot-sized uploads through. Upgrading from v1.1.30 applies eight database migrations (0035–0042); back up first. All images are cosign-signed, Trivy-scanned, and multi-arch (amd64 / arm64). Beyond the v1.0 baseline, the v1.1 line adds the Playwright and Appium SDK adapters, the image-first Visual-AI (VLM) diff layer, an opt-in Postgres row-level-security tenant-isolation backstop, an audit log with an admin viewer, a four-tier role hierarchy, and a one-file, single-origin quick-start install. Feedback from early installers is very welcome — [open an issue](https://github.com/qasecret/furan-monorepo/issues).
+**v1.1.32 is the current release** (2026-10-29). It fixes a dashboard opened over plain http: on v1.1.31 and earlier, signing in from another machine (`http://<host>:8080`) did not keep the session in any browser, Safari lost it even on `http://localhost:8080`, and drawing or pasting ignore regions failed. It also moves request validation to zod 4.6.7 (CVE-2023-54404), so the build no longer carries an exception for it; API validation messages now use zod 4's wording, while status codes and Furan's own error codes are unchanged. v1.1.31 (2026-10-28) was a security release that also shipped the new review flow, so everyone on v1.1.30 or earlier should upgrade: Next.js 15.5.28 fixes a critical advisory (GHSA-2464-fhr4-w9xw, remote code execution through image optimization) and a Server Actions denial of service; undici, Fastify, fast-uri and ip-address are patched; and request bodies are capped at 1 MB (50 MB only for screenshot uploads), with every list in a request size-checked before it is validated. Review: decide per checkpoint and undo until the decision is superseded; a review loop that walks pending steps (J/K, Next pending, Start reviewing) with a command palette and a keyboard cursor; and a diff viewer with five comparison modes (including Swipe and Flicker), the mode kept in the link, and a resizable details rail. Pipeline: each step is diffed in its own job against its own baseline, a failed step shows why and can be retried, and approvals cover every checkpoint, keep saved ignore regions and are audited. Also new: light and graphite-dark themes on semantic design tokens, `/metrics` series for diff jobs, queue depth and HTTP/tRPC latency, and a one-file install whose nginx lets screenshot-sized uploads through. Upgrading from v1.1.31 applies no database migrations; from v1.1.30 it applies eight (0035–0042), so back up first. All images are cosign-signed, Trivy-scanned, and multi-arch (amd64 / arm64). Beyond the v1.0 baseline, the v1.1 line adds the Playwright and Appium SDK adapters, the image-first Visual-AI (VLM) diff layer, an opt-in Postgres row-level-security tenant-isolation backstop, an audit log with an admin viewer, a four-tier role hierarchy, and a one-file, single-origin quick-start install. Feedback from early installers is very welcome — [open an issue](https://github.com/qasecret/furan-monorepo/issues).
 
 Not yet built (no schedule, will land when there's user signal):
 
