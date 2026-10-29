@@ -70,6 +70,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("loginAction client-IP forwarding", () => {
@@ -141,5 +142,57 @@ describe("loginAction existing behavior", () => {
       "jwt-abc",
       expect.objectContaining({ httpOnly: true, sameSite: "lax", path: "/" }),
     );
+  });
+});
+
+/**
+ * A browser on plain http rejects a `Secure` cookie (WebKit even on
+ * loopback), so the user never stays signed in. In production the cookie is
+ * `Secure` unless the browser's Origin is plain http.
+ */
+describe("loginAction session cookie Secure flag", () => {
+  /** The `secure` option the JWT cookie was set with. */
+  async function secureFor(origin: string | null): Promise<unknown> {
+    incoming.headers = new Headers(origin === null ? {} : { origin });
+    await submitValid();
+    expect(cookieSet).toHaveBeenCalledTimes(1);
+    const [, , options] = cookieSet.mock.calls[0] as [
+      string,
+      string,
+      { secure?: boolean },
+    ];
+    return options.secure;
+  }
+
+  test.each([
+    "http://localhost:8080",
+    "http://localhost",
+    "http://127.0.0.1:3011",
+    "http://[::1]:8080",
+    "http://192.168.1.10:8080",
+    "http://furan.internal",
+  ])("production, plain http (%s): not Secure", async (origin) => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await secureFor(origin)).toBe(false);
+  });
+
+  test.each([
+    ["https", "https://furan.example.com"],
+    ["https on loopback", "https://localhost:8443"],
+    ["an opaque origin", "null"],
+    ["an unparsable origin", "not a url"],
+  ])("production, %s: Secure", async (_label, origin) => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await secureFor(origin)).toBe(true);
+  });
+
+  test("production, no Origin header: Secure", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await secureFor(null)).toBe(true);
+  });
+
+  test("development: not Secure", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    expect(await secureFor("https://furan.example.com")).toBe(false);
   });
 });

@@ -3,6 +3,8 @@ import { create } from "zustand";
 import type { Bbox } from "./region-resize";
 import type { ElementBbox } from "./useElementMap";
 
+import { randomUuid } from "@/lib/random-uuid";
+
 /**
  * The ignore-region editor's state, plus the step's viewport and the comment
  * panel. The comparison preferences live in `viewer-prefs.ts` and the
@@ -344,7 +346,7 @@ export const useViewerStore = create<State>((set, get) => ({
                 viewport: string;
               },
             ),
-          ) ?? crypto.randomUUID(),
+          ) ?? randomUuid(),
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind ?? "ignore",
         pattern: r.pattern,

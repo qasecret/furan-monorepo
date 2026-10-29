@@ -48,6 +48,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import { useCommandKeys, type CommandKeys } from "@/lib/commands/registry";
+import { randomUuid } from "@/lib/random-uuid";
 import { trpc } from "@/lib/trpc";
 
 /** Each mode's icon in the radio group. */
@@ -677,7 +678,7 @@ export function ViewerToolbar({
               if (!clipboard) return;
               addDraftRegion({
                 ...clipboard,
-                id: crypto.randomUUID(),
+                id: randomUuid(),
                 viewport: viewport || clipboard.viewport,
               });
             }}

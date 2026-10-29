@@ -731,6 +731,54 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     );
   });
 
+  test("Paste works over plain http, where crypto.randomUUID is missing", () => {
+    sessionStorage.setItem(
+      "furan:region-clipboard:p1",
+      JSON.stringify({
+        _v: 1,
+        copiedAt: 0,
+        region: {
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore" as const,
+        },
+      }),
+    );
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+      viewport: "1280x720",
+      draftIgnoreAreas: [],
+    });
+    // A page outside a secure context has getRandomValues but no randomUUID.
+    const real = globalThis.crypto;
+    vi.stubGlobal("crypto", {
+      getRandomValues: real.getRandomValues.bind(real),
+    });
+    try {
+      render(
+        <ViewerToolbar
+          runId={RUN_ID}
+          checkpointId={CHECKPOINT_ID}
+          projectId="p1"
+          project={{ dynamicTextEnabled: false }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("region-paste-button"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const drafts = useViewerStore.getState().draftIgnoreAreas;
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]!.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
   test("Copy + Paste cluster is NOT rendered outside edit mode", () => {
     useViewerStore.setState({
       ignoreEditMode: "off",

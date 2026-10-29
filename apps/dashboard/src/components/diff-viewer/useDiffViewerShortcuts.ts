@@ -24,6 +24,7 @@ import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";
+import { randomUuid } from "@/lib/random-uuid";
 import { canReviewRole } from "@/lib/roles";
 
 /**
@@ -488,7 +489,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
       if (!clipboard) return;
       store().addDraftRegion({
         ...clipboard,
-        id: crypto.randomUUID(),
+        id: randomUuid(),
         viewport: store().viewport || clipboard.viewport,
       });
     },

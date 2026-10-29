@@ -20,6 +20,8 @@ import {
 } from "./useViewerStore";
 import type { Point, Size } from "./viewer-geometry";
 
+import { randomUuid } from "@/lib/random-uuid";
+
 /**
  * The ignore-region editor's pointer handling, moved out of the old
  * `ViewerCanvas` unchanged: drag-to-draw, the resize handles, the body move,
@@ -260,7 +262,7 @@ export function useIgnoreRegionEditor({
       const hit = findSmallestElementAtPoint(pt, elementMap.elements);
       if (!hit) return; // click missed every element — no-op
       const draft: DraftIgnoreArea = {
-        id: crypto.randomUUID(),
+        id: randomUuid(),
         x: hit.bbox.x,
         y: hit.bbox.y,
         width: hit.bbox.width,
@@ -303,7 +305,7 @@ export function useIgnoreRegionEditor({
       return;
     }
     const draft: DraftIgnoreArea = {
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       x,
       y,
       width,
