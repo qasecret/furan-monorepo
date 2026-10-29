@@ -39,7 +39,8 @@ const schema = z.object({
     .transform((v) => (v ? v : undefined)),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 /**
  * Admin-only dialog for creating a project from the dashboard. Mirrors the
@@ -65,7 +66,7 @@ export function CreateProjectDialog({
   const open = openProp ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const router = useRouter();
-  const form = useForm<FormValues>({
+  const form = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { name: "", mainBranchName: "" },
   });

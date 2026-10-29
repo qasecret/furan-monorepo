@@ -194,7 +194,8 @@ const ENGINE_KNOBS: Record<
  *  - integer fields use `z.coerce.number()` because controlled number
  *    inputs surface their value as a string. We keep the raw string in
  *    form state (so the input stays controlled even mid-edit) and
- *    coerce at parse time.
+ *    coerce at parse time. `<number>` types the form field as the
+ *    number it is seeded with (zod 4 types a coerced input `unknown`).
  *  - `imageComparisonConfig` is treated as a JSON string. Empty is
  *    allowed (lets users clear the override) and otherwise the value
  *    must be a JSON object (the API rejects anything else — ADR-060).
@@ -210,9 +211,9 @@ const schema = z.object({
   dynamicTextEnabled: z.boolean(),
   autoApproveFeature: z.boolean(),
   imageComparison: z.enum(["pixelmatch", "looks_same", "odiff", "vlm"]),
-  retentionDays: z.coerce.number().int().min(1).max(3650),
-  maxBuildAllowed: z.coerce.number().int().min(1),
-  maxBranchLifetime: z.coerce.number().int().min(1),
+  retentionDays: z.coerce.number<number>().int().min(1).max(3650),
+  maxBuildAllowed: z.coerce.number<number>().int().min(1),
+  maxBranchLifetime: z.coerce.number<number>().int().min(1),
   imageComparisonConfig: z.string().refine((s) => {
     if (s.trim() === "") return true;
     try {

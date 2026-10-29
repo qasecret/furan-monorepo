@@ -22,12 +22,20 @@ describe("boundedArray", () => {
     expect(result.error?.issues).toEqual([
       expect.objectContaining({
         code: "too_big",
-        type: "array",
+        origin: "array",
         maximum: 3,
-        message: "Array must contain at most 3 element(s)",
+        message: "Too big: expected array to have <=3 items",
       }),
     ]);
     expect(seen.count).toBe(0);
+  });
+
+  test("raises the issue .max() raises", () => {
+    const input = ["a", "b", "c", "d"];
+    const bounded = boundedArray(z.string(), 3).safeParse(input);
+    const max = z.array(z.string()).max(3).safeParse(input);
+
+    expect(bounded.error?.issues).toEqual(max.error?.issues);
   });
 
   test("a million bad elements cost one issue (CVE-2023-54404)", () => {
@@ -63,7 +71,8 @@ describe("boundedArray", () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]).toMatchObject({
-      code: "invalid_string",
+      code: "invalid_format",
+      format: "uuid",
       path: [0],
     });
   });
@@ -150,7 +159,7 @@ describe("boundedRecord", () => {
       expect(result.success).toBe(false);
       expect(result.error?.issues[0]).toMatchObject({
         code: "invalid_type",
-        expected: "object",
+        expected: "record",
       });
     }
   });

@@ -114,31 +114,3 @@ CVE-2025-61727
 CVE-2026-39823
 CVE-2026-39825
 CVE-2026-39826
-
-# ---------------------------------------------------------------------------
-# zod 3.25.76 (api, dashboard, workers): CVE-2023-54404 / GHSA-mrhx-c7xc-m3w5
-# HIGH, a DoS. Fixed only in zod 4.6.6; there is no 3.x release.
-#
-# The advisory: a size-constrained array still parses every element before
-# it fails, so one large array costs CPU and heap in proportion to its
-# length. tRPC parses input before auth, so an anonymous caller could reach
-# it. Mitigated in Furan, not in the library:
-#  - every array or record a caller sends goes through boundedArray /
-#    boundedRecord (packages/shared-types/src/bounded.ts), which rejects an
-#    oversized collection with one fatal issue before any element is parsed,
-#    and every one of them has a cap;
-#  - JSON bodies are capped at 1 MB (apps/api/src/app.ts); only the two
-#    screenshot upload routes allow 50 MB, and they parse no arrays;
-#  - the dashboard, workers, integrations and config parse no caller-sent
-#    arrays with zod (env and internal job data only).
-# Regression tests: packages/shared-types/src/bounded.test.ts and
-# apps/api/tests/request-input-bounds.test.ts. A new request-input
-# `z.array` / `z.record` that skips the helpers voids this entry.
-#
-# Expires 2027-01-31: migrate to zod ^4.6.7 before then (keep the size
-# gates: 4.6.6 checks size first only on constrained arrays) and delete
-# this entry. Trivy fails the gate again on expiry.
-#
-# Owner: @qasecret-maintainer
-# Last reviewed: 2026-10-28 (Trivy gate fix for next / undici)
-CVE-2023-54404 exp:2027-01-31

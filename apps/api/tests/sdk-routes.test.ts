@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -278,12 +279,13 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       headers: { authorization: `Bearer ${s.memberJwt}` },
       payload: {
         projectId: s.projectId,
-        buildId: "00000000-0000-0000-0000-000000000001",
+        buildId: randomUUID(),
         branchName: "main",
         name: "x",
       },
     });
     expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ code: "invalid_build" });
   });
 
   test("POST /runs without auth → 401", async () => {

@@ -3,16 +3,18 @@ import { z } from "zod";
 /**
  * Size-gated collections for request inputs (CVE-2023-54404).
  *
- * zod 3's `.max(n)` records `too_big` and then still parses every element, so
- * an array of a million bad elements costs a million issues (seconds of CPU,
- * hundreds of MB of heap) before the request is rejected. tRPC parses input
- * before `authed` runs, so that cost is open to anonymous callers. zod 4.6.6
- * checks the size first, but only for constrained arrays, and 3.x has no fix.
+ * Before zod 4.6.6, `.max(n)` recorded `too_big` and then still parsed every
+ * element, so an array of a million bad elements cost a million issues
+ * (seconds of CPU, hundreds of MB of heap) before the request was rejected.
+ * tRPC parses input before `authed` runs, so that cost is open to anonymous
+ * callers. zod 4.6.6+ checks the size first, but only for arrays, sets and
+ * maps that declare a size check: a record, or an array without `.max()`,
+ * is still parsed in full.
  *
  * These helpers check the size first: an oversized collection fails with one
- * fatal issue and none of its elements are parsed (a fatal issue raised in
- * `z.preprocess` aborts before the inner schema runs). Every array or record
- * a caller sends goes through one of them, never a bare `z.array` /
+ * issue and none of its elements are parsed (any issue raised in
+ * `z.preprocess` stops the pipe before the inner schema runs). Every array or
+ * record a caller sends goes through one of them, never a bare `z.array` /
  * `z.record`.
  */
 
@@ -22,7 +24,7 @@ import { z } from "zod";
  * `z.array`'s own `invalid_type` issue. The issue for an oversized array is
  * the one `.max(max)` raises, so callers see the same error as before.
  */
-export function boundedArray<T extends z.ZodTypeAny>(
+export function boundedArray<T extends z.ZodType>(
   element: T,
   max: number,
   { min }: { min?: number } = {},
@@ -35,22 +37,17 @@ export function boundedArray<T extends z.ZodTypeAny>(
   // type so tRPC clients still see `string[]` (not `unknown`) for these fields.
   return z.preprocess((value, ctx) => {
     if (Array.isArray(value) && value.length > max) {
+      // No message: zod renders the one `.max(max)` would.
       ctx.addIssue({
-        code: z.ZodIssueCode.too_big,
-        type: "array",
+        code: "too_big",
+        origin: "array",
         maximum: max,
         inclusive: true,
-        exact: false,
-        message: `Array must contain at most ${max} element(s)`,
-        fatal: true,
+        input: value,
       });
     }
     return value;
-  }, array) as unknown as z.ZodEffects<
-    typeof array,
-    z.output<typeof array>,
-    z.input<typeof array>
-  >;
+  }, array) as unknown as z.ZodPreprocess<typeof array, z.input<typeof array>>;
 }
 
 /**
@@ -58,7 +55,10 @@ export function boundedArray<T extends z.ZodTypeAny>(
  * rejected before any key or value is parsed. A non-object falls through to
  * `z.record`'s own `invalid_type` issue.
  */
-export function boundedRecord<K extends z.KeySchema, V extends z.ZodTypeAny>(
+export function boundedRecord<
+  K extends z.core.$ZodRecordKey,
+  V extends z.ZodType,
+>(
   key: K,
   value: V,
   maxKeys: number,
@@ -72,12 +72,11 @@ export function boundedRecord<K extends z.KeySchema, V extends z.ZodTypeAny>(
       !Array.isArray(input) &&
       Object.keys(input).length > maxKeys
     ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message, fatal: true });
+      ctx.addIssue({ code: "custom", message, input });
     }
     return input;
-  }, record) as unknown as z.ZodEffects<
+  }, record) as unknown as z.ZodPreprocess<
     typeof record,
-    z.output<typeof record>,
     z.input<typeof record>
   >;
 }
