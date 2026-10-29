@@ -33,6 +33,7 @@ import {
 } from "./review-copy";
 import { useUndoStore, type UndoGoTo } from "./use-undo-store";
 
+import { randomUuid } from "@/lib/random-uuid";
 import { trpc, type RouterInputs, type RouterOutputs } from "@/lib/trpc";
 
 type DecideResult = RouterOutputs["review"]["approve"];
@@ -267,19 +268,6 @@ function rollBack(caches: Caches, action: Action): void {
  */
 function isPermanent(code: string | undefined): boolean {
   return code === "NOT_FOUND" || code === "FORBIDDEN" || code === "BAD_REQUEST";
-}
-
-/**
- * A v4 UUID. `crypto.randomUUID` only exists in secure contexts, and a
- * self-hosted dashboard is often opened over plain http on a LAN address.
- */
-function newActionId(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  b[6] = ((b[6] ?? 0) & 0x0f) | 0x40;
-  b[8] = ((b[8] ?? 0) & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 /**
@@ -527,7 +515,7 @@ export function useReviewMutations() {
       const flying = useInFlightStore.getState().ids;
       if (reach.some((id) => flying.has(id))) return;
 
-      const actionId = newActionId();
+      const actionId = randomUuid();
       const input = {
         runId,
         actionId,
@@ -576,7 +564,7 @@ export function useReviewMutations() {
   const decideGroup = useCallback(
     ({ runId, checkpointId, kind, label }: DecideGroupArgs) => {
       if (useInFlightStore.getState().ids.has(checkpointId)) return;
-      const actionId = newActionId();
+      const actionId = randomUuid();
       start(
         actionId,
         {
@@ -606,7 +594,7 @@ export function useReviewMutations() {
       onSuccess,
       onSettled,
     }: ApproveBuildArgs) => {
-      const actionId = newActionId();
+      const actionId = randomUuid();
       start(
         actionId,
         {
