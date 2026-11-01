@@ -7,6 +7,9 @@ Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](../inst
 and a Furan project already created. Repository-to-project mapping is wired by
 the GitHub App + a one-time admin-UI link (see step 2 below).
 
+Using another CI system? See the [Jenkins](./jenkins.md) and
+[GitLab CI](./gitlab-ci.md) recipes.
+
 ## Quick start
 
 ```yaml
@@ -56,8 +59,8 @@ A reference install slug is `furan-baselines`
 GitHub App on your account or organization, then give the `integrations`
 service its credentials: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and
 `GITHUB_APP_WEBHOOK_SECRET` (see `apps/integrations/src/env.ts` for the full
-list), and surface the App's install URL to your team. A step-by-step App
-provisioning guide is not written yet.
+list), and surface the App's install URL to your team. The step-by-step
+provisioning guide is [github-app.md](./github-app.md).
 
 After installing the App on your repository, **link the GitHub installation
 to a Furan project** via the admin UI:
@@ -160,6 +163,8 @@ inspect the `test_runs` and `screenshots` tables directly.
 
 ## See also
 
+- [GitHub App setup](./github-app.md) — create, configure and verify the App
+- [Jenkins recipe](./jenkins.md) and [GitLab CI recipe](./gitlab-ci.md)
 - [SDK example project](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/) — runnable Gradle reference
 - [Production deploy runbook](../runbooks/production-deploy.md) — running the full stack, including the `integrations` service
 - [`.examples/visual-regression.yml`](./.examples/visual-regression.yml) — copy-paste workflow
