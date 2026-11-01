@@ -6,13 +6,14 @@
 # (native bindings) — sharp ships prebuilt binaries for linux/glibc,
 # so a distroless-debian base is the right base (NOT alpine/musl).
 #
-# Bumped from debian12 → debian13 because odiff-bin's aarch64 binary is
+# Bumped from debian12 → debian13 because odiff-bin 3's aarch64 binary was
 # linked against GLIBC_2.38, which is too new for debian12 (glibc 2.36).
 # On Apple Silicon (and any ARM64 host) odiff would spawn-fail silently
 # and the diff worker would land every job in `aborted` with no log. We
 # saw this in the wild; debian13 ships glibc 2.41 which satisfies it.
-# (debian12 is fine on amd64 — odiff's x86_64 binary is statically OK —
-# but maintaining two bases for one issue isn't worth it.)
+# odiff-bin 4 installs a statically linked binary per platform
+# (@odiff/linux-x64, @odiff/linux-arm64, optional dependencies the
+# linux `pnpm install` below picks), so that no longer applies.
 #
 # Build context = repo root.
 

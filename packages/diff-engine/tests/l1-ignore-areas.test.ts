@@ -104,5 +104,18 @@ describe("L1 ignore areas integration", () => {
       );
       expect(result.diffPercent).toBeGreaterThan(0);
     });
+
+    it(`${engine}: ignore area beside the patch, in the same rows, still detects diff`, async () => {
+      // odiff 3 ignored whole rows from a region's first corner to its last.
+      const ignoreAreas = [{ x: 60, y: 20, width: 20, height: 30 }];
+      const result = await runL1(
+        baseline,
+        candidate,
+        ignoreAreas,
+        engine,
+        DEFAULT_ENGINE_CONFIG,
+      );
+      expect(result.diffPercent).toBeGreaterThan(0);
+    });
   }
 });

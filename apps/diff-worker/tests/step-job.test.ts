@@ -268,8 +268,8 @@ desc("step jobs (integration)", () => {
     expect(home).toMatchObject({
       verdict: "unresolved",
       diffGeneration: job.generation,
-      diffPercent: 12.825625,
-      pixelMismatchCount: 20521,
+      diffPercent: 12.96,
+      pixelMismatchCount: 20736,
       baselineSource: "this_branch",
       vlmDescription: null,
       ruleResolved: false,
@@ -284,8 +284,8 @@ desc("step jobs (integration)", () => {
     expect((await stepRow(s.shotId.cart!)).verdict).toBeNull();
     expect(await runRow(s.candidateRunId)).toMatchObject({
       status: "running",
-      diffPercent: 12.825625,
-      pixelMisMatchCount: 20521,
+      diffPercent: 12.96,
+      pixelMisMatchCount: 20736,
       diffName: home.diffImageKey,
       baselineSource: "this_branch",
     });
@@ -647,8 +647,8 @@ desc("step jobs (integration)", () => {
       });
       expect(stored).toMatchObject({
         status: "unresolved",
-        diffPercent: 25.785625,
-        pixelMisMatchCount: 61778,
+        diffPercent: 25.92,
+        pixelMisMatchCount: 62208,
         diffName: (await stepRow(s.shotId.moved!)).diffImageKey,
         baselineSource: "this_branch",
       });
@@ -719,7 +719,7 @@ desc("step jobs (integration)", () => {
       seen.push(final);
 
       expect(final.status).toBe("unresolved");
-      expect(final.diffPercent).toBe(25.785625);
+      expect(final.diffPercent).toBe(25.92);
       for (const row of seen.filter((r) => r.status !== "running")) {
         expect(row).toEqual(final);
       }
