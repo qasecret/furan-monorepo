@@ -9,6 +9,37 @@
       "tag-separator": "/",
       "changelog-path": "CHANGELOG.md",
       "extra-files": ["version.txt", "README.md"]
+    },
+    "packages/client": {
+      "release-type": "node",
+      "component": "client",
+      "package-name": "@furan/client",
+      "tag-separator": "/",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true
+    },
+    "packages/cli": {
+      "release-type": "node",
+      "component": "cli",
+      "package-name": "@furan/cli",
+      "tag-separator": "/",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true
+    },
+    "packages/playwright": {
+      "release-type": "node",
+      "component": "playwright",
+      "package-name": "@furan/playwright",
+      "tag-separator": "/",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true
     }
-  }
+  },
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "furan-js",
+      "components": ["client", "cli", "playwright"]
+    }
+  ]
 }
