@@ -20,7 +20,7 @@
     "@furan/storage": "workspace:*",
     "@furan/telemetry": "workspace:*",
     "@playwright/test": "^1.63.0",
-    "bcryptjs": "^2.4.3",
+    "bcryptjs": "^3.0.3",
     "postgres": "^3.4.5",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
@@ -28,7 +28,6 @@
   "devDependencies": {
     "@furan/eslint-config": "workspace:*",
     "@furan/tsconfig": "workspace:*",
-    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.5",
     "eslint": "^10.12.0",
     "tsx": "^4.23.15",
