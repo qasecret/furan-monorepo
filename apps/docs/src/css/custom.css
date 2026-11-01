@@ -67,6 +67,8 @@
   --ifm-color-primary-lighter: #b5ff6c;
   --ifm-color-primary-lightest: #c2ff87;
   --ifm-color-primary-contrast-foreground: #000000;
+  /* The search box's selected result sits on --ifm-color-primary (lime). */
+  --search-local-hit-active-color: #000000;
 }
 
 [data-theme="dark"] .button--primary {

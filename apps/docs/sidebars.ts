@@ -3,7 +3,8 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 /**
  * The portal's structure (spec §3.1). It is explicit, so files can stay where
  * they are in `docs/`. Slugs under `getting-started/` are a contract with the
- * dashboard's links: change one only with a redirect.
+ * dashboard's links: change one only with a redirect. Runbooks get short
+ * labels here; their own titles stay as they are for GitHub readers.
  */
 const sidebars: SidebarsConfig = {
   docs: [
@@ -29,12 +30,32 @@ const sidebars: SidebarsConfig = {
       items: [
         "install/one-file",
         "install/compose",
-        "runbooks/production-deploy",
-        "runbooks/reverse-proxy-tls",
-        "runbooks/storage-backends",
-        "runbooks/restore-from-backup",
-        "runbooks/review-model-upgrade",
-        "runbooks/rls-enable",
+        {
+          type: "doc",
+          id: "runbooks/production-deploy",
+          label: "Production deploy and upgrades",
+        },
+        {
+          type: "doc",
+          id: "runbooks/reverse-proxy-tls",
+          label: "HTTPS on a domain",
+        },
+        {
+          type: "doc",
+          id: "runbooks/storage-backends",
+          label: "Storage backends",
+        },
+        {
+          type: "doc",
+          id: "runbooks/restore-from-backup",
+          label: "Backup and restore",
+        },
+        {
+          type: "doc",
+          id: "runbooks/review-model-upgrade",
+          label: "Upgrade notes: per-step review",
+        },
+        { type: "doc", id: "runbooks/rls-enable", label: "Row-level security" },
       ],
     },
     {
@@ -47,7 +68,13 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "CI",
       collapsed: false,
-      items: ["integrations/github-actions"],
+      items: [
+        {
+          type: "doc",
+          id: "integrations/github-actions",
+          label: "GitHub Actions",
+        },
+      ],
     },
     {
       type: "category",
@@ -55,8 +82,12 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         "troubleshooting/first-install",
-        "runbooks/api-down",
-        "runbooks/diff-queue-backlog",
+        { type: "doc", id: "runbooks/api-down", label: "API down" },
+        {
+          type: "doc",
+          id: "runbooks/diff-queue-backlog",
+          label: "Diff queue backlog",
+        },
       ],
     },
   ],
