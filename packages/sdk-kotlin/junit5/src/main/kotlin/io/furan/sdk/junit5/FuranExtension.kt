@@ -87,14 +87,14 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         extensionContext: ExtensionContext,
     ): Any {
         val store = extensionContext.getStore(NAMESPACE)
-        val config = store.getOrComputeIfAbsent(
+        val config = store.computeIfAbsent(
             CONFIG_KEY,
             { FuranConfig.fromEnv() },
             FuranConfig::class.java,
         )
         return when (parameterContext.parameter.type) {
             FuranConfig::class.java -> config
-            FuranClient::class.java -> store.getOrComputeIfAbsent(
+            FuranClient::class.java -> store.computeIfAbsent(
                 CLIENT_KEY,
                 { FuranClient(config, adapter = "junit5") },
                 FuranClient::class.java,
@@ -226,7 +226,7 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         @Suppress("UNCHECKED_CAST")
         internal fun captureRunResult(context: ExtensionContext, result: RunResult) {
             val store = context.root.getStore(NAMESPACE)
-            val results = store.getOrComputeIfAbsent(
+            val results = store.computeIfAbsent(
                 RESULTS_KEY,
                 { mutableListOf<RunResult>() },
                 MutableList::class.java,

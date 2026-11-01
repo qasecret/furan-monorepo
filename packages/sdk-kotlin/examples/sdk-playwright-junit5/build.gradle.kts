@@ -1,6 +1,6 @@
 import java.util.Properties
 
-plugins { id("org.jetbrains.kotlin.jvm") version "2.0.21" }
+plugins { id("org.jetbrains.kotlin.jvm") version "2.4.21" }
 java { toolchain.languageVersion.set(JavaLanguageVersion.of(21)) }
 // mavenLocal() MUST come before mavenCentral() so the in-tree SDK published by
 // the CI workflow's "Publish SDK locally" step wins over the published Maven
@@ -16,7 +16,7 @@ repositories { mavenLocal(); mavenCentral() }
 val sdkVersion: String = file("../../version.txt").readText().trim()
 dependencies {
     testImplementation("io.github.qasecret:furan-playwright:$sdkVersion")
-    testImplementation("com.microsoft.playwright:playwright:1.49.0")
+    testImplementation("com.microsoft.playwright:playwright:1.64.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

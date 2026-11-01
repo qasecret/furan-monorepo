@@ -142,12 +142,12 @@ class SeleniumSpecDriverTest {
 
     private class StubOptions(private val window: StubWindow) : WebDriver.Options {
         override fun window(): WebDriver.Window = window
-        override fun addCookie(cookie: org.openqa.selenium.Cookie?) = throw NotImplementedError()
-        override fun deleteCookieNamed(name: String?) = throw NotImplementedError()
-        override fun deleteCookie(cookie: org.openqa.selenium.Cookie?) = throw NotImplementedError()
+        override fun addCookie(cookie: org.openqa.selenium.Cookie) = throw NotImplementedError()
+        override fun deleteCookieNamed(name: String) = throw NotImplementedError()
+        override fun deleteCookie(cookie: org.openqa.selenium.Cookie) = throw NotImplementedError()
         override fun deleteAllCookies() = throw NotImplementedError()
         override fun getCookies(): Set<org.openqa.selenium.Cookie> = throw NotImplementedError()
-        override fun getCookieNamed(name: String?): org.openqa.selenium.Cookie = throw NotImplementedError()
+        override fun getCookieNamed(name: String): org.openqa.selenium.Cookie? = throw NotImplementedError()
         override fun timeouts(): WebDriver.Timeouts = throw NotImplementedError()
         override fun logs(): org.openqa.selenium.logging.Logs = throw NotImplementedError()
     }
@@ -177,12 +177,12 @@ class SeleniumSpecDriverTest {
         override fun <X : Any> getScreenshotAs(target: OutputType<X>): X = png as X
         override fun click() = Unit
         override fun submit() = Unit
-        override fun sendKeys(vararg keysToSend: CharSequence?) = Unit
+        override fun sendKeys(vararg keysToSend: CharSequence) = Unit
         override fun clear() = Unit
         override fun getTagName(): String = "div"
-        override fun getDomProperty(name: String?): String? = null
-        override fun getDomAttribute(name: String?): String? = null
-        override fun getAttribute(name: String?): String? = null
+        override fun getDomProperty(name: String): String? = null
+        override fun getDomAttribute(name: String): String? = null
+        override fun getAttribute(name: String): String? = null
         override fun getAriaRole(): String = ""
         override fun getAccessibleName(): String = ""
         override fun isSelected(): Boolean = false
@@ -194,6 +194,6 @@ class SeleniumSpecDriverTest {
         override fun isDisplayed(): Boolean = true
         override fun getLocation(): org.openqa.selenium.Point = org.openqa.selenium.Point(rect.x, rect.y)
         override fun getSize(): org.openqa.selenium.Dimension = org.openqa.selenium.Dimension(rect.width, rect.height)
-        override fun getCssValue(propertyName: String?): String = ""
+        override fun getCssValue(propertyName: String): String = ""
     }
 }
