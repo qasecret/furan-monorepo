@@ -1,6 +1,6 @@
 /**
  * Content-Security-Policy for every rendered dashboard page (set per request
- * by `src/middleware.ts`, which also hands the nonce to Next's renderer).
+ * by `src/proxy.ts`, which also hands the nonce to Next's renderer).
  *
  * - script-src: only scripts carrying this request's nonce run — Next tags its
  *   own bootstrap/chunk/flight scripts with it when it finds the nonce in the

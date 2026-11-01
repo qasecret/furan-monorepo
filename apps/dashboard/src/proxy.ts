@@ -14,7 +14,7 @@ import { browserEnv } from "@/lib/env";
  * The static headers (X-Frame-Options, nosniff, Referrer-Policy, HSTS, …) live
  * in next.config.mjs so they also cover the assets this matcher skips.
  */
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   const nonce = btoa(
     String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
   );

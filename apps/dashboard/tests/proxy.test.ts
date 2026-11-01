@@ -1,22 +1,22 @@
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 
-import { config, middleware } from "@/middleware";
+import { config, proxy } from "@/proxy";
 
 function nonceOf(csp: string | null): string | undefined {
   return csp?.match(/'nonce-([^']+)'/)?.[1];
 }
 
-describe("middleware (Content-Security-Policy)", () => {
+describe("proxy (Content-Security-Policy)", () => {
   it("sets a nonce-based CSP on the response", () => {
-    const res = middleware(new NextRequest("http://localhost:3001/login"));
+    const res = proxy(new NextRequest("http://localhost:3001/login"));
     const csp = res.headers.get("content-security-policy");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(nonceOf(csp)).toMatch(/^[A-Za-z0-9+/]{22}==$/);
   });
 
   it("hands the same nonce + policy to the render (request headers)", () => {
-    const res = middleware(new NextRequest("http://localhost:3001/home"));
+    const res = proxy(new NextRequest("http://localhost:3001/home"));
     const csp = res.headers.get("content-security-policy");
     // NextResponse.next({ request: { headers } }) serializes overridden
     // request headers as x-middleware-request-<name>.
@@ -27,8 +27,8 @@ describe("middleware (Content-Security-Policy)", () => {
   });
 
   it("uses a fresh nonce per request", () => {
-    const a = middleware(new NextRequest("http://localhost:3001/"));
-    const b = middleware(new NextRequest("http://localhost:3001/"));
+    const a = proxy(new NextRequest("http://localhost:3001/"));
+    const b = proxy(new NextRequest("http://localhost:3001/"));
     expect(nonceOf(a.headers.get("content-security-policy"))).not.toBe(
       nonceOf(b.headers.get("content-security-policy")),
     );
