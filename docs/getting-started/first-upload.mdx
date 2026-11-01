@@ -1,0 +1,197 @@
+---
+title: 4. Send your first upload
+sidebar_label: Send your first upload
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import SdkDependency from "@site/src/components/SdkDependency";
+
+# 4. Send your first upload
+
+Your test opens a page, and the Furan SDK takes a screenshot and uploads it to
+your project. Each screenshot is a **step**; the steps of one test run form a
+**test**, and the tests of one CI run form a **batch**.
+
+## You need
+
+- The project ID from [step 2](create-project.md) and the token from
+  [step 3](create-token.md).
+- A JUnit 5 test project (Gradle or Maven) for the SDK, or just `curl` for the
+  REST tab.
+
+Set three environment variables where your tests run (as CI secrets later):
+
+| Variable           | Value                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `FURAN_API_URL`    | One-file install: `http://<host>:8080/api`. Production install (`compose.yml`): `http://<host>:3000`. |
+| `FURAN_API_TOKEN`  | The `furan_pat_…` token from step 3.                                                                  |
+| `FURAN_PROJECT_ID` | The project's UUID from step 2.                                                                       |
+
+```bash
+export FURAN_API_URL=http://localhost:8080/api
+export FURAN_API_TOKEN=furan_pat_…
+export FURAN_PROJECT_ID=…
+```
+
+:::tip The one-file install serves the API under `/api`
+
+On the one-file install the API shares port `8080` with the dashboard, under
+`/api`. Port `3000` belongs to the production `compose.yml` install, where the
+API has its own port.
+
+:::
+
+## Steps
+
+<Tabs groupId="driver">
+<TabItem value="selenium" label="Selenium" default>
+
+Add the dependency:
+
+<SdkDependency artifact="furan-selenium" />
+
+Write a test:
+
+```kotlin title="src/test/kotlin/HomePageTest.kt"
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.selenium.Furan
+import org.junit.jupiter.api.Test
+import org.openqa.selenium.chrome.ChromeDriver
+import org.openqa.selenium.chrome.ChromeOptions
+
+class HomePageTest {
+    @Test
+    fun `home page looks right`() {
+        val driver = ChromeDriver(ChromeOptions().addArguments("--headless=new"))
+        try {
+            Furan.use(FuranConfig.fromEnv(), driver, testName = "home page") { furan ->
+                driver.get("https://example.com")
+                furan.snapshot("home")
+            }
+        } finally {
+            driver.quit()
+        }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="playwright" label="Playwright">
+
+Add the dependency:
+
+<SdkDependency artifact="furan-playwright" />
+
+Write a test:
+
+```kotlin title="src/test/kotlin/HomePageTest.kt"
+import com.microsoft.playwright.Playwright
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.playwright.FuranPlaywright
+import org.junit.jupiter.api.Test
+
+class HomePageTest {
+    @Test
+    fun `home page looks right`() {
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch()
+            val page = browser.newPage()
+            FuranPlaywright.use(FuranConfig.fromEnv(), page, "home page") { furan ->
+                page.navigate("https://example.com")
+                furan.snapshot("home")
+            }
+            browser.close()
+        }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="appium" label="Appium">
+
+Add the dependency:
+
+<SdkDependency artifact="furan-appium" />
+
+Write a test (it needs an Appium server and a device or emulator):
+
+```kotlin title="src/test/kotlin/HomeScreenTest.kt"
+import io.appium.java_client.AppiumDriver
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.appium.FuranAppium
+import org.junit.jupiter.api.Test
+import org.openqa.selenium.remote.DesiredCapabilities
+import java.net.URI
+
+class HomeScreenTest {
+    @Test
+    fun `home screen looks right`() {
+        val caps = DesiredCapabilities().apply {
+            setCapability("platformName", "Android")
+            setCapability("appium:automationName", "UiAutomator2")
+            setCapability("appium:app", "/path/to/your.apk")
+        }
+        val driver = AppiumDriver(URI("http://localhost:4723").toURL(), caps)
+        try {
+            FuranAppium.use(FuranConfig.fromEnv(), driver, "home screen") { furan ->
+                furan.snapshot("home")
+            }
+        } finally {
+            driver.quit()
+        }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="rest" label="REST (curl)">
+
+No SDK: create a build and a test run, upload a PNG, then complete the run.
+
+```bash
+API=http://localhost:8080/api   # production install: http://localhost:3000
+PAT=$FURAN_API_TOKEN; PID=$FURAN_PROJECT_ID
+# 1. Build
+BUILD=$(curl -s -X POST $API/projects/$PID/builds -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' -d '{"branchName":"main","name":"ci-1"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+# 2. Run
+RUN=$(curl -s -X POST $API/runs -H "Authorization: Bearer $PAT" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PID\",\"buildId\":\"$BUILD\",\"name\":\"home page\",\"branchName\":\"main\"}" \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).runId')
+# 3. Upload a screenshot
+curl -s -X POST $API/runs/$RUN/screenshots/base64 -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' \
+  -d "{\"pngBase64\":\"$(base64 < shot.png | tr -d '\n')\",\"name\":\"home\",\"viewport\":\"1280x720\",\"browser\":\"chromium\"}"
+# 4. Complete
+curl -s -X POST $API/runs/$RUN/complete -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+</TabItem>
+</Tabs>
+
+Run the test (`./gradlew test`, or `mvn test`).
+
+## You should see
+
+Open **Batches** in the dashboard. Your batch is at the top, under the
+default **Needs review** filter. Open it: the Review page lists your test,
+and every step is **New**, because nothing has a baseline yet. That's
+expected, and the next step is where you set it.
+
+## If it doesn't work
+
+- **Connection refused:** check `FURAN_API_URL`. On the one-file install it
+  ends in `/api` and uses port `8080`.
+- **401 Unauthorized:** the token is wrong or deleted; see
+  [step 3](create-token.md).
+- **403 or 404 on the project:** the token's account isn't a member of the
+  project, or `FURAN_PROJECT_ID` is wrong.
+- **The batch stays Running:** the diff worker may be stuck; see
+  [Diff queue backlog](../runbooks/diff-queue-backlog.md).
+
+---
+
+**Previous:** [3. Create a token](create-token.md) · **Next:** [5. Approve your first baselines](first-baseline.md)

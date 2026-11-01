@@ -13,7 +13,16 @@ what changed in the dashboard and approves or rejects it.
 
 ## Start here
 
-Getting started
+[Getting started](getting-started/install.md) takes a new team from the
+one-file install to its first reviewed diff in seven short pages:
+
+1. [Install Furan](getting-started/install.md)
+2. [Sign in and create a project](getting-started/create-project.md)
+3. [Create a token](getting-started/create-token.md)
+4. [Send your first upload](getting-started/first-upload.mdx)
+5. [Approve your first baselines](getting-started/first-baseline.md)
+6. [Review your first diff](getting-started/first-diff.md)
+7. [Wire it into CI](getting-started/next-ci.md)
 
 ## Install and operate
 

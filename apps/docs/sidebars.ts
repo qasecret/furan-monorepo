@@ -10,6 +10,20 @@ const sidebars: SidebarsConfig = {
     "README",
     {
       type: "category",
+      label: "Getting started",
+      collapsed: false,
+      items: [
+        "getting-started/install",
+        "getting-started/create-project",
+        "getting-started/create-token",
+        "getting-started/first-upload",
+        "getting-started/first-baseline",
+        "getting-started/first-diff",
+        "getting-started/next-ci",
+      ],
+    },
+    {
+      type: "category",
       label: "Install and operate",
       collapsed: false,
       items: [
