@@ -1,9 +1,19 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import type { NextConfig } from "next";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error -- next.config.mjs is plain JS with no declaration file.
 import rawNextConfig from "../next.config.mjs";
-import { HSTS_HEADER, SECURITY_HEADERS } from "../security-headers.mjs";
+import {
+  buildDocsCsp,
+  DOCS_REWRITES,
+  HSTS_HEADER,
+  readDocsScriptHashes,
+  SECURITY_HEADERS,
+} from "../security-headers.mjs";
 
 const nextConfig = rawNextConfig as NextConfig;
 
@@ -35,5 +45,54 @@ describe("static security headers", () => {
     expect(hsts?.has).toEqual([
       { type: "header", key: "x-forwarded-proto", value: "https" },
     ]);
+  });
+});
+
+describe("the /docs portal (spec §5)", () => {
+  const directive = (csp: string, name: string): string | undefined =>
+    csp
+      .split("; ")
+      .find((d) => d.startsWith(`${name} `))
+      ?.slice(name.length + 1);
+
+  it("buildDocsCsp allows exactly the hashed inline scripts", () => {
+    const csp = buildDocsCsp(["'sha256-AAA='"]);
+    expect(directive(csp, "script-src")).toBe("'self' 'sha256-AAA='");
+    expect(directive(csp, "script-src")).not.toContain("unsafe-inline");
+    expect(directive(csp, "frame-ancestors")).toBe("'none'");
+    expect(directive(csp, "connect-src")).toBe("'self'");
+    expect(directive(csp, "object-src")).toBe("'none'");
+    expect(directive(csp, "worker-src")).toBe("'self' blob:");
+  });
+
+  it("readDocsScriptHashes is null when the docs aren't built", () => {
+    expect(readDocsScriptHashes("/nonexistent/csp-hashes.json")).toBeNull();
+  });
+
+  it("readDocsScriptHashes reads the build's hash list", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "docs-hashes-"));
+    const file = path.join(dir, "csp-hashes.json");
+    writeFileSync(file, JSON.stringify({ scriptHashes: ["'sha256-B='"] }));
+    try {
+      expect(readDocsScriptHashes(file)).toEqual(["'sha256-B='"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("next.config rewrites /docs pages to their .html files, after the filesystem", async () => {
+    expect(DOCS_REWRITES).toEqual([
+      { source: "/docs", destination: "/docs/index.html" },
+      { source: "/docs/:path+", destination: "/docs/:path+.html" },
+    ]);
+    const rewrites = (await nextConfig.rewrites!()) as {
+      fallback: unknown;
+    };
+    expect(rewrites.fallback).toEqual(DOCS_REWRITES);
+  });
+
+  it("next.config sends no /docs policy when the docs aren't built", async () => {
+    const rules = await nextConfig.headers!();
+    expect(rules.some((r) => r.source === "/docs/:path*")).toBe(false);
   });
 });

@@ -44,4 +44,14 @@ describe("proxy (Content-Security-Policy)", () => {
     expect(re.test("/api/healthz")).toBe(false);
     expect(re.test("/icon.svg")).toBe(false);
   });
+
+  it("skips the docs portal, which carries its own hash CSP", () => {
+    const [entry] = config.matcher;
+    const re = new RegExp(`^${entry!.source}$`);
+    expect(re.test("/docs")).toBe(false);
+    expect(re.test("/docs/getting-started/install")).toBe(false);
+    expect(re.test("/docs/assets/js/main.1a2b.js")).toBe(false);
+    expect(re.test("/docsearch-like")).toBe(true);
+    expect(re.test("/inbox")).toBe(true);
+  });
 });
