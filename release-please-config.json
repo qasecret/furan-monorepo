@@ -16,7 +16,8 @@
       "package-name": "@furan/client",
       "tag-separator": "/",
       "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0"
     },
     "packages/cli": {
       "release-type": "node",
@@ -24,7 +25,8 @@
       "package-name": "@furan/cli",
       "tag-separator": "/",
       "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0"
     },
     "packages/playwright": {
       "release-type": "node",
@@ -32,7 +34,8 @@
       "package-name": "@furan/playwright",
       "tag-separator": "/",
       "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0"
     }
   },
   "plugins": [
