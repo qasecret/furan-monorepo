@@ -9,9 +9,7 @@ import SdkDependency from "@site/src/components/SdkDependency";
 
 > Visual-regression testing client for [Furan](https://github.com/qasecret/furan-monorepo) — capture screenshots in CI, diff against an approved baseline, fail the build on regressions.
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.qasecret/furan-selenium?label=maven%20central)](https://central.sonatype.com/namespace/io.github.qasecret)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/qasecret/furan-monorepo/blob/main/LICENSE)
-[![JDK](https://img.shields.io/badge/JDK-21+-blue)](https://adoptium.net/)
+Published on [Maven Central](https://central.sonatype.com/namespace/io.github.qasecret) under the [Apache 2.0 license](https://github.com/qasecret/furan-monorepo/blob/main/LICENSE). Requires JDK 21+.
 
 Drop-in for any JUnit 5 + Selenium, Playwright, or Appium suite. JDK 21+; Kotlin projects need Kotlin 2.3 or newer (Java projects have no Kotlin requirement). Five artifacts, pick the one matching your use case:
 
@@ -417,7 +415,7 @@ use. Remove any direct `io.furan.sdk.runtime.*` (etc.) imports if you had them.
 
 - **Issues:** [github.com/qasecret/furan-monorepo/issues](https://github.com/qasecret/furan-monorepo/issues)
 - **Server docs:** [Getting started](../getting-started/install.md) covers self-hosting and the first upload.
-- **API reference:** `GET /openapi.json` on your deployment, or interactive docs at `GET /docs`.
+- **API reference:** `<FURAN_API_URL>/openapi.json`, or the interactive reference at `<FURAN_API_URL>/docs` (for example `http://localhost:8080/api/docs` on the one-file install). This is the API's own reference, not this portal.
 
 ## License
 

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   inlineScriptHashes,
+  offOriginFindings,
   unsafeInlineFindings,
   writeCspHashes,
 } from "../scripts/csp-hashes.mjs";
@@ -77,6 +78,36 @@ describe("unsafeInlineFindings", () => {
   });
 });
 
+describe("offOriginFindings", () => {
+  it("flags an image loaded from another origin", () => {
+    expect(
+      offOriginFindings('<img src="https://img.shields.io/badge/x.svg">'),
+    ).toHaveLength(1);
+  });
+
+  it("flags off-origin srcset, scripts and stylesheets", () => {
+    expect(
+      offOriginFindings(
+        '<img srcset="https://cdn.example.com/a.png 2x">' +
+          '<script src="https://cdn.example.com/a.js"></script>' +
+          '<link rel="stylesheet" href="https://fonts.example.com/a.css">',
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("allows same-origin resources and plain links", () => {
+    expect(
+      offOriginFindings(
+        '<script src="/docs/assets/js/main.js"></script>' +
+          '<img src="/docs/img/furan-mark.svg">' +
+          '<a href="https://github.com/qasecret/furan-monorepo">GitHub</a>' +
+          '<link rel="canonical" href="http://localhost:8080/docs/x">' +
+          '<link rel="alternate" hreflang="en" href="http://localhost:8080/docs/x">',
+      ),
+    ).toHaveLength(0);
+  });
+});
+
 describe("writeCspHashes", () => {
   it("writes the sorted, de-duplicated hashes of every page", async () => {
     const dir = await buildDir({
@@ -91,6 +122,13 @@ describe("writeCspHashes", () => {
       await readFile(path.join(dir, "csp-hashes.json"), "utf8"),
     ) as { scriptHashes: string[] };
     expect(file.scriptHashes).toEqual(expected);
+  });
+
+  it("rejects a page that loads from another origin, naming the file", async () => {
+    const dir = await buildDir({
+      "sdk/kotlin.html": '<img src="https://img.shields.io/badge/x.svg">',
+    });
+    await expect(writeCspHashes(dir)).rejects.toThrow(/sdk\/kotlin\.html/);
   });
 
   it("rejects a page with an inline handler, naming the file", async () => {
