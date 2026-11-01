@@ -26,7 +26,8 @@ export interface UploadArgs {
   saveNewTests: boolean;
   failOnNew: boolean;
   wait: boolean;
-  timeoutSeconds: number;
+  /** Null when `--timeout` is not given, so FURAN_POLL_TIMEOUT_SECONDS applies. */
+  timeoutSeconds: number | null;
   concurrency: number;
   json: boolean;
   dryRun: boolean;
@@ -112,7 +113,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       saveNewTests: values["save-new-tests"] ?? false,
       failOnNew: values["fail-on-new"] ?? false,
       wait: !(values["no-wait"] ?? false),
-      timeoutSeconds: positiveInt(values.timeout, "--timeout", 120),
+      timeoutSeconds:
+        values.timeout === undefined
+          ? null
+          : positiveInt(values.timeout, "--timeout", 120),
       concurrency: Math.min(
         16,
         Math.max(1, wholeNumber(values.concurrency, "--concurrency", 4)),

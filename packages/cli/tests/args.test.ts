@@ -9,7 +9,7 @@ const upload = (argv: string[]) => {
 };
 
 describe("parseArgs", () => {
-  it("defaults: wait true, timeout 120, concurrency 4", () => {
+  it("defaults: wait true, timeout unset (config default 120), concurrency 4", () => {
     expect(upload(["upload", "shots"])).toEqual({
       paths: ["shots"],
       test: null,
@@ -26,7 +26,7 @@ describe("parseArgs", () => {
       saveNewTests: false,
       failOnNew: false,
       wait: true,
-      timeoutSeconds: 120,
+      timeoutSeconds: null,
       concurrency: 4,
       json: false,
       dryRun: false,
