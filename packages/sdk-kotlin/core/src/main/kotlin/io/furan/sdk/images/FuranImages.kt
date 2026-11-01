@@ -61,6 +61,7 @@ class FuranImages(val config: FuranConfig) {
                 name = testName,
                 branchName = config.branchName,
                 parentBranchName = config.parentBranchName,
+                scm = config.scm,
             )
             runId = created.runId
         }

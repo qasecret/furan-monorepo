@@ -299,4 +299,25 @@ class FuranConfigTest {
         org.junit.jupiter.api.Assertions.assertEquals(false, FuranConfig.fromEnv(base).saveNewTests)
         org.junit.jupiter.api.Assertions.assertEquals(true, FuranConfig.fromEnv(base + ("FURAN_SAVE_NEW_TESTS" to "true")).saveNewTests)
     }
+
+    @Test
+    fun `fromEnv reads the repo PR and commit into scm and absent means empty`() {
+        val base = mapOf("FURAN_API_URL" to "http://x", "FURAN_API_TOKEN" to "t", "FURAN_PROJECT_ID" to "p")
+        assertEquals(ScmContext(), FuranConfig.fromEnv(base).scm)
+        assertEquals(
+            ScmContext("acme/site", 7, "deadbeef1234"),
+            FuranConfig.fromEnv(
+                base + mapOf(
+                    "FURAN_REPO" to "acme/site",
+                    "FURAN_PR_NUMBER" to "7",
+                    "FURAN_COMMIT_SHA" to "deadbeef1234",
+                ),
+            ).scm,
+        )
+    }
+
+    @Test
+    fun `direct construction defaults scm to empty`() {
+        assertEquals(ScmContext(), FuranConfig(apiUrl = "u", apiToken = "t", projectId = "p").scm)
+    }
 }

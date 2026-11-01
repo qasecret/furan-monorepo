@@ -72,6 +72,7 @@ internal constructor(
             name = testName,
             branchName = config.branchName,
             parentBranchName = config.parentBranchName,
+            scm = config.scm,
         )
         runId = created.runId
     }

@@ -69,6 +69,29 @@ data class Regions(
 /** SDK-internal value returned by [FuranClient.createRun2] (ADR-038 v1.1.0). */
 data class CreatedRun(val runId: String, val status: RunStatus, val name: String)
 
+/**
+ * The `POST /runs` body (ADR-038 v1.1.0 shape). Optional fields are omitted
+ * when unset to keep the wire minimal: `parentBranchName` (ADR-055) and the
+ * source-control context ([ScmContext]) the GitHub App reports back to.
+ */
+internal fun buildCreateRunBody(
+    projectId: String,
+    buildId: String,
+    name: String,
+    branchName: String,
+    parentBranchName: String?,
+    scm: ScmContext,
+): JsonObject = buildJsonObject {
+    put("projectId", projectId)
+    put("buildId", buildId)
+    put("name", name)
+    put("branchName", branchName)
+    if (parentBranchName != null) put("parentBranchName", parentBranchName)
+    if (scm.repo != null) put("repo", scm.repo)
+    if (scm.prNumber != null) put("prNumber", scm.prNumber)
+    if (scm.commitSha != null) put("commitSha", scm.commitSha)
+}
+
 open class FuranClient(
     val config: FuranConfig,
     val adapter: String = "unknown",
@@ -113,7 +136,8 @@ open class FuranClient(
     /**
      * ADR-038: create a new run with the v1.1.0 request shape.
      * `POST /runs` body is `{ projectId, buildId, name, branchName }`, plus an
-     * optional `parentBranchName` (ADR-055) when a parent branch is configured.
+     * optional `parentBranchName` (ADR-055) when a parent branch is configured,
+     * and the optional `repo` / `prNumber` / `commitSha` of [scm] when set.
      * Returns a [CreatedRun] with `runId`, `status`, and `name`.
      */
     suspend fun createRun2(
@@ -122,15 +146,9 @@ open class FuranClient(
         name: String,
         branchName: String,
         parentBranchName: String? = null,
+        scm: ScmContext = ScmContext(),
     ): CreatedRun = try {
-        val body = buildJsonObject {
-            put("projectId", projectId)
-            put("buildId", buildId)
-            put("name", name)
-            put("branchName", branchName)
-            // ADR-055: omit when null to keep the wire minimal.
-            if (parentBranchName != null) put("parentBranchName", parentBranchName)
-        }
+        val body = buildCreateRunBody(projectId, buildId, name, branchName, parentBranchName, scm)
         val parsed = transport.post<JsonObject, JsonObject>("runs", body)
         CreatedRun(
             runId = parsed.getValue("runId").jsonPrimitive.content,
