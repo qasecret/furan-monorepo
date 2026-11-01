@@ -68,3 +68,35 @@ describe("envSchema optional URL fields tolerate empty string", () => {
     expect(parsed.OTLP_ENDPOINT).toBeUndefined();
   });
 });
+
+describe("envSchema DASHBOARD_BASE_URL", () => {
+  const base = { DATABASE_URL: "postgresql://x:y@localhost:5432/z" };
+
+  test("omitted and empty both parse to undefined (no links)", () => {
+    expect(envSchema.parse({ ...base }).DASHBOARD_BASE_URL).toBeUndefined();
+    expect(
+      envSchema.parse({ ...base, DASHBOARD_BASE_URL: "" }).DASHBOARD_BASE_URL,
+    ).toBeUndefined();
+  });
+
+  test("a set value is kept without its trailing slash", () => {
+    expect(
+      envSchema.parse({
+        ...base,
+        DASHBOARD_BASE_URL: "https://furan.example.com/",
+      }).DASHBOARD_BASE_URL,
+    ).toBe("https://furan.example.com");
+    expect(
+      envSchema.parse({
+        ...base,
+        DASHBOARD_BASE_URL: "https://furan.example.com",
+      }).DASHBOARD_BASE_URL,
+    ).toBe("https://furan.example.com");
+  });
+
+  test("a value that is not a URL is rejected", () => {
+    expect(() =>
+      envSchema.parse({ ...base, DASHBOARD_BASE_URL: "furan.example.com" }),
+    ).toThrow();
+  });
+});

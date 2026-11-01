@@ -29,7 +29,8 @@ export interface StartRunEventsSubscriberDeps {
  *
  * On `run.completed`:
  *   - T8: post sticky PR comment + commit status (when `githubApp` AND
- *     the GitHub fields on the event are present — best-effort).
+ *     the GitHub context resolves — from the event, else from the run row
+ *     and the project's installation link via `db`; best-effort).
  *   - T9: enqueue outbound webhook deliveries for every active
  *     subscriber matching the project + "run.completed" event (when
  *     `db` AND `webhookQueue` are wired).
@@ -73,6 +74,10 @@ export function startRunEventsSubscriber(
           githubApp,
           event: completed,
           log,
+          ...(db ? { db } : {}),
+          ...(deps.dashboardBaseUrl
+            ? { dashboardBaseUrl: deps.dashboardBaseUrl }
+            : {}),
         }).catch((err) => {
           log.error({ err, channel }, "run_completed_handler_threw");
         });
