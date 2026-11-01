@@ -145,7 +145,9 @@ When the workflow runs against a PR with the App installed and the
   `failure` while any is `unresolved`, `failed` or `empty`, `error` if one was
   aborted, and `success` only when all tests have passed or created a baseline.
   A test that passes does not turn the status green while another test of the
-  build still needs review.
+  build still needs review. Approving or rejecting in the dashboard refreshes
+  the comment and the status, so approving the last test that needs review turns
+  the check green without re-running the job.
 
 Branch-protection rules can require `furan/baselines` to pass before merge.
 

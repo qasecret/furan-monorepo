@@ -71,14 +71,22 @@ Runs made before this was configured, or by an SDK that does not send the three
 values, have nothing to report and are skipped (debug log
 `run_completed_skipped_missing_github_fields`, naming what was missing).
 
-The status is recomputed each time a run of the build completes. Two runs that
-finish at the same moment can post in either order; the next completion posts
-the then-current value, so the status settles.
+The comment and the status are refreshed in two situations:
 
-**Known limit: reviewing in the dashboard does not refresh GitHub.** Approving or
-rejecting a run changes its status in Furan, but only a run completing posts to
-GitHub. After you review, `furan/baselines` and the comment keep their last
-value until another run of the build completes (re-running the CI job does it).
+- **A run completes.** The status is recomputed from the build as it is then.
+  Two runs that finish at the same moment can post in either order; the next
+  refresh posts the then-current value, so the status settles.
+- **A reviewer acts in the dashboard.** Approving, rejecting, undoing, or
+  forcing a run to passed or failed moves the run's status without a new diff.
+  The API announces it (`run.reviewed`) and the service re-posts that run's
+  comment and the build-wide status, so approving the last `unresolved` test
+  turns `furan/baselines` green without re-running CI. Only the pull request is
+  refreshed: Slack and outbound webhooks are not triggered by a review.
+
+An identical commit status is not posted twice. The service remembers the last
+one it posted per commit (in memory), because GitHub keeps every status and
+allows at most 1000 per commit and context. After a restart it may post the
+current one once more. A comment whose text did not change is left as it is.
 
 ## 1. Expose the webhook endpoint
 
@@ -339,19 +347,19 @@ Work down the list; each check isolates one layer.
 
 ## Troubleshooting
 
-| Symptom                                             | Likely cause                                                                                                                                                                             |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `integrations` exits with `Invalid environment: {}` | Only some of `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` are set; set all three or none                                                                       |
-| `503 github_app_not_configured` from the webhook    | The three variables are unset or empty in the container; in `furan-compose.yml` they must also be listed under the service (step 1)                                                      |
-| `400 invalid_signature`                             | Webhook secret mismatch, or the secret in `.env` was altered by quoting (generate it with `openssl rand -hex 32` to avoid special characters)                                            |
-| `400 missing_github_headers`                        | The request did not come from GitHub (or a proxy dropped the `X-GitHub-*` headers)                                                                                                       |
-| Deliveries time out or show a connection error      | The webhook URL is not reachable from GitHub: DNS, firewall, TLS certificate, or the route from step 1                                                                                   |
-| No row at `/admin/installations`                    | The `installation` delivery failed or was sent before the webhook worked; redeliver it                                                                                                   |
-| JWT or key errors when a run completes              | `GITHUB_APP_PRIVATE_KEY` lost its newlines (use one of the two forms in step 3) or belongs to a different App than `GITHUB_APP_ID`                                                       |
-| No comment or status on the pull request            | Check 6 in step 5: the `missing` list in `run_completed_skipped_missing_github_fields`, then that the App is installed on that repository                                                |
-| Status is on the wrong commit or never shows        | `FURAN_COMMIT_SHA` is a merge commit, not the pull request's head commit (detected correctly on GitHub Actions; set it by hand elsewhere)                                                |
-| Status is `failure` although this test passed       | Another test of the same build is `unresolved`, `failed`, `empty` or `aborted` (the status is the worst of the build), or a review has not been reflected yet: see the known limit above |
-| Comment or status has no link                       | `DASHBOARD_BASE_URL` is not set on the `integrations` service                                                                                                                            |
+| Symptom                                             | Likely cause                                                                                                                                                                  |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `integrations` exits with `Invalid environment: {}` | Only some of `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` are set; set all three or none                                                            |
+| `503 github_app_not_configured` from the webhook    | The three variables are unset or empty in the container; in `furan-compose.yml` they must also be listed under the service (step 1)                                           |
+| `400 invalid_signature`                             | Webhook secret mismatch, or the secret in `.env` was altered by quoting (generate it with `openssl rand -hex 32` to avoid special characters)                                 |
+| `400 missing_github_headers`                        | The request did not come from GitHub (or a proxy dropped the `X-GitHub-*` headers)                                                                                            |
+| Deliveries time out or show a connection error      | The webhook URL is not reachable from GitHub: DNS, firewall, TLS certificate, or the route from step 1                                                                        |
+| No row at `/admin/installations`                    | The `installation` delivery failed or was sent before the webhook worked; redeliver it                                                                                        |
+| JWT or key errors when a run completes              | `GITHUB_APP_PRIVATE_KEY` lost its newlines (use one of the two forms in step 3) or belongs to a different App than `GITHUB_APP_ID`                                            |
+| No comment or status on the pull request            | Check 6 in step 5: the `missing` list in `run_completed_skipped_missing_github_fields`, then that the App is installed on that repository                                     |
+| Status is on the wrong commit or never shows        | `FURAN_COMMIT_SHA` is a merge commit, not the pull request's head commit (detected correctly on GitHub Actions; set it by hand elsewhere)                                     |
+| Status is `failure` although this test passed       | Another test of the same build is `unresolved`, `failed`, `empty` or `aborted` (the status is the worst of the build); it turns green when the last one is approved or passes |
+| Comment or status has no link                       | `DASHBOARD_BASE_URL` is not set on the `integrations` service                                                                                                                 |
 
 ## See also
 
