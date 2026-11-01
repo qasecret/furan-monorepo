@@ -75,8 +75,10 @@ export function readDocsScriptHashes(file) {
   return JSON.parse(raw).scriptHashes;
 }
 
-// Docusaurus builds pages as x.html (trailingSlash: false). Fallback rewrites
-// run after the filesystem, so real files (/docs/assets/…) are served as-is.
+// Docusaurus builds pages as x.html (trailingSlash: false). These run as
+// afterFiles rewrites: after the filesystem, so real files (/docs/assets/…) are
+// served as-is, and before dynamic routes, so a page that doesn't exist falls
+// through to src/app/docs/[...slug] and gets the portal's 404.
 export const DOCS_REWRITES = [
   { source: "/docs", destination: "/docs/index.html" },
   { source: "/docs/:path+", destination: "/docs/:path+.html" },

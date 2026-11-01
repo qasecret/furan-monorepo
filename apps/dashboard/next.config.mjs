@@ -76,9 +76,10 @@ const nextConfig = {
         : []),
     ];
   },
-  // /docs/x → public/docs/x.html. See security-headers.mjs.
+  // /docs/x → public/docs/x.html, before dynamic routes: a path with no such
+  // file falls through to src/app/docs/[...slug] (the portal's 404 page).
   async rewrites() {
-    return { beforeFiles: [], afterFiles: [], fallback: DOCS_REWRITES };
+    return { beforeFiles: [], afterFiles: DOCS_REWRITES, fallback: [] };
   },
 };
 export default nextConfig;

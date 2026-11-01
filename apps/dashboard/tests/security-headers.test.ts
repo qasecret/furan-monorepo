@@ -80,15 +80,19 @@ describe("the /docs portal (spec §5)", () => {
     }
   });
 
-  it("next.config rewrites /docs pages to their .html files, after the filesystem", async () => {
+  it("next.config rewrites /docs pages to their .html files, before dynamic routes", async () => {
     expect(DOCS_REWRITES).toEqual([
       { source: "/docs", destination: "/docs/index.html" },
       { source: "/docs/:path+", destination: "/docs/:path+.html" },
     ]);
+    // afterFiles, not fallback: a rewrite that finds no file falls through to
+    // the /docs/[...slug] route, which answers with the portal's own 404.
     const rewrites = (await nextConfig.rewrites!()) as {
+      afterFiles: unknown;
       fallback: unknown;
     };
-    expect(rewrites.fallback).toEqual(DOCS_REWRITES);
+    expect(rewrites.afterFiles).toEqual(DOCS_REWRITES);
+    expect(rewrites.fallback).toEqual([]);
   });
 
   it("next.config sends no /docs policy when the docs aren't built", async () => {
