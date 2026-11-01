@@ -45,14 +45,17 @@ body {
   color: var(--brand-text);
 }
 
-/* Sonner toasts (components/themed-toaster.tsx). Sonner's sheet is unlayered
- * and wraps its selectors in :where(), so these rules must stay UNLAYERED (no
- * @layer) to apply, and are set here rather than inline: an inline box-shadow
- * would also override the :focus-visible ring and hide keyboard focus. */
-[data-sonner-toast][data-styled="true"] {
+/* Sonner toasts (components/themed-toaster.tsx). Sonner's sheet is unlayered,
+ * so these rules must stay UNLAYERED (no @layer) to apply, and are set here
+ * rather than inline: an inline box-shadow would also override the
+ * :focus-visible ring and hide keyboard focus. Sonner 2 no longer wraps its
+ * selectors in :where() and injects its stylesheet after this one, so an
+ * equally specific selector LOSES (sonner's own `0 4px 12px` shadow wins). The
+ * [data-sonner-toaster] ancestor makes every rule here more specific. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
   box-shadow: var(--elevation-overlay);
 }
-[data-sonner-toast][data-styled="true"]:focus-visible {
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:focus-visible {
   box-shadow:
     var(--elevation-overlay),
     0 0 0 2px var(--ring);
@@ -61,11 +64,9 @@ body {
 /* The action a toast carries ("Undo" on a review decision) is sonner's
  * [data-button], painted in sonner's inverted normal-text on normal-bg. It takes
  * the overlay highlight instead, like a highlighted menu item, so it matches in
- * both themes and reads at AA on the toast. Same mechanism as above: unlayered.
- * Unlike the rules above, sonner's own rule for this one has no :where(), and
- * its stylesheet is injected after this one, so an equally specific selector
- * LOSES (seen: the radius stayed 4px). The [data-sonner-toaster] ancestor makes
- * these more specific; tests/themed-toaster.test.tsx pins the selectors, and
+ * both themes and reads at AA on the toast. Same mechanism as above: unlayered,
+ * with the [data-sonner-toaster] ancestor (without it the radius stayed 4px).
+ * tests/themed-toaster.test.tsx pins the selectors, and
  * e2e/tests/ui/review-flow.spec.ts checks the computed result in a browser. */
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
   background: var(--overlay-hover);
