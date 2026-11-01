@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  and,
   builds,
   createDb,
   eq,
@@ -212,6 +213,58 @@ d("run.completed over Redis → PR comment and commit status", () => {
       ),
     );
     expect(createCommitStatus).toHaveBeenCalledTimes(statusCalls);
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  // Runs after the two above, which left `login` unresolved in this build.
+  test("a review that moves a run's status refreshes the comment and the status, once", async () => {
+    const [login] = await db
+      .select({ id: testRuns.id })
+      .from(testRuns)
+      .where(and(eq(testRuns.buildId, buildId), eq(testRuns.name, "login")));
+    const loginId = login!.id;
+
+    // The reviewer approves `login`: the api rolls the run up to `passed`, then
+    // announces run.reviewed after commit (nothing else is published).
+    await db
+      .update(testRuns)
+      .set({ status: "passed" })
+      .where(eq(testRuns.id, loginId));
+    const statusCalls = createCommitStatus.mock.calls.length;
+    const reviewed = JSON.stringify({
+      type: "run.reviewed",
+      runId: loginId,
+      payload: {},
+      ts: Date.now(),
+    });
+    await pub.publish(`run:${loginId}:events`, reviewed);
+
+    // Every test of the build has passed now: the gate turns green.
+    await vi.waitFor(() =>
+      expect(createCommitStatus).toHaveBeenCalledTimes(statusCalls + 1),
+    );
+    const status = createCommitStatus.mock.calls.at(-1)?.[0] as {
+      state: string;
+      description: string;
+      sha: string;
+    };
+    expect(status.state).toBe("success");
+    expect(status.description).toContain("(3 of 3 tests)");
+    expect(status.sha).toBe("0123456789abcdef0123456789abcdef01234567");
+
+    // The reviewed run's own comment is now the passed one.
+    const comment = createComment.mock.calls.at(-1)?.[0] as { body: string };
+    expect(comment.body).toContain(`<!-- furan-run-${loginId} -->`);
+    expect(comment.body).toContain("🟢");
+
+    // Reviewing again changes nothing GitHub shows: the handler is reached but
+    // the identical status is not posted a second time.
+    const lists = listComments.mock.calls.length;
+    await pub.publish(`run:${loginId}:events`, reviewed);
+    await vi.waitFor(() =>
+      expect(listComments.mock.calls.length).toBeGreaterThan(lists),
+    );
+    expect(createCommitStatus).toHaveBeenCalledTimes(statusCalls + 1);
     expect(log.error).not.toHaveBeenCalled();
   });
 });

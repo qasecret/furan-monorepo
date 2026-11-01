@@ -41,6 +41,9 @@ export async function createOrUpdateStickyComment(opts: {
   });
   const existing = comments.find((c) => c.body?.includes(marker));
   if (existing) {
+    // Reporting a run again (a review, a replayed event) often changes nothing;
+    // editing a comment into itself still marks it "edited" on the PR.
+    if (existing.body === fullBody) return;
     await opts.octokit.rest.issues.updateComment({
       owner: opts.owner,
       repo: opts.repo,

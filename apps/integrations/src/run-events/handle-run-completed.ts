@@ -8,6 +8,7 @@ import {
   describeBuildStatus,
   type BuildStatusAggregate,
 } from "../build-status.js";
+import type { PostMemo } from "../github/post-memo.js";
 import { createOrUpdateStickyComment } from "../github/pr-comment.js";
 import {
   loadBuildStatusCounts,
@@ -24,7 +25,9 @@ type Logger = Telemetry["logger"];
 
 /**
  * React to a `run.completed` event by posting a sticky PR comment +
- * commit status into GitHub.
+ * commit status into GitHub. The subscriber also calls it, with just the run
+ * id, when a review (approve, reject, undo, force passed or failed) moved a
+ * run's status: the status is then read from the stored run.
  *
  * Best-effort throughout:
  * - The GitHub context (`installationId`, `repoOwner`, `repoName`, `sha`,
@@ -53,6 +56,11 @@ export async function handleRunCompleted(opts: {
   db?: DB;
   /** The dashboard origin, for the links in the comment and the status. */
   dashboardBaseUrl?: string;
+  /**
+   * What was last posted per commit. When given, a commit status identical to
+   * the last one posted for the commit is not posted again.
+   */
+  postMemo?: PostMemo;
 }): Promise<void> {
   const { event, githubApp, log, db } = opts;
   const base = opts.dashboardBaseUrl?.replace(/\/+$/, "");
@@ -182,6 +190,18 @@ export async function handleRunCompleted(opts: {
     targetUrl = runUrl;
   }
 
+  // GitHub keeps every status posted (at most 1000 per commit and context), so
+  // one identical to the last post for this commit is not posted again.
+  const memoKey = `${repoOwner}/${repoName}@${commitSha}`;
+  const memoValue = `${githubState}|${description}|${targetUrl ?? ""}`;
+  const statusUnchanged = opts.postMemo?.unchanged(memoKey, memoValue) ?? false;
+  if (statusUnchanged) {
+    log.debug(
+      { runId: event.runId, sha: commitSha, state: githubState },
+      "run_completed_status_unchanged",
+    );
+  }
+
   // The two calls are independent: one failing (say the repository is outside
   // the installation's access) must not stop the other from completing.
   const results = await Promise.allSettled([
@@ -195,15 +215,17 @@ export async function handleRunCompleted(opts: {
           body,
         })
       : Promise.resolve(),
-    createOrUpdateStatusCheck({
-      octokit,
-      owner: repoOwner,
-      repo: repoName,
-      sha: commitSha,
-      state: githubState,
-      description,
-      ...(targetUrl !== undefined ? { targetUrl } : {}),
-    }),
+    statusUnchanged
+      ? Promise.resolve()
+      : createOrUpdateStatusCheck({
+          octokit,
+          owner: repoOwner,
+          repo: repoName,
+          sha: commitSha,
+          state: githubState,
+          description,
+          ...(targetUrl !== undefined ? { targetUrl } : {}),
+        }).then(() => opts.postMemo?.remember(memoKey, memoValue)),
   ]);
   const failures = results.filter(
     (r): r is PromiseRejectedResult => r.status === "rejected",

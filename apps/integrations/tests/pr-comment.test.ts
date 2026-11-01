@@ -93,6 +93,29 @@ describe("createOrUpdateStickyComment", () => {
     expect(args.body).toContain("New body");
   });
 
+  test("leaves the existing comment alone when its body is already the new one", async () => {
+    const marker = stickyMarker("run-same");
+    const { octokit, listComments, createComment, updateComment } =
+      buildMockOctokit({
+        existingComments: [{ id: 3, body: `${marker}\nSame body` }],
+      });
+
+    await createOrUpdateStickyComment({
+      octokit,
+      owner: "acme",
+      repo: "site",
+      prNumber: 3,
+      runId: "run-same",
+      body: "Same body",
+    });
+
+    // Re-reporting a run (a review, a replay) must not edit a comment into
+    // itself: it would bump the PR's "edited" marker and spend an API call.
+    expect(listComments).toHaveBeenCalledTimes(1);
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createComment).not.toHaveBeenCalled();
+  });
+
   test("ignores comments belonging to a different runId", async () => {
     const { octokit, createComment, updateComment } = buildMockOctokit({
       existingComments: [

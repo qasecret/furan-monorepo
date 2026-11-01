@@ -2,6 +2,7 @@ import type { DB } from "@furan/db";
 import type { App, Octokit } from "octokit";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { createPostMemo, type PostMemo } from "../src/github/post-memo.js";
 import {
   loadBuildStatusCounts,
   loadRunContext,
@@ -78,7 +79,11 @@ const bareEvent = (extra: Record<string, unknown> = {}) => ({
 async function run(
   mocks: ReturnType<typeof buildMocks>,
   event: ReturnType<typeof bareEvent>,
-  extra: { dashboardBaseUrl?: string; withDb?: boolean } = {},
+  extra: {
+    dashboardBaseUrl?: string;
+    withDb?: boolean;
+    postMemo?: PostMemo;
+  } = {},
 ) {
   await handleRunCompleted({
     githubApp: mocks.githubApp,
@@ -89,6 +94,7 @@ async function run(
     ...(extra.dashboardBaseUrl
       ? { dashboardBaseUrl: extra.dashboardBaseUrl }
       : {}),
+    ...(extra.postMemo ? { postMemo: extra.postMemo } : {}),
   });
 }
 
@@ -370,5 +376,70 @@ describe("handleRunCompleted when GitHub refuses", () => {
       expect.objectContaining({ installationId: 999 }),
       "run_completed_installation_octokit_failed",
     );
+  });
+});
+
+describe("handleRunCompleted does not repeat an unchanged commit status", () => {
+  // A review re-reports runs whose status did not move (one checkpoint of
+  // many approved, or a whole build approved run by run). GitHub keeps every
+  // status posted and caps them at 1000 per commit and context, so an
+  // identical one is not posted again.
+  test("the same state and description is posted once", async () => {
+    const postMemo = createPostMemo();
+    const m = buildMocks();
+    await run(m, bareEvent({ status: "unresolved" }), { postMemo });
+    await run(m, bareEvent({ status: "unresolved" }), { postMemo });
+
+    expect(m.createCommitStatus).toHaveBeenCalledTimes(1);
+  });
+
+  test("a different state is posted, and so is a different description", async () => {
+    const postMemo = createPostMemo();
+    const m = buildMocks();
+    vi.mocked(loadBuildStatusCounts).mockResolvedValue({
+      unresolved: 1,
+      passed: 1,
+    });
+    await run(m, bareEvent({ status: "passed" }), { postMemo });
+
+    // The unresolved test is reviewed: the build is now all passed.
+    vi.mocked(loadBuildStatusCounts).mockResolvedValue({ passed: 2 });
+    await run(m, bareEvent({ status: "passed" }), { postMemo });
+
+    expect(m.createCommitStatus).toHaveBeenCalledTimes(2);
+    expect(m.createCommitStatus.mock.calls[0]?.[0]).toMatchObject({
+      state: "failure",
+    });
+    expect(m.createCommitStatus.mock.calls[1]?.[0]).toMatchObject({
+      state: "success",
+    });
+  });
+
+  test("a status that failed to post is not remembered, so it is retried", async () => {
+    const postMemo = createPostMemo();
+    const m = buildMocks();
+    m.createCommitStatus.mockRejectedValueOnce(new Error("boom"));
+    await run(m, bareEvent({ status: "passed" }), { postMemo });
+    await run(m, bareEvent({ status: "passed" }), { postMemo });
+
+    expect(m.createCommitStatus).toHaveBeenCalledTimes(2);
+  });
+
+  test("an unchanged status still lets the run's own comment through", async () => {
+    const postMemo = createPostMemo();
+    const m = buildMocks();
+    await run(m, bareEvent({ status: "unresolved" }), { postMemo });
+    await run(m, bareEvent({ status: "unresolved" }), { postMemo });
+
+    // The comment upsert decides for itself (it lists, and skips an identical
+    // body): the handler asks it both times.
+    expect(m.createComment).toHaveBeenCalledTimes(2);
+  });
+
+  test("without a memo every call posts (the previous behaviour)", async () => {
+    const m = buildMocks();
+    await run(m, bareEvent({ status: "unresolved" }));
+    await run(m, bareEvent({ status: "unresolved" }));
+    expect(m.createCommitStatus).toHaveBeenCalledTimes(2);
   });
 });

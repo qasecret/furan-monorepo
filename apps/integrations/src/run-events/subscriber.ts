@@ -4,6 +4,7 @@ import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import type { App } from "octokit";
 
+import { createPostMemo } from "../github/post-memo.js";
 import { enqueueWebhookDeliveries } from "../webhooks/enqueue.js";
 
 import { handleRunCompleted } from "./handle-run-completed.js";
@@ -35,6 +36,10 @@ export interface StartRunEventsSubscriberDeps {
  *     subscriber matching the project + "run.completed" event (when
  *     `db` AND `webhookQueue` are wired).
  *
+ * On `run.reviewed` (published by the api after a review action): refresh the
+ * GitHub comment and commit status only. It never reaches Slack or the
+ * outbound webhooks.
+ *
  * Both handlers are independent and best-effort — if one fails it logs
  * and continues. Other event types just log at debug.
  *
@@ -46,6 +51,9 @@ export function startRunEventsSubscriber(
   deps: StartRunEventsSubscriberDeps,
 ): RunEventsSubscriber {
   const { redis, logger: log, githubApp, db, webhookQueue } = deps;
+  // What was last posted per commit, shared by every call of this subscriber so
+  // an unchanged commit status is not posted again.
+  const postMemo = createPostMemo();
 
   redis.psubscribe("run:*:events", (err, count) => {
     if (err) {
@@ -78,6 +86,7 @@ export function startRunEventsSubscriber(
           ...(deps.dashboardBaseUrl
             ? { dashboardBaseUrl: deps.dashboardBaseUrl }
             : {}),
+          postMemo,
         }).catch((err) => {
           log.error({ err, channel }, "run_completed_handler_threw");
         });
@@ -98,6 +107,25 @@ export function startRunEventsSubscriber(
         });
       } else {
         log.debug({ channel }, "webhook_enqueue_skipped_no_db_or_queue");
+      }
+    } else if (event.type === "run.reviewed") {
+      // A reviewer's action moved a run's status, which no diff announces.
+      // Only the GitHub comment and commit status follow it; Slack and the
+      // outbound webhooks keep to `run.completed`. The frame carries nothing
+      // but the run id: the handler reads the status from the stored run.
+      if (githubApp && typeof event.runId === "string") {
+        void handleRunCompleted({
+          githubApp,
+          event: { type: "run.completed", runId: event.runId },
+          log,
+          ...(db ? { db } : {}),
+          ...(deps.dashboardBaseUrl
+            ? { dashboardBaseUrl: deps.dashboardBaseUrl }
+            : {}),
+          postMemo,
+        }).catch((err) => {
+          log.error({ err, channel }, "run_reviewed_handler_threw");
+        });
       }
     }
   });
