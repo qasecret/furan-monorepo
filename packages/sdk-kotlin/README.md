@@ -285,6 +285,9 @@ sequenceDiagram
 | `buildId`             | `FURAN_BUILD_ID`              | —          | Groups runs into a build. Typically `$GITHUB_RUN_ID`.                                                             |
 | `branchName`          | `FURAN_BRANCH`                | `"main"`   | Branch the snapshot was captured from.                                                                            |
 | `parentBranchName`    | `FURAN_PARENT_BRANCH`         | —          | Parent branch; its baseline is inherited when this branch has none. Set to the PR base (`github.base_ref`) in CI. |
+| `scm.repo`            | `FURAN_REPO`                  | —          | Repository as `owner/name`, sent with each run for the GitHub App. GitHub Actions: `GITHUB_REPOSITORY`.           |
+| `scm.prNumber`        | `FURAN_PR_NUMBER`             | —          | Pull request number. GitHub Actions: read from the `pull_request` event file.                                     |
+| `scm.commitSha`       | `FURAN_COMMIT_SHA`            | —          | PR head commit (7 to 64 hex). GitHub Actions: the event's head commit, else `GITHUB_SHA`.                         |
 | `name`                | `FURAN_BUILD_NAME`            | —          | Human-readable build label (e.g. `"nightly main"`).                                                               |
 | `properties`          | `FURAN_BUILD_PROPERTIES`      | empty      | Comma-separated `key=value` pairs for filtering.                                                                  |
 | `softAssert`          | `FURAN_SOFT_ASSERT`           | `false`    | If `true`, `snapshotAndAwait` returns the failed result instead of throwing.                                      |

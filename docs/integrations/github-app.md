@@ -12,16 +12,73 @@ Assumes a running self-hosted Furan deployment (see
 
 Read this first; it decides what you should expect to see on a pull request.
 
-| Part                                                                             | State                                                                                                                                                                                                                                                                                                                                             |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Webhook receiver `POST /webhooks/github` with HMAC-SHA256 signature verification | Works                                                                                                                                                                                                                                                                                                                                             |
-| Installation tracking (`installation` and `installation_repositories` events)    | Works: rows in the `installations` table                                                                                                                                                                                                                                                                                                          |
-| Linking an installation to a project at `/admin/installations`                   | Works: sets `installations.project_id`                                                                                                                                                                                                                                                                                                            |
-| Sticky pull request comment and the `furan/baselines` commit status              | **Not posted yet.** The code that posts them (`apps/integrations/src/run-events/handle-run-completed.ts`) needs `installationId`, `repoOwner`, `repoName`, `sha` and `prNumber` on the `run.completed` event. Nothing in the current release sets them, so every run is skipped with the debug log `run_completed_skipped_missing_github_fields`. |
+| Part                                                                             | State                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Webhook receiver `POST /webhooks/github` with HMAC-SHA256 signature verification | Works                                                                                                                                                                                                                                         |
+| Installation tracking (`installation` and `installation_repositories` events)    | Works: rows in the `installations` table                                                                                                                                                                                                      |
+| Linking an installation to a project at `/admin/installations`                   | Works: sets `installations.project_id`                                                                                                                                                                                                        |
+| Sticky pull request comment and the `furan/baselines` commit status              | Works for runs that carry the repository, pull request and commit (next section), once the installation is linked to the project. Releases that predate this skip every run with the debug log `run_completed_skipped_missing_github_fields`. |
 
-Once a publisher starts adding those five fields to `run.completed`, the comment
-and status work without any change on the App side. Everything below is still
-the correct, complete provisioning for that day.
+## What a run needs to reach a pull request
+
+The comment and the status are posted by the `integrations` service when a run
+completes. For a run to get that far, four things have to be in place:
+
+1. **The SDK knows the repository, pull request and commit.** It sends them on
+   `POST /runs`, and the API stores them on the run.
+
+   | What                | Variable                                                         | On GitHub Actions                                                                                              |
+   | ------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+   | Repository          | `FURAN_REPO` (`owner/name`)                                      | Detected from `GITHUB_REPOSITORY`                                                                              |
+   | Pull request number | `FURAN_PR_NUMBER`                                                | Detected from the `pull_request` event file (`GITHUB_EVENT_PATH`)                                              |
+   | Commit              | `FURAN_COMMIT_SHA` (7 to 64 hex characters, the **head** commit) | Detected: the pull request's head commit on `pull_request` and `pull_request_target` events, else `GITHUB_SHA` |
+
+   An explicit variable wins over the detected value, field by field. Other CI
+   systems set the three variables themselves (see the
+   [Jenkins](./jenkins.md#report-to-a-github-pull-request) and
+   [GitLab CI](./gitlab-ci.md#report-to-a-github-pull-request) pages). A value
+   that is malformed is dropped by the SDK, never an error. Use the head commit
+   of the pull request: on a `pull_request` event `GITHUB_SHA` is a merge commit,
+   and a status posted on it never appears on the pull request.
+
+2. **The App is installed on the repository** and the installation is **linked
+   to the Furan project** at `/admin/installations` (step 4 below). The
+   service finds the installation through `installations.project_id`; if a
+   project has several, the one whose account is the repository owner is used.
+3. **`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_APP_WEBHOOK_SECRET`**
+   are set on the `integrations` service (step 3 below).
+4. **Optional: `DASHBOARD_BASE_URL`** (for example `https://furan.example.com`)
+   on the `integrations` service. With it the comment links to the run and the
+   commit status links to the build; without it neither has a link.
+
+What gets posted:
+
+- **Comment.** One sticky comment per run (a run is one test), marked with
+  `<!-- furan-run-<runId> -->` and edited in place when the run is reported
+  again. It is posted only when the run has a pull request number.
+- **Commit status `furan/baselines`.** One value per commit, for the whole
+  build: the worst status among the build's tests, using the latest run of each
+  test name (so a re-run that now passes replaces its earlier run). In order of
+  severity: `aborted` is `error`; `failed`, `unresolved` and `empty` are
+  `failure`; `running` is `pending`; `new` and `passed` are `success`. So a test
+  that passes after another one was left `unresolved` does not turn the commit
+  green. A build with more than one test gets `(<n> of <total> tests)` in the
+  description.
+- **Push builds.** A run with a commit but no pull request (a build of `main`,
+  say) gets the status and no comment.
+
+Runs made before this was configured, or by an SDK that does not send the three
+values, have nothing to report and are skipped (debug log
+`run_completed_skipped_missing_github_fields`, naming what was missing).
+
+The status is recomputed each time a run of the build completes. Two runs that
+finish at the same moment can post in either order; the next completion posts
+the then-current value, so the status settles.
+
+**Known limit: reviewing in the dashboard does not refresh GitHub.** Approving or
+rejecting a run changes its status in Furan, but only a run completing posts to
+GitHub. After you review, `furan/baselines` and the comment keep their last
+value until another run of the build completes (re-running the CI job does it).
 
 ## 1. Expose the webhook endpoint
 
@@ -155,6 +212,11 @@ GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
 GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
 ```
 
+Optionally also set `DASHBOARD_BASE_URL` (your dashboard's public origin, for
+example `https://furan.example.com`) so the comment and the commit status link to
+the run and build pages. Both Compose files pass it through; leave it unset for
+no links.
+
 ### Putting the multi-line private key in `.env`
 
 Either form below resolves to the complete PEM (checked with
@@ -254,29 +316,42 @@ Work down the list; each check isolates one layer.
 
 5. **Installation token mintable.** A wrong private key or App ID does not show
    up until a run completes: the service then logs
-   `run_completed_installation_octokit_failed` with the installation ID. (Runs
-   reach this point only once the GitHub fields exist; see
-   [What works today](#what-works-today).)
+   `run_completed_installation_octokit_failed` with the installation ID. This
+   needs a run that got past the checks in
+   [What a run needs to reach a pull request](#what-a-run-needs-to-reach-a-pull-request).
 
 6. **Pull request comment and status.** Set `LOG_LEVEL=debug` on `integrations`
-   and complete a run. In the current release you will see
-   `run_completed_skipped_missing_github_fields` for it; that is the expected
-   state, not a misconfiguration. When the fields are published you will see
+   and complete a run from CI on a pull request. You should see
    `run_completed_github_updated`, a comment containing `<!-- furan-run-<runId> -->`
-   on the PR, and a `furan/baselines` status on the commit.
+   on the pull request, and a `furan/baselines` status on its head commit. If you
+   see `run_completed_skipped_missing_github_fields` instead, its `missing` list
+   names the gap:
+
+   | `missing` contains               | Meaning                                                                                                                                                  |
+   | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `repoOwner`, `repoName` or `sha` | The SDK did not send the repository or commit: set `FURAN_REPO` and `FURAN_COMMIT_SHA`, or run on GitHub Actions, and use an SDK version that sends them |
+   | `installationId`                 | No installation is linked to the run's project: link it at `/admin/installations` (step 4)                                                               |
+
+   A run without a pull request number is not skipped: it gets the status and no
+   comment. A log line `run_completed_github_update_failed` with a GitHub `404`
+   means the repository is outside the installation's access: add it to the
+   App's repository selection.
 
 ## Troubleshooting
 
-| Symptom                                             | Likely cause                                                                                                                                  |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `integrations` exits with `Invalid environment: {}` | Only some of `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` are set; set all three or none                            |
-| `503 github_app_not_configured` from the webhook    | The three variables are unset or empty in the container; in `furan-compose.yml` they must also be listed under the service (step 1)           |
-| `400 invalid_signature`                             | Webhook secret mismatch, or the secret in `.env` was altered by quoting (generate it with `openssl rand -hex 32` to avoid special characters) |
-| `400 missing_github_headers`                        | The request did not come from GitHub (or a proxy dropped the `X-GitHub-*` headers)                                                            |
-| Deliveries time out or show a connection error      | The webhook URL is not reachable from GitHub: DNS, firewall, TLS certificate, or the route from step 1                                        |
-| No row at `/admin/installations`                    | The `installation` delivery failed or was sent before the webhook worked; redeliver it                                                        |
-| JWT or key errors when a run completes              | `GITHUB_APP_PRIVATE_KEY` lost its newlines (use one of the two forms in step 3) or belongs to a different App than `GITHUB_APP_ID`            |
-| No comment or status on the pull request            | See [What works today](#what-works-today); also check the App is installed on that repository and `installations.project_id` is set           |
+| Symptom                                             | Likely cause                                                                                                                                                                             |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `integrations` exits with `Invalid environment: {}` | Only some of `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` are set; set all three or none                                                                       |
+| `503 github_app_not_configured` from the webhook    | The three variables are unset or empty in the container; in `furan-compose.yml` they must also be listed under the service (step 1)                                                      |
+| `400 invalid_signature`                             | Webhook secret mismatch, or the secret in `.env` was altered by quoting (generate it with `openssl rand -hex 32` to avoid special characters)                                            |
+| `400 missing_github_headers`                        | The request did not come from GitHub (or a proxy dropped the `X-GitHub-*` headers)                                                                                                       |
+| Deliveries time out or show a connection error      | The webhook URL is not reachable from GitHub: DNS, firewall, TLS certificate, or the route from step 1                                                                                   |
+| No row at `/admin/installations`                    | The `installation` delivery failed or was sent before the webhook worked; redeliver it                                                                                                   |
+| JWT or key errors when a run completes              | `GITHUB_APP_PRIVATE_KEY` lost its newlines (use one of the two forms in step 3) or belongs to a different App than `GITHUB_APP_ID`                                                       |
+| No comment or status on the pull request            | Check 6 in step 5: the `missing` list in `run_completed_skipped_missing_github_fields`, then that the App is installed on that repository                                                |
+| Status is on the wrong commit or never shows        | `FURAN_COMMIT_SHA` is a merge commit, not the pull request's head commit (detected correctly on GitHub Actions; set it by hand elsewhere)                                                |
+| Status is `failure` although this test passed       | Another test of the same build is `unresolved`, `failed`, `empty` or `aborted` (the status is the worst of the build), or a review has not been reflected yet: see the known limit above |
+| Comment or status has no link                       | `DASHBOARD_BASE_URL` is not set on the `integrations` service                                                                                                                            |
 
 ## See also
 

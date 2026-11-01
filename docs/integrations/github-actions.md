@@ -122,6 +122,13 @@ class CheckoutTest {
 `FURAN_PROJECT_ID`, `FURAN_BUILD_ID`, `FURAN_BRANCH` from the process env —
 the same vars set in step 1.
 
+On GitHub Actions it also detects the repository (`GITHUB_REPOSITORY`), the pull
+request number and the pull request's head commit (from the event file at
+`GITHUB_EVENT_PATH`) and sends them with every run; that is how the comment and
+status in step 5 find their pull request. Nothing needs to be set for this. Set
+`FURAN_REPO`, `FURAN_PR_NUMBER` or `FURAN_COMMIT_SHA` only to override a value;
+see [github-app.md](./github-app.md#what-a-run-needs-to-reach-a-pull-request).
+
 ## 5. Run in CI
 
 When the workflow runs against a PR with the App installed and the
@@ -130,11 +137,15 @@ When the workflow runs against a PR with the App installed and the
 - **Furan dashboard** — a new run appears at `/projects/<id>/runs/<runId>`
   showing every snapshot and any pixel diff vs. the baseline on `main`.
 - **PR comment** — a sticky comment marked with `<!-- furan-run-{runId} -->`
-  is posted (or edited in place on subsequent pushes) summarizing the diff
-  count and linking to the dashboard.
-- **Status check** — the `furan/baselines` context is set to `pending` while
-  the run is processing, then `success` / `failure` once the diff worker
-  completes.
+  is posted for each run (one run is one test) and edited in place when that
+  run is reported again, summarizing the diff count. It links to the dashboard
+  when `DASHBOARD_BASE_URL` is set on the `integrations` service.
+- **Status check** — the `furan/baselines` context is one value per commit and
+  covers the whole build: `pending` while any of its tests is still running,
+  `failure` while any is `unresolved`, `failed` or `empty`, `error` if one was
+  aborted, and `success` only when all tests have passed or created a baseline.
+  A test that passes does not turn the status green while another test of the
+  build still needs review.
 
 Branch-protection rules can require `furan/baselines` to pass before merge.
 
@@ -154,8 +165,8 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 | `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                                                                                            |
 | `FuranNoBaselineException` on a first run      | Expected — the test has no baseline yet. Approve the run in the dashboard (Save as baseline), or set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true` to tolerate first runs in CI |
 | Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                                                                                    |
-| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL                                                                                                                |
-| `furan/baselines` check stays `pending`        | Diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                                                                                  |
+| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL; otherwise see check 6 in [github-app.md](./github-app.md#5-check-it-works)                                    |
+| `furan/baselines` check stays `pending`        | A test of the build is still `running`: diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                                          |
 | SDK build can't resolve `io.github.qasecret:*` | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin`                                                                  |
 
 For deeper debugging, hit `GET /projects/<id>/runs/<runId>/events` (SSE) or

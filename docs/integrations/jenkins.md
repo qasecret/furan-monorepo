@@ -77,8 +77,9 @@ a direct link to the diff viewer.
 
 ## 2. Branch and build names
 
-The SDK has no CI auto-detection. `FuranConfig.fromEnv()` reads only the
-`FURAN_*` variables, so the pipeline must set them. Jenkins provides the inputs:
+Outside GitHub Actions the SDK has no CI auto-detection. `FuranConfig.fromEnv()`
+reads only the `FURAN_*` variables, so the pipeline must set them. Jenkins
+provides the inputs:
 
 | Furan input            | Value in the Quick start                       | Where it comes from                                                                                                                                          |
 | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -141,6 +142,40 @@ The pipeline builds the JSON with `jq --arg`, and reads the branch from the
 environment inside a single-quoted script. Branch names are controlled by whoever
 opens the PR, so never interpolate them into the script text or hand-quote them
 into JSON. The agent running this stage needs `curl` and `jq`.
+
+### Report to a GitHub pull request
+
+Optional, and only when the repository is on GitHub with the
+[GitHub App](./github-app.md) installed and linked to the Furan project. Three
+more variables let a run find its pull request, so Furan can post the sticky
+comment and the `furan/baselines` commit status:
+
+| Variable           | Value                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `FURAN_REPO`       | The repository as `owner/name`, for example `acme/site`                                       |
+| `FURAN_PR_NUMBER`  | `CHANGE_ID`: set on the pull request builds of a Multibranch Pipeline, empty on branch builds |
+| `FURAN_COMMIT_SHA` | The pull request's **head** commit, not a merge commit (see below)                            |
+
+```groovy
+environment {
+  FURAN_REPO      = 'acme/site'
+  FURAN_PR_NUMBER = "${env.CHANGE_ID ?: ''}"
+}
+// ... in a stage, after the checkout:
+script {
+  env.FURAN_COMMIT_SHA = sh(returnStdout: true,
+    script: 'git rev-parse --verify --quiet HEAD^2 || git rev-parse HEAD').trim()
+}
+```
+
+GitHub only shows a status on a pull request for its head commit. When Jenkins
+builds the pull request merged with its target branch, `GIT_COMMIT` is the merge
+commit and a status on it never appears; the head commit is the merge's second
+parent, which is what the `git rev-parse` line returns (and it returns `HEAD`
+itself when the checkout is not a merge). A build with a commit but no
+`FURAN_PR_NUMBER` still gets the status and no comment. Empty values count as
+unset. What gets posted, and how to check it, is in
+[github-app.md](./github-app.md#what-a-run-needs-to-reach-a-pull-request).
 
 ## 3. Add the SDK to your Gradle build
 

@@ -96,8 +96,9 @@ direct link to the diff viewer.
 
 ## 2. Branch and build names
 
-The SDK has no CI auto-detection. `FuranConfig.fromEnv()` reads only the
-`FURAN_*` variables, so the pipeline must set them. GitLab provides the inputs:
+Outside GitHub Actions the SDK has no CI auto-detection. `FuranConfig.fromEnv()`
+reads only the `FURAN_*` variables, so the pipeline must set them. GitLab
+provides the inputs:
 
 | Furan input            | Value in the Quick start                                         | Where it comes from                                                                  |
 | ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -159,6 +160,33 @@ The job builds the JSON with `jq --arg`, so a branch name containing quotes
 cannot break or inject into the request. Branch names are controlled by whoever
 pushes, so never hand-quote them into JSON. The job image needs `curl` and `jq`
 (the Quick start installs them into `alpine`).
+
+### Report to a GitHub pull request
+
+Optional, and only for a repository on GitHub that GitLab builds through its
+CI/CD for external repositories, with the [GitHub App](./github-app.md) installed
+and linked to the Furan project. A merge request of a GitLab-hosted repository
+has nothing to report to. Three more variables let a run find its pull request,
+so Furan can post the sticky comment and the `furan/baselines` commit status:
+
+| Variable           | Value in an external pull request pipeline                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `FURAN_REPO`       | `CI_EXTERNAL_PULL_REQUEST_TARGET_REPOSITORY`: the repository the pull request is on, as `owner/name` |
+| `FURAN_PR_NUMBER`  | `CI_EXTERNAL_PULL_REQUEST_IID`                                                                       |
+| `FURAN_COMMIT_SHA` | `CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_SHA`: the pull request's **head** commit                     |
+
+Add them to the `before_script` that exports the other `FURAN_*` values:
+
+```yaml
+- export FURAN_REPO="${CI_EXTERNAL_PULL_REQUEST_TARGET_REPOSITORY:-}"
+- export FURAN_PR_NUMBER="${CI_EXTERNAL_PULL_REQUEST_IID:-}"
+- export FURAN_COMMIT_SHA="${CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_SHA:-}"
+```
+
+Those `CI_EXTERNAL_PULL_REQUEST_*` variables exist only in external pull request
+pipelines, so other pipelines export empty values, which the SDK treats as unset
+and reports nothing for. What gets posted, and how to check it, is in
+[github-app.md](./github-app.md#what-a-run-needs-to-reach-a-pull-request).
 
 ## 3. Add the SDK to your Gradle build
 
