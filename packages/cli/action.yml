@@ -1,0 +1,100 @@
+name: Furan upload
+description: Send PNG screenshots to Furan and fail the job when a screenshot needs review.
+author: qasecret
+branding:
+  icon: image
+  color: purple
+
+# Use a cli/v* tag, e.g. qasecret/furan-monorepo/packages/cli@cli/v0.1.0: the
+# action runs the @furan/cli version in the package.json next to this file.
+inputs:
+  path:
+    description: "PNG files, folders or globs, one per line. A folder's subfolders become tests."
+    required: true
+  api-url:
+    description: "Furan api URL (e.g. https://furan.example.com/api). Default: the FURAN_API_URL env."
+    required: false
+  token:
+    description: "Furan API token; pass a secret. Default: the FURAN_API_TOKEN env."
+    required: false
+  project-id:
+    description: "Furan project id. Default: the FURAN_PROJECT_ID env."
+    required: false
+  dashboard-url:
+    description: "Dashboard URL, for links in the summary. Default: the FURAN_DASHBOARD_URL env."
+    required: false
+  test:
+    description: "Put every screenshot into one test with this name."
+    required: false
+  ignore:
+    description: "Ignore regions for every screenshot, one x,y,width,height per line."
+    required: false
+  match-level:
+    description: "Strict, Layout, Content, IgnoreColors or Dynamic."
+    required: false
+  browser:
+    description: "Browser label (part of the baseline identity). Default image."
+    required: false
+  save-new-tests:
+    description: "Approve first baselines automatically."
+    required: false
+    default: "false"
+  fail-on-new:
+    description: "Fail when a screenshot has no baseline yet."
+    required: false
+    default: "false"
+  wait:
+    description: "Wait for the verdict (false uploads and exits 0)."
+    required: false
+    default: "true"
+  timeout:
+    description: "Seconds to wait for the verdict (default 120)."
+    required: false
+  version:
+    description: "The @furan/cli version to run. Default the one this action is tagged with."
+    required: false
+  args:
+    description: "Extra furan upload arguments, one per line."
+    required: false
+
+outputs:
+  build-id:
+    description: "The Furan build (batch) id."
+    value: ${{ steps.upload.outputs.build-id }}
+  build-url:
+    description: "The batch's dashboard URL, when dashboard-url is set."
+    value: ${{ steps.upload.outputs.build-url }}
+  status:
+    description: "passed, new, failed, error or uploaded."
+    value: ${{ steps.upload.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: node-check
+      shell: bash
+      run: |
+        node -e 'const [a, b] = process.versions.node.split(".").map(Number); console.log("needs=" + (a < 20 || (a === 20 && b < 19)))' >> "$GITHUB_OUTPUT" 2>/dev/null || echo "needs=true" >> "$GITHUB_OUTPUT"
+    - if: steps.node-check.outputs.needs == 'true'
+      uses: actions/setup-node@v5
+      with:
+        node-version: 22
+    - id: upload
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_PROJECT_ID: ${{ inputs.project-id }}
+        INPUT_DASHBOARD_URL: ${{ inputs.dashboard-url }}
+        INPUT_TEST: ${{ inputs.test }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_MATCH_LEVEL: ${{ inputs.match-level }}
+        INPUT_BROWSER: ${{ inputs.browser }}
+        INPUT_SAVE_NEW_TESTS: ${{ inputs.save-new-tests }}
+        INPUT_FAIL_ON_NEW: ${{ inputs.fail-on-new }}
+        INPUT_WAIT: ${{ inputs.wait }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_ARGS: ${{ inputs.args }}
+      run: bash "$GITHUB_ACTION_PATH/action/run.sh"
