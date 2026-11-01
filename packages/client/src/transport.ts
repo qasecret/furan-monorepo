@@ -42,6 +42,7 @@ export class Transport {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
   private readonly headers: Record<string, string>;
+  private readonly token: string;
 
   constructor(opts: TransportOptions) {
     // Joined as strings (never `new URL(path, base)`), so a path prefix such
@@ -54,6 +55,7 @@ export class Transport {
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.sleep = opts.sleep ?? sleepFor;
     this.random = opts.random ?? Math.random;
+    this.token = opts.token;
     this.headers = {
       authorization: `Bearer ${opts.token}`,
       "user-agent": `furan-js/${VERSION} (node/${process.version})`,
@@ -94,7 +96,9 @@ export class Transport {
             {
               status: 0,
               code: "network_error",
-              message: `could not reach ${this.apiUrl}: ${describe(cause)}`,
+              message: this.scrub(
+                `could not reach ${this.apiUrl}: ${describe(cause)}`,
+              ),
               method,
               path,
               requestId,
@@ -113,6 +117,11 @@ export class Transport {
       }
       return this.read<T>(res, method, path, requestId);
     }
+  }
+
+  /** Never let the token reach an error message (Node quotes bad headers). */
+  private scrub(message: string): string {
+    return this.token ? message.split(this.token).join("****") : message;
   }
 
   private backoff(attempt: number, retryAfter: string | null): number {

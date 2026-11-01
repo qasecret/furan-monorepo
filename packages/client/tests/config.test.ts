@@ -32,6 +32,30 @@ describe("resolveConfig", () => {
     },
   );
 
+  it("a token with a line break or space is refused without echoing it", () => {
+    for (const bad of [
+      "furan_pat_AB\nCD1234",
+      "furan_pat_AB CD1234",
+      "furan_pat_AB\u0000CD",
+    ]) {
+      try {
+        resolveConfig({ token: bad }, base, noGit);
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toBeInstanceOf(FuranConfigError);
+        expect((e as FuranConfigError).variable).toBe("FURAN_API_TOKEN");
+        expect((e as Error).message).not.toContain("AB");
+      }
+    }
+  });
+
+  it("a token option is trimmed", () => {
+    const padded = "  furan_pat_x1234  "; // gitleaks:allow (fake test token)
+    expect(resolveConfig({ token: padded }, base, noGit).token).toBe(
+      padded.trim(),
+    );
+  });
+
   it("projectId must be a UUID", () => {
     expect(() =>
       resolveConfig({}, { ...base, FURAN_PROJECT_ID: "my-project" }, noGit),

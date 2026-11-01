@@ -68,9 +68,17 @@ export function resolveConfig(
     );
   }
   const token = required(
-    options.token ?? e("FURAN_API_TOKEN"),
+    options.token?.trim() || e("FURAN_API_TOKEN"),
     "FURAN_API_TOKEN",
   );
+  // A space, line break or control character would make the auth header
+  // invalid, and Node's error for that quotes the whole header (the token).
+  if (!/^[\x21-\x7e]+$/.test(token)) {
+    throw new FuranConfigError(
+      "FURAN_API_TOKEN",
+      "FURAN_API_TOKEN contains spaces, line breaks or other characters a token cannot have; copy it again",
+    );
+  }
   const projectId = required(
     options.projectId ?? e("FURAN_PROJECT_ID"),
     "FURAN_PROJECT_ID",

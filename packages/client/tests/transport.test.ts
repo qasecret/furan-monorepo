@@ -136,6 +136,23 @@ describe("Transport", () => {
     expect(err.code).toBe("http_418");
   });
 
+  it("a fetch error quoting the auth header never echoes the token", async () => {
+    const f = fakeFetch(
+      ...Array.from(
+        { length: 4 },
+        () =>
+          new TypeError(
+            `Headers.append: "Bearer ${TOKEN}" is an invalid header value.`,
+          ),
+      ),
+    );
+    const err = await transport(f)
+      .t.request("GET", "runs/1")
+      .catch((e: unknown) => e);
+    expect(String(err)).not.toContain("SECRET123");
+    expect(String(err)).toContain("****");
+  });
+
   it("token never appears in an error message", async () => {
     const f = fakeFetch(
       json(500, {}),
