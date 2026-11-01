@@ -93,6 +93,14 @@ export const testRuns = pgTable(
     failedSteps: integer("failed_steps").notNull().default(0),
     completedAt: timestamp("completed_at", { withTimezone: true }), // set by POST /runs/:id/complete
     primarySignature: text("primary_signature"),
+    // Migration 0045: the repository, pull request and commit the SDK says the
+    // run was made for (`FURAN_REPO` / `FURAN_PR_NUMBER` / `FURAN_COMMIT_SHA`,
+    // or GitHub Actions' own variables). Null = not supplied. The integrations
+    // service reads them to post the PR comment and commit status.
+    repoOwner: text("repo_owner"),
+    repoName: text("repo_name"),
+    prNumber: integer("pr_number"),
+    commitSha: text("commit_sha"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
