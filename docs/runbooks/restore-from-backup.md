@@ -13,7 +13,7 @@ procedure for a metadata-only recovery.
 **Scope:** Postgres only. MinIO content bytes, Redis queue state, and secret
 keys are out of scope — see [§4 What is NOT backed up](#4-what-is-not-backed-up)
 below. Off-host MinIO mirror is deferred to v1.1+ per the Phase 5 cut list
-in [furan-design/plan-roadmap.md §7 Phase 5](../../../furan/furan-design/plan-roadmap.md);
+in the design roadmap §7 Phase 5 (kept outside this repo);
 see [§6 Off-host mirror — deferred](#6-off-host-mirror--deferred-to-v11).
 
 ## 1. Backup strategy
@@ -227,7 +227,7 @@ updated with a representative production dump size + wall-clock.
 ## 6. Off-host mirror — deferred to v1.1+
 
 **Status:** deferred at v1.0 GA per the
-[Phase 5 cut list](../../../furan/furan-design/plan-roadmap.md) ("defer
+Phase 5 cut list in the design roadmap (kept outside this repo) ("defer
 off-host MinIO mirror; declare RPO/RTO metadata-only at GA"). v1.0 GA
 ships a metadata-only DR contract.
 
@@ -255,5 +255,5 @@ prefer — the gzipped pg_dump files are self-contained and portable.
 - `infra/docker/scripts/backup-pg.sh` — the actual dump + rotation
   script the sidecar runs.
 - Phase 5 cut list in
-  [furan-design/plan-roadmap.md §7](../../../furan/furan-design/plan-roadmap.md)
+  the design roadmap §7 (kept outside this repo)
   — authoritative source for the v1.0 metadata-only DR scope.

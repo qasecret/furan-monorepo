@@ -8,7 +8,7 @@ name: publish-npm
 #
 # Auth is npm Trusted Publishing: GitHub's OIDC token proves this workflow to
 # npm, so no npm token is stored and every version gets a provenance
-# attestation. One-time setup per package: docs/runbooks/npm-publish.md.
+# attestation. One-time setup per package: docs/maintainers/npm-publish.md.
 
 on:
   push:

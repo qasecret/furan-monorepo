@@ -6,7 +6,7 @@ name: publish
 # aggregate publishToMavenCentral here stages AND auto-releases all SDK
 # artifacts (core, selenium, playwright, appium, junit5) to Maven Central in
 # one step — no Portal click.
-# See docs/runbooks/maven-central-publish.md "Release flow".
+# See docs/maintainers/maven-central-publish.md "Release flow".
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
         run: ./gradlew check --no-daemon
       - name: Publish all furan-* artifacts to Maven Central
         # The vanniktech plugin reads ORG_GRADLE_PROJECT_* env vars by convention;
-        # docs/runbooks/maven-central-publish.md documents the full secret list.
+        # docs/maintainers/maven-central-publish.md documents the full secret list.
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}

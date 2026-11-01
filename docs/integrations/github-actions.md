@@ -26,7 +26,7 @@ Using another CI system? See the [Jenkins](./jenkins.md) and
     FURAN_PARENT_BRANCH: ${{ github.base_ref }}
 ```
 
-Full copy-paste workflow: [`.examples/visual-regression.yml`](./.examples/visual-regression.yml).
+Full copy-paste workflow: [`.examples/visual-regression.yml`](https://github.com/qasecret/furan-monorepo/blob/main/docs/integrations/.examples/visual-regression.yml).
 
 ## 1. Configure secrets
 
@@ -118,7 +118,7 @@ tasks.test { useJUnitPlatform() }
 ## 4. Write a test
 
 Canonical reference:
-[`packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutTest.kt`](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutTest.kt).
+[`packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutTest.kt`](https://github.com/qasecret/furan-monorepo/blob/main/packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutTest.kt).
 
 Short version:
 
@@ -249,7 +249,7 @@ a screenshot changes. See [javascript.md](javascript.md).
 
 - [GitHub App setup](./github-app.md) — create, configure and verify the App
 - [Jenkins recipe](./jenkins.md) and [GitLab CI recipe](./gitlab-ci.md)
-- [SDK example project](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/) — runnable Gradle reference
+- [SDK example project](https://github.com/qasecret/furan-monorepo/tree/main/packages/sdk-kotlin/examples/sdk-selenium-junit5) — runnable Gradle reference
 - [Production deploy runbook](../runbooks/production-deploy.md) — running the full stack, including the `integrations` service
-- [`.examples/visual-regression.yml`](./.examples/visual-regression.yml) — copy-paste workflow
+- [`.examples/visual-regression.yml`](https://github.com/qasecret/furan-monorepo/blob/main/docs/integrations/.examples/visual-regression.yml) — copy-paste workflow
 - [JavaScript / TypeScript guide](javascript.md) — `furan upload`, the Playwright fixture, the client library

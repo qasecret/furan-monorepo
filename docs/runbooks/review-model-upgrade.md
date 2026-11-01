@@ -83,7 +83,7 @@ Decisions recorded by the backfill:
    For the one-file install, set `P="docker compose -f furan-compose.yml"`.
    Let in-flight capture and diff jobs finish before stopping if you can (the
    queue checks are in
-   [`migration-deploy-order.md` §2](./migration-deploy-order.md#2-procedure--single-host-compose-default-install),
+   [`migration-deploy-order.md` §2](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md#2-procedure--single-host-compose-default-install),
    step 3).
 
 3. **Optional: preview on a copy.** Restore the snapshot into a scratch
@@ -245,8 +245,8 @@ before.
 
 ## 8. References
 
-- [`migration-deploy-order.md`](./migration-deploy-order.md) — stopping the writers while migrations run
-- [`migration-conventions.md`](./migration-conventions.md) — expand / backfill / contract
+- [`migration-deploy-order.md`](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md) — stopping the writers while migrations run
+- [`migration-conventions.md`](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-conventions.md) — expand / backfill / contract
 - [`restore-from-backup.md`](./restore-from-backup.md) — snapshot and restore
 - [`production-deploy.md`](./production-deploy.md) — the Compose install the commands above assume
 - `packages/db/migrations/0036_baseline_repair.sql`, `0037_review_backfill.sql` — the exact rules, documented in their headers

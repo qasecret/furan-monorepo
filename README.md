@@ -338,9 +338,9 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 - [`storage-backends.md`](docs/runbooks/storage-backends.md) — S3/MinIO vs HDD storage
 - [`api-down.md`](docs/runbooks/api-down.md) — first-call triage decision tree
 - [`restore-from-backup.md`](docs/runbooks/restore-from-backup.md) — backup + restore lifecycle
-- [`migration-deploy-order.md`](docs/runbooks/migration-deploy-order.md) — schema-additive-first deploy ordering
-- [`maven-central-publish.md`](docs/runbooks/maven-central-publish.md) — Kotlin SDK release flow
-- [`npm-publish.md`](docs/runbooks/npm-publish.md) — JS packages release flow
+- [`migration-deploy-order.md`](docs/maintainers/migration-deploy-order.md) — schema-additive-first deploy ordering
+- [`maven-central-publish.md`](docs/maintainers/maven-central-publish.md) — Kotlin SDK release flow
+- [`npm-publish.md`](docs/maintainers/npm-publish.md) — JS packages release flow
 
 ## Status and roadmap
 

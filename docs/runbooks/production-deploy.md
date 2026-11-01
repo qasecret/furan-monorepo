@@ -12,7 +12,7 @@
 > `infra/docker/compose.yml`, published to Docker Hub + GHCR, Trivy-scanned,
 > and cosign-signed (verify with the workflow identity
 > `build-images.yml@refs/tags/v1.1.33`). Deploy at this tag, or let
-> [`deploy.sh`](../../deploy.sh) handle the bring-up.
+> [`deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh) handle the bring-up.
 
 This runbook was written and verified on a fresh host (2026-06-24).
 
@@ -100,7 +100,7 @@ A configured `infra/docker/.env` (see [§2](#2-configure-env)).
 ## 2. Configure `.env`
 
 `infra/docker/.env` drives the stack. The required keys (copy from
-[`.env.example`](../../.env.example) and fill in):
+[`.env.example`](https://github.com/qasecret/furan-monorepo/blob/main/.env.example) and fill in):
 
 ```bash
 POSTGRES_USER=furan
@@ -128,13 +128,13 @@ COMPOSE_PROFILES=s3          # REQUIRED — gates MinIO + minio-init (PR #117)
 ## 3. Deploy
 
 > **Throwaway evaluation?** Skip this runbook entirely and use the one-file
-> [`infra/docker/furan-compose.yml`](../../infra/docker/furan-compose.yml):
+> [`infra/docker/furan-compose.yml`](https://github.com/qasecret/furan-monorepo/blob/main/infra/docker/furan-compose.yml):
 > `curl` it and `docker compose -f furan-compose.yml up -d` — nginx on `:8080`,
 > **default credentials**, self-applying migrations, no `.env`. See the README
 > "Fastest install" section. Not for real installs (shared default secrets); for
 > those use `./deploy.sh` below.
 
-> **Shortcut — `./deploy.sh`.** The repo-root [`deploy.sh`](../../deploy.sh)
+> **Shortcut — `./deploy.sh`.** The repo-root [`deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh)
 > automates §2–§4 as one command: it generates `.env` with fresh secrets,
 > enforces the §0 lockstep rule (refusing a released deploy when the checkout's
 > migrations are ahead of the pinned image tag), brings the stack up in order,
@@ -254,7 +254,7 @@ docker compose -p docker ... down -v --remove-orphans
 | Symptom                                                                                                                                                | Cause                                                                                                                                                                                                                                                     | Fix                                                                                                                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `column "..." does not exist`, projects/runs 500 while `/readyz` is green                                                                              | image ↔ migration drift ([§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep))                                                                                                                                                             | pin image and migrations to the same commit                                                                                                                                                 |
-| `migrate` exited non-zero                                                                                                                              | partial prior migration                                                                                                                                                                                                                                   | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)                                                                                                  |
+| `migrate` exited non-zero                                                                                                                              | partial prior migration                                                                                                                                                                                                                                   | `docker logs docker-migrate-1`; see [migration-deploy-order.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md)                            |
 | api won't boot, `JWT_SECRET must be ≥32 chars`                                                                                                         | short/missing secret                                                                                                                                                                                                                                      | `openssl rand -hex 32` into `.env`                                                                                                                                                          |
 | MinIO never starts / api can't reach S3                                                                                                                | `COMPOSE_PROFILES` unset                                                                                                                                                                                                                                  | add `COMPOSE_PROFILES=s3` to `.env`                                                                                                                                                         |
 | `compose up` aborts: `Ports are not available … bind: address already in use`                                                                          | a foreign process already holds `3000` (api) or `3001` (dashboard) — classically a leftover `pnpm dev` from a source-run session                                                                                                                          | free the port (`lsof -nP -iTCP:3001 -sTCP:LISTEN` to find the holder, stop it) or `./deploy.sh --down` a prior stack, then re-run. `deploy.sh` now names the port + holder on this failure. |
@@ -267,7 +267,7 @@ docker compose -p docker ... down -v --remove-orphans
 
 - [reverse-proxy-tls.md](reverse-proxy-tls.md) — expose the stack on a domain with HTTPS (the dashboard-URL constraint + a worked TLS proxy)
 - [install/quickstart.md](../install/quickstart.md) — dev (`pnpm dev`) path + first-capture walkthrough
-- [migration-deploy-order.md](migration-deploy-order.md) — schema-narrowing deploys
+- [migration-deploy-order.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md) — schema-narrowing deploys
 - [server-reads-upgrade.md](server-reads-upgrade.md) and [review-model-upgrade.md](review-model-upgrade.md) — release-specific upgrade steps (§3, "Upgrading an existing install")
 - [storage-backends.md](storage-backends.md) — S3 vs HDD
 - [restore-from-backup.md](restore-from-backup.md) — snapshot/restore details

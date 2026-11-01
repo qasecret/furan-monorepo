@@ -109,7 +109,7 @@ should report healthy / exited-0. `minio-perms` (volume ownership) and
 > plane + the five app services) from pre-built images published to Docker Hub
 > (`docker.io/qasecret/furan-*:v1.1.x`, GHCR mirror at `ghcr.io/qasecret/furan-*`;
 > cosign-signed, SBOM-attached). The smoothest path is the one-command
-> [`./deploy.sh`](../../deploy.sh) — it generates `.env`, enforces the lockstep
+> [`./deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh) — it generates `.env`, enforces the lockstep
 > rule, brings the stack up in order, health-waits, and runs the drift canary.
 > Otherwise run `docker compose -f infra/docker/compose.yml up -d` (no
 > `-f compose.dev.yml`) and skip the rest of this quickstart's `pnpm` sections.
