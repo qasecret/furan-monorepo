@@ -1,0 +1,64 @@
+{
+  "name": "@furan/playwright",
+  "version": "0.0.0",
+  "description": "Playwright Test fixture for Furan: await furan.check(\"cart\") uploads a screenshot and fails the test when it needs review.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/qasecret/furan-monorepo/blob/main/docs/integrations/javascript.md",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qasecret/furan-monorepo.git",
+    "directory": "packages/playwright"
+  },
+  "bugs": "https://github.com/qasecret/furan-monorepo/issues",
+  "keywords": [
+    "furan",
+    "visual-testing",
+    "screenshot",
+    "visual-regression",
+    "playwright"
+  ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./global-setup": {
+      "types": "./dist/global-setup.d.ts",
+      "default": "./dist/global-setup.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@furan/client": "workspace:^"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.45"
+  },
+  "devDependencies": {
+    "@furan/eslint-config": "workspace:*",
+    "@furan/tsconfig": "workspace:*",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^10.12.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
