@@ -14,6 +14,12 @@ import {
   type TestInfo,
 } from "@playwright/test";
 
+import {
+  buildCachePath,
+  readCachedBuildId,
+  writeCachedBuildId,
+} from "./build-cache.js";
+import { testTitle } from "./names.js";
 import { toImageRegion, type CaptureMode } from "./regions.js";
 
 /** Set with `use: { furanOptions: { … } }` in the config or `test.use`. */
@@ -97,7 +103,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           'furan: no FURAN_CI_BUILD_ID, so each Playwright worker makes its own build; add globalSetup: "@furan/playwright/global-setup" to put a local run in one build',
         );
       }
-      await use(await furanClient.openBuild());
+      // A restarted worker (Playwright restarts one after each failed test)
+      // reuses the build an earlier worker opened instead of calling the
+      // rate-limited build route again.
+      const cachePath = buildCachePath(furanClient.config);
+      const cached = cachePath ? readCachedBuildId(cachePath) : null;
+      const build = cached
+        ? await new Furan(
+            { ...furanClient.config, buildId: cached },
+            furanClient.client,
+          ).openBuild()
+        : await furanClient.openBuild();
+      if (cachePath && !cached) writeCachedBuildId(cachePath, build.id);
+      await use(build);
     },
     { scope: "worker" },
   ],
@@ -107,7 +125,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     use,
     testInfo,
   ) => {
-    const title = testInfo.titlePath.join(" › ");
+    const title = testTitle(testInfo);
     let opening: Promise<FuranTest> | null = null;
 
     await use({
@@ -157,6 +175,9 @@ async function capture(
   defaults: FuranPlaywrightOptions,
 ): Promise<{ png: Uint8Array; mode: CaptureMode }> {
   if (options.locator) {
+    // Scroll first, so the target's box and the region boxes read after the
+    // screenshot share one scroll position (the screenshot would scroll).
+    await options.locator.scrollIntoViewIfNeeded();
     const box = await options.locator.boundingBox();
     if (!box) {
       throw new Error("furan.check: the locator to screenshot is not visible");
