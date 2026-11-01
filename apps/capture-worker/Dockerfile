@@ -91,9 +91,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Patch base-image CVEs the Trivy release gate blocks (both fixed upstream):
+# Patch base-image CVEs the Trivy release gate blocks (all fixed upstream):
 #   - libssl3t64: openssl PKCS7_verify() Heap-UAF (CVE-2026-45447) — apt
 #     pulls noble's patched point release.
+#   - libbrotli1: CVE-2026-111497 — noble-security's 1.1.0-2ubuntu0.1.
 #   - the Playwright base's bundled GLOBAL npm ships a vulnerable sigstore
 #     (CVE-2026-48815, npm's provenance dep). The runtime entrypoint is
 #     `node apps/capture-worker/dist/server.js` — npm/npx are never invoked
@@ -101,7 +102,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 #     HIGH CVE. `npm root -g` locates it regardless of the base's node layout.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends --only-upgrade libssl3t64; \
+    apt-get install -y --no-install-recommends --only-upgrade libssl3t64 libbrotli1; \
     rm -rf /var/lib/apt/lists/*; \
     npm_root="$(npm root -g 2>/dev/null || echo /usr/lib/node_modules)"; \
     rm -rf "$npm_root/npm" "$npm_root/corepack"; \
