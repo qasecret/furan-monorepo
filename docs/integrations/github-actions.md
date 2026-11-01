@@ -202,6 +202,45 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 For deeper debugging, hit `GET /projects/<id>/runs/<runId>/events` (SSE) or
 inspect the `test_runs` and `screenshots` tables directly.
 
+## JavaScript / TypeScript: the `furan upload` Action
+
+For a project that produces PNG screenshots (Playwright, Cypress, Storybook
+exports, anything), the `furan upload` Action is one step and needs no JVM.
+Pin a `cli/v*` tag: the Action runs the `@furan/cli` version it is tagged
+with.
+
+```yaml
+- run: npx playwright test # or: npx cypress run, …
+- uses: qasecret/furan-monorepo/packages/cli@cli/v0.1.0
+  with:
+    path: screenshots # one file, folder or glob per line
+    api-url: ${{ secrets.FURAN_API_URL }}
+    token: ${{ secrets.FURAN_API_TOKEN }}
+    project-id: ${{ secrets.FURAN_PROJECT_ID }}
+    dashboard-url: https://furan.example.com # optional: links in the summary
+```
+
+- The branch, the PR's base branch and a per-run build id come from the
+  workflow's own context, so every job and matrix shard of a workflow run
+  lands in one batch, and a re-run gets a fresh one. No `FURAN_BUILD_ID` or
+  `FURAN_BRANCH` is needed.
+- The job fails when a screenshot needs review (exit 1). A step with no
+  baseline yet passes with a warning; set `fail-on-new: true` to fail instead,
+  or `save-new-tests: true` to approve first baselines automatically.
+- The job summary gets a table of tests with review links, and the step
+  outputs `build-id`, `build-url` and `status`
+  (`passed` / `new` / `failed` / `error` / `uploaded`).
+- Other inputs: `test`, `ignore` (one `x,y,width,height` per line),
+  `match-level`, `browser`, `wait`, `timeout`, `version`, and `args` for any
+  other `furan upload` flag, one per line. The connection inputs may be left
+  out when the job sets `FURAN_API_URL`, `FURAN_API_TOKEN` and
+  `FURAN_PROJECT_ID` in `env`.
+
+The same summary and outputs come from a plain
+`run: npx @furan/cli upload screenshots` step. The Playwright Test fixture
+(`@furan/playwright`) needs no extra step at all: tests fail on their own when
+a screenshot changes. See [javascript.md](javascript.md).
+
 ## See also
 
 - [GitHub App setup](./github-app.md) — create, configure and verify the App
@@ -209,3 +248,4 @@ inspect the `test_runs` and `screenshots` tables directly.
 - [SDK example project](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/) — runnable Gradle reference
 - [Production deploy runbook](../runbooks/production-deploy.md) — running the full stack, including the `integrations` service
 - [`.examples/visual-regression.yml`](./.examples/visual-regression.yml) — copy-paste workflow
+- [JavaScript / TypeScript guide](javascript.md) — `furan upload`, the Playwright fixture, the client library

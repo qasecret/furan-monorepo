@@ -21,3 +21,21 @@ jobs:
           FURAN_BUILD_ID: ${{ github.sha }}
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: ./gradlew test --tests "*VisualTest*"
+
+  # A JS project: run the tests that write PNGs, then upload them. Each folder
+  # under screenshots/ becomes a test; the job fails when one needs review.
+  visual-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci && npx playwright install --with-deps chromium
+      - name: Run tests that write screenshots/
+        run: npx playwright test
+      - uses: qasecret/furan-monorepo/packages/cli@cli/v0.1.0
+        with:
+          path: screenshots
+          api-url: ${{ secrets.FURAN_API_URL }}
+          token: ${{ secrets.FURAN_API_TOKEN }}
+          project-id: ${{ secrets.FURAN_PROJECT_ID }}
