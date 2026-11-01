@@ -1,0 +1,68 @@
+name: docs
+
+# The documentation portal (apps/docs, ADR-080).
+#
+#  - Pull requests that touch the docs build the portal: Docusaurus fails on
+#    a broken link, markdown link or anchor, and the CSP hash step fails on an
+#    inline handler. This is the docs gate.
+#  - Release tags (and a manual run) publish the same source to GitHub Pages,
+#    so the public docs describe the released images — the ones
+#    infra/docker/furan-compose.yml on main pins. Pages must be set to
+#    "GitHub Actions" in the repo settings once.
+#
+# The copy each release bundles at /docs is built by apps/dashboard/Dockerfile,
+# not here.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "apps/docs/**"
+      - "packages/sdk-kotlin/version.txt"
+      - "pnpm-lock.yaml"
+      - ".dockerignore"
+      - ".github/workflows/docs.yml"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Build the portal
+        # PRs build with the bundled defaults (/docs/); a publish builds for
+        # https://qasecret.github.io/furan-monorepo/.
+        env:
+          DOCS_BASE_URL: ${{ github.event_name == 'pull_request' && '/docs/' || '/furan-monorepo/' }}
+          DOCS_SITE_URL: ${{ github.event_name == 'pull_request' && 'http://localhost:8080' || 'https://qasecret.github.io' }}
+        run: pnpm --filter @furan/docs build
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/docs/build
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
