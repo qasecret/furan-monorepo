@@ -25,7 +25,7 @@ import {
   users,
 } from "@furan/db";
 import type { CheckpointVerdict } from "@furan/shared-types";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
 import { generateRawToken } from "../src/lib/token.js";
@@ -206,6 +206,83 @@ d("POST /runs/:id/approve", () => {
       decision: "approved",
       source: "sdk",
       actorId: memberId,
+    });
+  });
+
+  describe("GitHub refresh (run.reviewed on the run channel)", () => {
+    /** Replaces the broadcaster's run-event publisher for one test. */
+    function spyOnRunEvents(
+      onCall?: (ev: { type: string; runId: string }) => Promise<void>,
+    ) {
+      const broadcaster = h.app.broadcaster as {
+        publishRunEvent?: unknown;
+      };
+      const original = broadcaster.publishRunEvent;
+      const spy = vi.fn(async (ev: { type: string; runId: string }) => {
+        await onCall?.(ev);
+      });
+      broadcaster.publishRunEvent = spy;
+      return {
+        spy,
+        restore: () => {
+          broadcaster.publishRunEvent = original;
+        },
+      };
+    }
+
+    test("approving announces run.reviewed, and only after the approval is committed", async () => {
+      const { runId, headers } = await seedNewRun(h);
+      // What the run's stored status is at the moment the event goes out.
+      const statusWhenAnnounced: string[] = [];
+      const { spy, restore } = spyOnRunEvents(async (ev) => {
+        const [row] = await h.db
+          .select({ status: testRuns.status })
+          .from(testRuns)
+          .where(eq(testRuns.id, ev.runId));
+        statusWhenAnnounced.push(row!.status);
+      });
+      try {
+        const res = await h.app.inject({
+          method: "POST",
+          url: `/runs/${runId}/approve`,
+          headers,
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        restore();
+      }
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({
+        type: "run.reviewed",
+        runId,
+        payload: {},
+      });
+      // The listener (the GitHub updater) reads the committed status.
+      expect(statusWhenAnnounced).toEqual(["passed"]);
+    });
+
+    test("approving a run with nothing pending announces nothing", async () => {
+      const { runId, headers } = await seedNewRun(h);
+      const first = await h.app.inject({
+        method: "POST",
+        url: `/runs/${runId}/approve`,
+        headers,
+      });
+      expect(first.statusCode).toBe(200);
+
+      const { spy, restore } = spyOnRunEvents();
+      try {
+        const again = await h.app.inject({
+          method: "POST",
+          url: `/runs/${runId}/approve`,
+          headers,
+        });
+        expect(again.statusCode).toBe(200);
+      } finally {
+        restore();
+      }
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
