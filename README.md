@@ -30,7 +30,7 @@ If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy,
 - **JVM SDK family** — `furan-selenium`, `furan-playwright`, and `furan-appium` on Maven Central (`4.2.0`), each a drop-in for a JUnit 5 suite on that driver over a shared capture core, plus a `furan-junit5` `@FuranTest` annotation.
 - **JavaScript / TypeScript** — `furan upload` (`@furan/cli`) sends PNG folders from any CI and fails the job when a screenshot needs review, with a GitHub Action around it; `@furan/playwright` is a Playwright Test fixture (`await furan.check("cart")`); `@furan/client` is the zero-dependency client underneath. See [`docs/integrations/javascript.md`](docs/integrations/javascript.md).
 - **Access control & audit** — four-tier role hierarchy (owner ⊇ admin ⊇ editor ⊇ guest) enforced per request, an admin audit-log viewer, and an opt-in Postgres row-level-security backstop for tenant isolation.
-- **OpenAPI 3.1 spec** — `GET /openapi.json`. **Interactive docs** at `GET /docs` (Scalar).
+- **OpenAPI 3.1 spec** — `GET /openapi.json` on the API. **Interactive API reference** (Scalar) at the API's `/docs`: `http://<host>:8080/api/docs` on the one-file install.
 - **Operations** — per-project retention TTL, nightly Postgres backup sidecar, restore + api-down runbooks.
 - **Container images** — multi-arch (amd64 / arm64), cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release.
 - **Apache 2.0** — no telemetry on the server, no feature gates, no upgrade pressure.
@@ -66,8 +66,8 @@ nginx serves the whole thing on `:8080`; migrations self-apply from the image. T
 Everything else (installing for production, sending screenshots, approving
 baselines, CI, operations) lives in the **documentation portal**: published at
 <https://qasecret.github.io/furan-monorepo/> with each release, served at
-`/docs` on your own install (for example `http://localhost:8080/docs`) so it
-matches the version you run, and written in [`docs/`](docs/README.md) here.
+`/docs` on your own install (for example `http://localhost:8080/docs`; releases
+after v1.1.32) so it matches the version you run, and written in [`docs/`](docs/README.md) here.
 
 - [Getting started](docs/getting-started/install.md): from the one-file install to your first reviewed diff, in seven short pages.
 - [Production install (Docker Compose)](docs/install/compose.md), and the [production deploy runbook](docs/runbooks/production-deploy.md) for upgrades and image ↔ migration lockstep.

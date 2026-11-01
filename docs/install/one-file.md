@@ -14,7 +14,7 @@ docker compose -f furan-compose.yml up -d
 ```
 
 nginx serves everything on port `8080`: the dashboard at `/`, the API at
-`/api` and these docs at `/docs`. Migrations apply themselves from the image
+`/api` and, in releases after v1.1.32, these docs at `/docs`. Migrations apply themselves from the image
 on start. The step-by-step version of this page is
 [Getting started](../getting-started/install.md).
 

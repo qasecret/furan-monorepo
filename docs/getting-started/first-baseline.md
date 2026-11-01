@@ -31,9 +31,11 @@ baseline yet. Approve this step to make it the baseline." Check it, then click
 
 ### What makes a step "the same" next time
 
-A baseline belongs to one step identity: the same **test name** and **step
-name**, on the same **branch**, **browser**, **viewport** and **OS/device**.
-Keep those stable between runs; renaming a test or a step starts a new,
+A baseline belongs to one step identity: the **step name** (the name you
+pass to `snapshot(...)`), on the same **branch**, **browser**, **viewport**
+and **OS/device**. The test's name is not part of it, so give every step a
+name that is unique in the project: two tests that both call
+`snapshot("home")` share one baseline. Renaming a step starts a new,
 baseline-less step.
 
 Branches fall back to the project's main branch: a feature branch with no

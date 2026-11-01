@@ -4,11 +4,14 @@ name: docs
 #
 #  - Pull requests that touch the docs build the portal: Docusaurus fails on
 #    a broken link, markdown link or anchor, and the CSP hash step fails on an
-#    inline handler. This is the docs gate.
+#    inline handler or an off-origin resource. This is the docs gate.
 #  - Release tags (and a manual run) publish the same source to GitHub Pages,
 #    so the public docs describe the released images — the ones
-#    infra/docker/furan-compose.yml on main pins. Pages must be set to
-#    "GitHub Actions" in the repo settings once.
+#    infra/docker/furan-compose.yml on main pins. Two one-time repo settings:
+#      1. Settings → Pages → Source: "GitHub Actions".
+#      2. Settings → Environments → github-pages → Deployment branches and
+#         tags: add a tag rule `v*`. The environment Pages creates allows only
+#         the default branch, and would refuse a deploy from a release tag.
 #
 # The copy each release bundles at /docs is built by apps/dashboard/Dockerfile,
 # not here.

@@ -40,8 +40,11 @@ curl -s -X POST $API/runs/$RUN/complete -H "Authorization: Bearer $PAT" \
 
 ## Keep the identity stable
 
-A step's identity is the tuple `(branchName, name, viewport, browser)`. Reuse
-the same values on later runs, so they compare against the same baseline.
+A step's identity is the run's `branchName` plus the screenshot's `name`,
+`viewport`, `browser`, and the optional `os` and `device` fields. The run's
+own `name` is not part of it, so keep screenshot names unique in the project.
+Reuse the same values on later runs, so they compare against the same
+baseline.
 
 The first run of a step has no baseline: it is stored as **New**, and a
 reviewer approves it in the dashboard to make it the baseline. See
