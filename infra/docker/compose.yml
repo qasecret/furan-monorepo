@@ -207,6 +207,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      FURAN_PAT_MAX_LIFETIME_DAYS: ${FURAN_PAT_MAX_LIFETIME_DAYS:-365}
       # Optional first-admin bootstrap (see .env.example). Forwarded so
       # the api can seed an admin row when the users table is empty.
       FURAN_BOOTSTRAP_ADMIN_EMAIL: ${FURAN_BOOTSTRAP_ADMIN_EMAIL:-}

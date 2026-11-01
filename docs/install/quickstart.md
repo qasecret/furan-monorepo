@@ -236,12 +236,18 @@ Editors only see projects they are members of; admins see everything.
 Switch to your editor (or stay as admin), then:
 
 1. Navigate to **/account/tokens** → **Create** → label `CI - main`.
-2. **Copy the raw token immediately** — it is shown once, in a one-shot
+2. Keep **Access: SDK & CI**, pick the project this job uploads to, and keep
+   the 90-day expiry (or pick another lifetime up to the operator's cap,
+   `FURAN_PAT_MAX_LIFETIME_DAYS`).
+3. **Copy the raw token immediately** — it is shown once, in a one-shot
    dialog, and the database only stores the SHA-256 hash. There is no
    recovery flow; if you lose it, delete and mint a new one.
 
 Use this PAT as a `Bearer` token from any non-interactive client (CI, the
-SDK, curl scripts).
+SDK, curl scripts). It works only on the project you picked (or, with "All my
+projects", the projects you're a member of) until it expires. It can save the
+first baseline of a new test but never approves a change, and it can't manage
+tokens or call admin endpoints.
 
 ## 11. First capture + first diff
 

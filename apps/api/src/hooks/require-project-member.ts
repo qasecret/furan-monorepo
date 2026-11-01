@@ -9,6 +9,12 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { sendError } from "../lib/errors.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
+import {
+  auditTokenDenied,
+  boundElsewhere,
+  bypassesMembership,
+  isScopedToken,
+} from "../lib/token-access.js";
 
 export type Action = "read" | "write";
 
@@ -27,6 +33,8 @@ export interface ScopeOpts {
 interface Denial {
   code: 400 | 403;
   message: string;
+  /** A scoped token bound to another project (audited as `token.denied`). */
+  boundElsewhere?: true;
 }
 
 export function requireProjectMember(action: Action, opts: ScopeOpts) {
@@ -34,10 +42,14 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
     if (!req.auth) {
       return sendError(reply, 401, "unauthenticated");
     }
-    // admin/owner bypass per arch-backend.md §4.3. Role-only on purpose (not
-    // `hasAdminSurface`): an admin's API token keeps it so SDK uploads work on
-    // projects the admin manages but isn't a member of (ADR-064 step A).
-    if (isAtLeastAdmin(req.auth.role)) return;
+    // admin/owner bypass per arch-backend.md §4.3, on a session or a `legacy`
+    // token (role-only, not `hasAdminSurface`, so an admin's SDK token keeps
+    // uploading to projects the admin manages but isn't a member of — ADR-064
+    // step A). A scoped token is checked per project below: bound → only its
+    // project (an admin skips membership there); unbound → member projects
+    // only, no bypass (step B).
+    const scoped = isScopedToken(req.auth);
+    if (!scoped && isAtLeastAdmin(req.auth.role)) return;
     if (req.auth.role === "guest") {
       return sendError(reply, 403, "forbidden", undefined, { reason: "guest" });
     }
@@ -55,6 +67,18 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
         if (!projectId) {
           return { code: 400, message: "missing_project_scope" };
         }
+        if (boundElsewhere(auth, projectId)) {
+          req.log.info(
+            { action, projectId, userId: auth.id },
+            "rbac_denied_token_project",
+          );
+          return {
+            code: 403,
+            message: "token_project_mismatch",
+            boundElsewhere: true,
+          };
+        }
+        if (bypassesMembership(auth, projectId)) return null;
         const rows = await db
           .select({ id: projectMembers.id })
           .from(projectMembers)
@@ -77,6 +101,25 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
     );
 
     if (denial) {
+      if (denial.boundElsewhere && auth.via === "pat") {
+        await auditTokenDenied(
+          req.server.db,
+          {
+            userId: auth.id,
+            tokenId: auth.tokenId,
+            reason: "project",
+            method: req.method,
+            route: req.routeOptions.url ?? req.url,
+          },
+          req.log,
+        );
+        return sendError(
+          reply,
+          403,
+          denial.message,
+          "This API token is bound to a different project",
+        );
+      }
       return sendError(reply, denial.code, denial.message);
     }
   };

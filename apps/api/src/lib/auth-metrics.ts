@@ -4,7 +4,9 @@ import { Counter, type Registry } from "@furan/telemetry";
  * Security-signal metric: every rejected authentication attempt, labelled by
  * reason. Spikes surface credential stuffing / brute force (`invalid_jwt`,
  * `invalid_credentials`), probing of disabled accounts (`account_inactive`),
- * or scanning of protected routes with no creds (`missing_credentials`).
+ * an expired or out-of-scope API token still in use (`expired_pat`,
+ * `pat_out_of_scope`), or scanning of protected routes with no creds
+ * (`missing_credentials`).
  *
  * `reason` is a small closed set — safe cardinality for a Prometheus label.
  * Registered once per telemetry Registry via a WeakMap so repeated calls (and
@@ -14,6 +16,8 @@ import { Counter, type Registry } from "@furan/telemetry";
 export type AuthFailureReason =
   | "missing_credentials"
   | "invalid_pat"
+  | "expired_pat"
+  | "pat_out_of_scope"
   | "invalid_token_format"
   | "invalid_jwt"
   | "account_inactive"

@@ -31,8 +31,9 @@ export function principal(seed: SeedResult, role: Role): SeededPrincipal {
 
 /**
  * The credentials most capture specs need: the bootstrap admin JWT (for admin
- * mutations) + the owner PAT (bypasses project membership, so it can capture on
- * any project). Call from a `beforeAll` (after globalSetup has seeded).
+ * mutations) + the bootstrap admin's `sdk` PAT (a member of every project the
+ * specs create with that JWT, so it can capture on each). Call from a
+ * `beforeAll` (after globalSetup has seeded).
  */
 export function ownerCreds(): {
   admin: string;
@@ -42,7 +43,7 @@ export function ownerCreds(): {
   const seed = loadSeed();
   return {
     admin: seed.bootstrapAdminJwt,
-    pat: principal(seed, "owner").pat,
+    pat: seed.bootstrapAdminPat,
     seed,
   };
 }

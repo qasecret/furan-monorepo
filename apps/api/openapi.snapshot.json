@@ -18,7 +18,7 @@
     },
     "securitySchemes": {
       "bearerAuth": {
-        "description": "JWT (dashboard sessions) or `furan_pat_*` (SDK/CI). Both arrive on `Authorization: Bearer ...`.",
+        "description": "JWT (dashboard sessions) or `furan_pat_*` (SDK/CI). Both arrive on `Authorization: Bearer ...`. A token works only until it expires (`401 token_expired`), on its bound project or its owner's member projects (`403 token_project_mismatch` / `not_a_project_member`), and on the endpoints its scope allows: `sdk` the SDK/CI endpoints, `read` their GETs (`403 insufficient_scope`). Token management, admin endpoints and `/trpc` need a session (`403 session_required`).",
         "scheme": "bearer",
         "type": "http"
       }
@@ -60,6 +60,73 @@
         ]
       }
     },
+    "/account/token-policy": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "allowNoExpiry": {
+                      "description": "True when the operator lifted the cap: a token may never expire.",
+                      "type": "boolean"
+                    },
+                    "defaultLifetimeDays": {
+                      "type": "integer"
+                    },
+                    "lifetimeDays": {
+                      "description": "The lifetimes a new token may have, in days.",
+                      "items": {
+                        "type": "integer"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "lifetimeDays",
+                    "defaultLifetimeDays",
+                    "allowNoExpiry"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Lifetimes on offer, the default, and whether no-expiry is allowed"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Called with an API token (`session_required`)"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+            ]
+          }
+        ],
+        "summary": "The lifetimes a new personal access token may have",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
     "/account/tokens": {
       "get": {
         "responses": {
@@ -72,6 +139,13 @@
                       "createdAt": {
                         "format": "date-time",
                         "type": "string"
+                      },
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "id": {
                         "format": "uuid",
@@ -86,13 +160,49 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "lastUsedIp": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "projectId": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "projectName": {
+                        "description": "The bound project's name; null when unbound.",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "scopes": {
+                        "items": {
+                          "enum": [
+                            "legacy",
+                            "sdk",
+                            "read"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
                       "id",
                       "label",
                       "createdAt",
-                      "lastUsedAt"
+                      "lastUsedAt",
+                      "lastUsedIp",
+                      "scopes",
+                      "projectId",
+                      "projectName",
+                      "expiresAt"
                     ],
                     "type": "object"
                   },
@@ -111,6 +221,16 @@
               }
             },
             "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Called with an API token (`session_required`)"
           }
         },
         "security": [
@@ -125,15 +245,46 @@
         ]
       },
       "post": {
+        "description": "New tokens default to scope `sdk`, every project you're a member of, and a 90-day lifetime (capped by FURAN_PAT_MAX_LIFETIME_DAYS).",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "properties": {
+                  "expiresInDays": {
+                    "description": "Lifetime in days. Omitted: 90 (or the operator's cap, if lower). null: never expires, allowed only when the operator sets FURAN_PAT_MAX_LIFETIME_DAYS=0.",
+                    "maximum": 3650,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "label": {
                     "maxLength": 80,
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "projectId": {
+                    "description": "Bind the token to this project. Omitted or null: every project you're a member of.",
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scopes": {
+                    "description": "What the token may do: `sdk` (the default: SDK and CI uploads, plus reads) or `read` (reads only).",
+                    "items": {
+                      "enum": [
+                        "sdk",
+                        "read"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 2,
+                    "minItems": 1,
+                    "type": "array"
                   }
                 },
                 "required": [
@@ -154,12 +305,37 @@
                       "format": "date-time",
                       "type": "string"
                     },
+                    "expiresAt": {
+                      "format": "date-time",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "id": {
                       "format": "uuid",
                       "type": "string"
                     },
                     "label": {
                       "type": "string"
+                    },
+                    "projectId": {
+                      "format": "uuid",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "scopes": {
+                      "items": {
+                        "enum": [
+                          "legacy",
+                          "sdk",
+                          "read"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
                     },
                     "token": {
                       "description": "Raw `furan_pat_*` token — shown ONCE, never retrievable again.",
@@ -170,6 +346,9 @@
                     "id",
                     "label",
                     "createdAt",
+                    "scopes",
+                    "projectId",
+                    "expiresAt",
                     "token"
                   ],
                   "type": "object"
@@ -186,7 +365,7 @@
                 }
               }
             },
-            "description": "Invalid body"
+            "description": "Invalid body, or a lifetime the operator doesn't allow (`expiry_too_long`, `expiry_required`)"
           },
           "401": {
             "content": {
@@ -197,6 +376,26 @@
               }
             },
             "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Called with an API token (`session_required`)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "`projectId` names no project the caller can use (`project_not_found`)"
           }
         },
         "security": [
@@ -237,6 +436,16 @@
               }
             },
             "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Called with an API token (`session_required`)"
           },
           "404": {
             "content": {

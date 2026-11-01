@@ -323,6 +323,13 @@
       "when": 1793546134052,
       "tag": "0045_run_scm_context",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793629540245,
+      "tag": "0046_token_scopes",
+      "breakpoints": true
     }
   ]
 }

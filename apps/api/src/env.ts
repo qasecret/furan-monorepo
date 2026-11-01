@@ -78,6 +78,14 @@ export const envSchema = z.object({
   SSE_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(10000),
 
   /**
+   * ADR-064 step B: the longest lifetime, in days, a new API token
+   * (`furan_pat_*`) may have. The dashboard offers 7/30/90/180/365 days up to
+   * this cap, and a new token defaults to 90 days (or the cap, if lower).
+   * `0` lifts the cap and allows tokens that never expire.
+   */
+  FURAN_PAT_MAX_LIFETIME_DAYS: z.coerce.number().int().min(0).default(365),
+
+  /**
    * ADR-063: which reverse proxies the API trusts for `X-Forwarded-For` —
    * i.e. what `req.ip` (and every per-IP rate limit) resolves to. Unset /
    * `false` (default) ignores XFF; a comma-separated IP / CIDR / `loopback`

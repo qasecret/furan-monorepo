@@ -11,7 +11,7 @@ import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API, DASH_URL as DASH } from "../../src/env.js";
-import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import { loadSeed } from "../../src/seed/load-seed.js";
 
 /**
  * Dashboard surfaces driven in a real browser. One shared authenticated context
@@ -28,7 +28,7 @@ test.describe.serial("ui: dashboard surfaces", () => {
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     const seed = loadSeed();
     const admin = seed.bootstrapAdminJwt;
-    const pat = principal(seed, "owner").pat;
+    const pat = seed.bootstrapAdminPat;
     const project = await api.createProject(admin, {
       name: `e2e-ui-${Date.now()}`,
     });

@@ -13,7 +13,7 @@ import {
   type Fixture,
 } from "../clients/virtual-sdk.js";
 import { API_URL } from "../env.js";
-import { loadSeed, principal } from "../seed/load-seed.js";
+import { loadSeed } from "../seed/load-seed.js";
 
 import { uploadShots } from "./upload.js";
 
@@ -248,7 +248,7 @@ async function createOrAdoptProject(
 async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
   const seed = loadSeed();
   const admin = seed.bootstrapAdminJwt;
-  const pat = principal(seed, "owner").pat;
+  const pat = seed.bootstrapAdminPat;
 
   const existing = readFixture();
   if (existing) {
@@ -407,7 +407,7 @@ async function addMultiRun(
 ): Promise<MultiFixture> {
   const seed = loadSeed();
   const admin = seed.bootstrapAdminJwt;
-  const pat = principal(seed, "owner").pat;
+  const pat = seed.bootstrapAdminPat;
 
   const baseline = await captureRun(api, {
     pat,
@@ -494,7 +494,7 @@ async function captureLoopBatch(
   buildId: string;
   runs: Array<{ name: string; runId: string; status: string }>;
 }> {
-  const pat = principal(loadSeed(), "owner").pat;
+  const pat = loadSeed().bootstrapAdminPat;
   let buildId: string | undefined;
   const runs: Array<{ name: string; runId: string; status: string }> = [];
   for (const test of LOOP_TESTS) {
@@ -599,7 +599,7 @@ async function uploadMismatch(
   buildName: string,
   height: number,
 ): Promise<{ runId: string; checkpointId: string; status: string }> {
-  const pat = principal(loadSeed(), "owner").pat;
+  const pat = loadSeed().bootstrapAdminPat;
   const { runs } = await uploadShots({
     apiUrl: API_URL,
     pat,
@@ -612,7 +612,12 @@ async function uploadMismatch(
   if (!run) {
     throw new Error("visual fixture: the size-mismatch upload made no run");
   }
-  await waitForCheckpointVerdicts(api, pat, run.runId, [run.checkpointId]);
+  await waitForCheckpointVerdicts(
+    api,
+    loadSeed().bootstrapAdminJwt,
+    run.runId,
+    [run.checkpointId],
+  );
   const { status } = await pollRunStatus(api, pat, run.runId);
   return { runId: run.runId, checkpointId: run.checkpointId, status };
 }

@@ -176,6 +176,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
       JWT_SECRET: ${JWT_SECRET:-furan_local_dev_jwt_secret_change_me_0123456789abcdef}
       JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      FURAN_PAT_MAX_LIFETIME_DAYS: ${FURAN_PAT_MAX_LIFETIME_DAYS:-365}
       FURAN_BOOTSTRAP_ADMIN_EMAIL: ${FURAN_BOOTSTRAP_ADMIN_EMAIL:-admin@furan.local}
       FURAN_BOOTSTRAP_ADMIN_PASSWORD: ${FURAN_BOOTSTRAP_ADMIN_PASSWORD:-FuranAdmin123!}
       # Browser loads the UI from the nginx origin (:8080); the api CORS

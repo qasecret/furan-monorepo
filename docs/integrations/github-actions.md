@@ -32,11 +32,11 @@ Full copy-paste workflow: [`.examples/visual-regression.yml`](./.examples/visual
 
 Three repository (or org-level) secrets are required.
 
-| Secret             | Source                                                              |
-| ------------------ | ------------------------------------------------------------------- |
-| `FURAN_API_URL`    | Your self-hosted Furan URL, e.g. `https://furan.your-domain.com`    |
-| `FURAN_API_TOKEN`  | Mint at `/account/tokens` in the Furan dashboard (token shown once) |
-| `FURAN_PROJECT_ID` | UUID from the project URL: `/projects/<UUID>`                       |
+| Secret             | Source                                                             |
+| ------------------ | ------------------------------------------------------------------ |
+| `FURAN_API_URL`    | Your self-hosted Furan URL, e.g. `https://furan.your-domain.com`   |
+| `FURAN_API_TOKEN`  | Mint at `/account/tokens`: SDK & CI access, this project (see 1.1) |
+| `FURAN_PROJECT_ID` | UUID from the project URL: `/projects/<UUID>`                      |
 
 The `FURAN_BUILD_ID`, `FURAN_BRANCH`, and `FURAN_PARENT_BRANCH` env vars in the
 snippet above are **not** secrets — they come from `github.sha` /
@@ -47,6 +47,31 @@ resolution falls back to the default branch — exactly as before.
 
 Set secrets via **Settings → Secrets and variables → Actions → New repository
 secret** (or use `gh secret set FURAN_API_TOKEN`).
+
+### 1.1 Mint a token that is safe to keep in CI
+
+A CI secret can leak (a fork's logs, a compromised runner), so give the token
+only what this workflow needs. In the dashboard's create-token dialog
+(`/account/tokens`, or **Admin → API Keys** for admins):
+
+- **Access: SDK & CI** (the default). It creates builds and runs, uploads
+  screenshots and reads results. With `saveNewTests` it saves the first baseline
+  of a new test, but it never approves a change against an existing baseline:
+  that stays with a reviewer in the dashboard. **Read-only** suits a job that
+  only reads results.
+- **Project:** pick the project in `FURAN_PROJECT_ID`. The token then works
+  there and nowhere else. **All my projects** covers the projects you're a
+  member of; even an admin's token reaches no further.
+- **Expires after:** 90 days by default, up to the operator's cap
+  (`FURAN_PAT_MAX_LIFETIME_DAYS`, 365 by default). Note the date: before it,
+  mint a replacement, update the secret, then delete the old token.
+
+No token can manage tokens, call admin endpoints or use the dashboard's API;
+those need a signed-in session. Each refused use of a token (expired, wrong
+project, outside its access) is recorded in the audit log as `token.denied`,
+and the token list shows when and from which address each token was last used.
+Tokens minted before scopes existed show as **Legacy**: they keep their old,
+wider access until they expire, 90 days after the upgrade.
 
 ## 2. Install the Furan GitHub App
 
@@ -164,6 +189,9 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 | Symptom                                        | Likely cause                                                                                                                                                                                           |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `401 unauthorized` from SDK                    | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                                                                                               |
+| `401 token_expired`                            | The token's lifetime is over: mint a replacement at `/account/tokens` and update the `FURAN_API_TOKEN` secret                                                                                          |
+| `403 token_project_mismatch`                   | The token is bound to a different project than `FURAN_PROJECT_ID`                                                                                                                                      |
+| `403 insufficient_scope`                       | A read-only token tried to upload or approve: mint an SDK & CI token                                                                                                                                   |
 | `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                                                                                            |
 | `FuranNoBaselineException` on a first run      | Expected — the test has no baseline yet. Approve the run in the dashboard (Save as baseline), or set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true` to tolerate first runs in CI |
 | Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                                                                                    |

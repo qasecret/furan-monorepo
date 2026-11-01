@@ -579,6 +579,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/runs",
     {
+      config: { tokenAccess: "sdk" },
       preHandler: [
         app.authenticate,
         requireProjectMember("write", { from: { body: "projectId" } }),
@@ -686,6 +687,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/runs/:runId",
     {
+      config: { tokenAccess: "read" },
       preHandler: [
         app.authenticate,
         requireProjectMember("read", {
@@ -755,6 +757,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/runs/:runId/screenshots",
     {
+      config: { tokenAccess: "sdk" },
       bodyLimit: UPLOAD_BODY_LIMIT,
       preHandler: [
         app.authenticate,
@@ -880,6 +883,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/runs/:runId/screenshots/base64",
     {
+      config: { tokenAccess: "sdk" },
       bodyLimit: UPLOAD_BODY_LIMIT,
       preHandler: [
         app.authenticate,

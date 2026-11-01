@@ -14,6 +14,7 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
 import { approveRunPending } from "../lib/review/run-level.js";
+import { isScopedToken } from "../lib/token-access.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
@@ -76,6 +77,7 @@ export async function registerRunLifecycleRoutes(
   app.post(
     "/runs/:id/complete",
     {
+      config: { tokenAccess: "sdk" },
       preHandler: [
         app.authenticate,
         requireProjectMember("write", {
@@ -189,6 +191,7 @@ export async function registerRunLifecycleRoutes(
   app.post(
     "/runs/:id/abort",
     {
+      config: { tokenAccess: "sdk" },
       preHandler: [
         app.authenticate,
         requireProjectMember("write", {
@@ -242,14 +245,18 @@ export async function registerRunLifecycleRoutes(
 
   // POST /runs/:id/approve — the SDK's `saveNewTests`. A thin wrapper over the
   // decision core (spec §5.7): approves every pending checkpoint of the run as
-  // one action, `source: "sdk"`, decided by the token's user. Nothing pending
-  // (e.g. an already-passed run) is a successful no-op, not an error; a run
-  // that isn't reviewable is refused with 409, as before. A run with an
-  // undecided step whose diff failed for good is refused with the same 409
-  // plus `reason: "diff_failed"`: retry that step's diff, then approve.
+  // one action, `source: "sdk"`, decided by the token's user. A scoped API
+  // token (`sdk`) approves only the checkpoints with no baseline yet (verdict
+  // `new`); a change against a baseline stays pending for a reviewer (ADR-064
+  // step B). Nothing pending (e.g. an already-passed run) is a successful
+  // no-op, not an error; a run that isn't reviewable is refused with 409, as
+  // before. A run with an undecided step whose diff failed for good is refused
+  // with the same 409 plus `reason: "diff_failed"`: retry that step's diff,
+  // then approve.
   app.post(
     "/runs/:id/approve",
     {
+      config: { tokenAccess: "sdk" },
       preHandler: [
         app.authenticate,
         requireProjectMember("write", {
@@ -279,7 +286,11 @@ export async function registerRunLifecycleRoutes(
               broadcaster: app.broadcaster,
               onCommit,
             },
-            { runId: params.data.id, source: "sdk" },
+            {
+              runId: params.data.id,
+              source: "sdk",
+              onlyNew: isScopedToken(actor),
+            },
           ),
         );
         // Sent after the scope committed (a getRun poll must not race it).

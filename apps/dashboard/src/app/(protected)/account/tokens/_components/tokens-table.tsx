@@ -5,6 +5,19 @@ import { useRouter } from "next/navigation";
 
 import { CreateTokenDialog } from "./create-token-dialog";
 import { DeleteTokenButton } from "./delete-token-button";
+import {
+  FALLBACK_TOKEN_POLICY,
+  relative,
+  type ProjectOption,
+  type TokenPolicy,
+  type TokenRow,
+} from "./token-grant";
+import {
+  ExpiryText,
+  LegacyTokensNotice,
+  ProjectText,
+  ScopeBadge,
+} from "./token-grant-badges";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -16,34 +29,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-export interface TokenRow {
-  id: string;
-  label: string;
-  createdAt: string | Date;
-  lastUsedAt: string | Date | null;
-}
+export type { TokenRow } from "./token-grant";
 
 interface TokensTableProps {
   initialTokens: TokenRow[];
+  projects?: ProjectOption[];
+  policy?: TokenPolicy;
 }
 
-function relative(date: string | Date | null): string {
-  if (!date) return "Never";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (Number.isNaN(d.getTime())) return "—";
-  const diffMs = Date.now() - d.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  return d.toLocaleDateString();
-}
-
-function EmptyTokens({ onCreated }: { onCreated: () => void }) {
+function EmptyTokens({ create }: { create: React.ReactNode }) {
   return (
     <div className="flex flex-1 items-center justify-center">
       <div className="mx-auto max-w-sm text-center">
@@ -55,22 +49,31 @@ function EmptyTokens({ onCreated }: { onCreated: () => void }) {
           Create a personal access token to authenticate the Furan SDK or CI
           uploads.
         </p>
-        <div className="mt-4">
-          <CreateTokenDialog onCreated={onCreated}>
-            <Button data-testid="create-token-button">
-              <Plus className="mr-1.5 h-4 w-4" />
-              Create token
-            </Button>
-          </CreateTokenDialog>
-        </div>
+        <div className="mt-4">{create}</div>
       </div>
     </div>
   );
 }
 
-export function TokensTable({ initialTokens }: TokensTableProps) {
+export function TokensTable({
+  initialTokens,
+  projects = [],
+  policy = FALLBACK_TOKEN_POLICY,
+}: TokensTableProps) {
   const router = useRouter();
   const tokens = initialTokens;
+  const create = (
+    <CreateTokenDialog
+      projects={projects}
+      policy={policy}
+      onCreated={() => router.refresh()}
+    >
+      <Button data-testid="create-token-button">
+        <Plus className="mr-1.5 h-4 w-4" />
+        Create token
+      </Button>
+    </CreateTokenDialog>
+  );
 
   return (
     <>
@@ -82,19 +85,13 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
               Personal access tokens
             </h1>
             <p className="mt-1 text-sm text-fg-muted">
-              Authenticate the Furan SDK or CI uploads. A token works on the
-              projects your account can access, but it can&apos;t manage tokens
-              or use admin features — sign in for those.
+              Authenticate the Furan SDK or CI uploads. A token works on one
+              project or on all your projects until it expires, and it
+              can&apos;t manage tokens or use admin features — sign in for
+              those.
             </p>
           </div>
-          {tokens.length > 0 && (
-            <CreateTokenDialog onCreated={() => router.refresh()}>
-              <Button data-testid="create-token-button">
-                <Plus className="mr-1.5 h-4 w-4" />
-                Create token
-              </Button>
-            </CreateTokenDialog>
-          )}
+          {tokens.length > 0 && create}
         </div>
       </header>
 
@@ -112,14 +109,18 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
           </p>
         </div>
 
+        <LegacyTokensNotice tokens={tokens} />
+
         {tokens.length === 0 ? (
-          <EmptyTokens onCreated={() => router.refresh()} />
+          <EmptyTokens create={create} />
         ) : (
           <Table data-testid="tokens-table">
             <TableHeader>
               <tr>
                 <TableHead>Label</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>Access</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Expires</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </tr>
@@ -132,11 +133,22 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-edge">
                         <KeyRound className="h-3.5 w-3.5 text-fg-muted" />
                       </div>
-                      <span className="font-medium text-fg">{t.label}</span>
+                      <div className="min-w-0">
+                        <div className="font-medium text-fg">{t.label}</div>
+                        <div className="text-xs tabular-nums text-fg-muted">
+                          Created {relative(t.createdAt)}
+                        </div>
+                      </div>
                     </div>
                   </TableCell>
-                  <TableCell className="tabular-nums text-fg-muted">
-                    {relative(t.createdAt)}
+                  <TableCell>
+                    <ScopeBadge token={t} />
+                  </TableCell>
+                  <TableCell>
+                    <ProjectText token={t} />
+                  </TableCell>
+                  <TableCell>
+                    <ExpiryText token={t} />
                   </TableCell>
                   <TableCell>
                     <span
@@ -148,6 +160,14 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
                     >
                       {relative(t.lastUsedAt)}
                     </span>
+                    {t.lastUsedAt && t.lastUsedIp && (
+                      <div
+                        className="font-mono text-2xs text-fg-muted"
+                        data-testid="token-last-ip"
+                      >
+                        from {t.lastUsedIp}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <DeleteTokenButton

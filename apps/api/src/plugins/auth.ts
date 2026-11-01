@@ -1,12 +1,17 @@
 import fastifyJwt from "@fastify/jwt";
-import type { UserRole } from "@furan/shared-types";
+import type { TokenScope, UserRole } from "@furan/shared-types";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
 import { recordAuthFailure } from "../lib/auth-metrics.js";
-import { sendError } from "../lib/errors.js";
+import { sendError, sendSessionRequired } from "../lib/errors.js";
 import { loadActiveUserByPat } from "../lib/load-active-user.js";
 import { resolveAuthUser } from "../lib/resolve-auth-user.js";
+import {
+  auditTokenDenied,
+  tokenRouteDenial,
+  type TokenRouteDenial as TokenRouteDenialReason,
+} from "../lib/token-access.js";
 import { isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
@@ -20,10 +25,18 @@ export type { UserRole };
  * a session JWT (Bearer header / dashboard cookie) or a `furan_pat_*` API
  * token (Bearer or the legacy `apiKey` header) — so gates can treat API
  * tokens differently (ADR-064: tokens never manage tokens or reach admin
- * surfaces). `tokenId` is the matched `tokens.id`, present only for a PAT.
+ * surfaces). A PAT carries the matched `tokens.id` and its grant: `scopes`
+ * and the bound `projectId` (null = the owner's member projects); see
+ * `lib/token-access.ts` for what they allow.
  */
 export type AuthedUser = { id: string; role: UserRole } & (
-  { via: "jwt" } | { via: "pat"; tokenId: string }
+  | { via: "jwt" }
+  | {
+      via: "pat";
+      tokenId: string;
+      scopes: readonly TokenScope[];
+      projectId: string | null;
+    }
 );
 
 declare module "fastify" {
@@ -67,13 +80,49 @@ export default fp(async (app) => {
           recordAuthFailure(app.telemetry.metrics, "invalid_pat");
           return sendError(reply, 401, "invalid_token");
         }
+        const denied = (reason: "expired" | TokenRouteDenialReason) =>
+          auditTokenDenied(
+            app.db,
+            {
+              userId: pat.id,
+              tokenId: pat.tokenId,
+              reason,
+              method: req.method,
+              route: req.routeOptions.url ?? req.url,
+            },
+            req.log,
+          );
+        if (pat.expired) {
+          recordAuthFailure(app.telemetry.metrics, "expired_pat");
+          await denied("expired");
+          return sendError(reply, 401, "token_expired");
+        }
+        // Scoped tokens use only the routes that opt in (ADR-064 step B).
+        const denial = tokenRouteDenial(
+          pat.scopes,
+          req.routeOptions.config.tokenAccess,
+        );
+        if (denial) {
+          recordAuthFailure(app.telemetry.metrics, "pat_out_of_scope");
+          await denied(denial);
+          return denial === "session_required"
+            ? sendSessionRequired(reply)
+            : sendError(
+                reply,
+                403,
+                "insufficient_scope",
+                "This API token's scope doesn't allow this request; use an `sdk` token",
+              );
+        }
         req.auth = {
           id: pat.id,
           role: pat.role,
           via: "pat",
           tokenId: pat.tokenId,
+          scopes: pat.scopes,
+          projectId: pat.projectId,
         };
-        await touchTokenLastUsed(app.db, pat.tokenId);
+        await touchTokenLastUsed(app.db, pat.tokenId, req.ip);
         return;
       }
 

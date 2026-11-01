@@ -3,6 +3,7 @@ import {
   paramsId,
   tokenCreateResponse,
   tokenListResponse,
+  tokenPolicyResponse,
 } from "../../routes/tokens.js";
 import { registry } from "../registry.js";
 import { errorResponseSchema } from "../schemas.js";
@@ -23,6 +24,10 @@ export function registerTokensPaths(): void {
         description: "Unauthenticated",
         content: { "application/json": { schema: errorResponseSchema } },
       },
+      403: {
+        description: "Called with an API token (`session_required`)",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
     },
   });
 
@@ -30,6 +35,8 @@ export function registerTokensPaths(): void {
     method: "post",
     path: "/account/tokens",
     summary: "Create a personal access token. Raw token is returned ONCE.",
+    description:
+      "New tokens default to scope `sdk`, every project you're a member of, and a 90-day lifetime (capped by FURAN_PAT_MAX_LIFETIME_DAYS).",
     tags: ["tokens"],
     security: [{ bearerAuth: [] }],
     request: {
@@ -42,11 +49,21 @@ export function registerTokensPaths(): void {
         content: { "application/json": { schema: tokenCreateResponse } },
       },
       400: {
-        description: "Invalid body",
+        description:
+          "Invalid body, or a lifetime the operator doesn't allow (`expiry_too_long`, `expiry_required`)",
         content: { "application/json": { schema: errorResponseSchema } },
       },
       401: {
         description: "Unauthenticated",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
+      403: {
+        description: "Called with an API token (`session_required`)",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
+      404: {
+        description:
+          "`projectId` names no project the caller can use (`project_not_found`)",
         content: { "application/json": { schema: errorResponseSchema } },
       },
     },
@@ -65,8 +82,35 @@ export function registerTokensPaths(): void {
         description: "Unauthenticated",
         content: { "application/json": { schema: errorResponseSchema } },
       },
+      403: {
+        description: "Called with an API token (`session_required`)",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
       404: {
         description: "Token not found or not owned by caller",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/account/token-policy",
+    summary: "The lifetimes a new personal access token may have",
+    tags: ["tokens"],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description:
+          "Lifetimes on offer, the default, and whether no-expiry is allowed",
+        content: { "application/json": { schema: tokenPolicyResponse } },
+      },
+      401: {
+        description: "Unauthenticated",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
+      403: {
+        description: "Called with an API token (`session_required`)",
         content: { "application/json": { schema: errorResponseSchema } },
       },
     },

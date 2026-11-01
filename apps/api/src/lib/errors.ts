@@ -29,8 +29,8 @@ export function sendError(
 /**
  * Error code for a request that needs a signed-in session but authenticated
  * with an API token (`furan_pat_*`) — token management and admin surfaces
- * (ADR-064 step A). REST sends it as a 403 envelope; tRPC as the FORBIDDEN
- * message.
+ * (ADR-064 step A), and for a scoped token every route that doesn't opt in
+ * (step B). REST sends it as a 403 envelope; tRPC as the FORBIDDEN message.
  */
 export const SESSION_REQUIRED = "session_required";
 
@@ -39,6 +39,6 @@ export function sendSessionRequired(reply: FastifyReply): FastifyReply {
     reply,
     403,
     SESSION_REQUIRED,
-    "API tokens can't manage tokens or use admin features; sign in (POST /auth/login) and use the session token",
+    "API tokens can't manage tokens, use admin features or call this endpoint; sign in (POST /auth/login) and use the session token",
   );
 }

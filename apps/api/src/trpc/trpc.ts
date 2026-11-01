@@ -1,13 +1,15 @@
 import { withUserScope, type DB } from "@furan/db";
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 
 import { createDeferredSink } from "../lib/deferred-sink.js";
+import { SESSION_REQUIRED } from "../lib/errors.js";
 import {
   procedureOutcome,
   recordPoolWait,
   recordProcedure,
 } from "../lib/request-metrics.js";
 import { ReviewRefusal } from "../lib/review/errors.js";
+import { auditTokenDenied, isScopedToken } from "../lib/token-access.js";
 
 import type { Context } from "./context.js";
 
@@ -153,9 +155,38 @@ const timeProcedure = t.middleware(async ({ ctx, path, type, next }) => {
 });
 
 /**
- * Base procedure every router builds from. Applies {@link timeProcedure}, then
- * {@link scopeToUser}, so the RLS identity is set before any auth/membership
- * middleware or resolver runs. Compose auth on top as before
- * (`publicProcedure.use(authed)` etc.).
+ * Turns away a scoped API token (`sdk` / `read`) from every procedure with
+ * FORBIDDEN `session_required` (ADR-064 step B): tRPC is the dashboard's API,
+ * and scoped tokens use the REST API only, where each route declares what it
+ * allows. A `legacy` token passes, keeping the step-A gates until it expires.
+ * The refusal is audited (`token.denied`, throttled per token).
  */
-export const publicProcedure = t.procedure.use(timeProcedure).use(scopeToUser);
+const refuseScopedTokens = t.middleware(async ({ ctx, path, type, next }) => {
+  const user = ctx.user;
+  if (user && isScopedToken(user)) {
+    await auditTokenDenied(
+      ctx.db,
+      {
+        userId: user.id,
+        tokenId: user.tokenId,
+        reason: "session_required",
+        method: type,
+        route: `/trpc/${path}`,
+      },
+      ctx.req.log,
+    );
+    throw new TRPCError({ code: "FORBIDDEN", message: SESSION_REQUIRED });
+  }
+  return next();
+});
+
+/**
+ * Base procedure every router builds from. Applies {@link timeProcedure},
+ * {@link refuseScopedTokens}, then {@link scopeToUser}, so the RLS identity is
+ * set before any auth/membership middleware or resolver runs. Compose auth on
+ * top as before (`publicProcedure.use(authed)` etc.).
+ */
+export const publicProcedure = t.procedure
+  .use(timeProcedure)
+  .use(refuseScopedTokens)
+  .use(scopeToUser);

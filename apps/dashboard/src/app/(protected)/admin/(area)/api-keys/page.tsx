@@ -2,15 +2,15 @@ import type { Metadata } from "next";
 
 import { ApiKeysPanel } from "./_components/api-keys-panel";
 
-import type { TokenRow } from "@/app/(protected)/account/tokens/_components/tokens-table";
-import { apiGet } from "@/lib/api-client";
+import { loadTokenPage } from "@/app/(protected)/account/tokens/_lib/load-token-page";
 
 export const metadata: Metadata = { title: "API Keys" };
 export const dynamic = "force-dynamic";
 
 export default async function ApiKeysPage() {
-  const { data } = await apiGet<TokenRow[]>("/account/tokens");
-  const tokens = Array.isArray(data) ? data : [];
+  const { tokens, projects, policy } = await loadTokenPage();
 
-  return <ApiKeysPanel initialTokens={tokens} />;
+  return (
+    <ApiKeysPanel initialTokens={tokens} projects={projects} policy={policy} />
+  );
 }

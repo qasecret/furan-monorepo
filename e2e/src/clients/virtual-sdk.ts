@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { loadSeed } from "../seed/load-seed.js";
+
 import type { ApiClient } from "./api-client.js";
 
 /**
@@ -129,11 +131,12 @@ export async function pollRunStatus(
  * with a verdict (a non-null `state`), or until `timeoutMs`. A multi-step run's
  * status alone is not proof its steps were all diffed: a step uploaded after an
  * earlier step's diff finished could leave the run looking settled. Reading the
- * steps themselves is.
+ * steps themselves is. `session` is a session JWT: tRPC refuses scoped API
+ * tokens (ADR-064 step B).
  */
 export async function waitForCheckpointVerdicts(
   api: ApiClient,
-  pat: string,
+  session: string,
   runId: string,
   checkpointIds: string[],
   timeoutMs = 30_000,
@@ -143,7 +146,7 @@ export async function waitForCheckpointVerdicts(
   while (Date.now() < deadline) {
     const { items } = await api.trpcQuery<{
       items: Array<{ id: string; state: string | null }>;
-    }>(pat, "runs.listCheckpoints", { runId });
+    }>(session, "runs.listCheckpoints", { runId });
     const diffed = new Set(
       items.filter((c) => c.state !== null).map((c) => c.id),
     );
@@ -282,7 +285,7 @@ export async function captureRun(
   // so the result reflects the settled run.
   await waitForCheckpointVerdicts(
     api,
-    input.pat,
+    loadSeed().bootstrapAdminJwt,
     run.runId,
     Object.values(checkpointIds),
   );

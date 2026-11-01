@@ -1,4 +1,5 @@
-import { eq, tokens, users, type DB } from "@furan/db";
+import { eq, sql, tokens, users, type DB } from "@furan/db";
+import { tokenScopeSchema, type TokenScope } from "@furan/shared-types";
 
 import type { UserRole } from "../plugins/auth.js";
 
@@ -37,22 +38,39 @@ export async function loadActiveUser(
   return { role: row.role, isActive: row.isActive };
 }
 
+/** A `furan_pat_*` token's owner and grant, as {@link loadActiveUserByPat} resolves it. */
+export interface PatOwner {
+  id: string;
+  role: UserRole;
+  tokenId: string;
+  scopes: TokenScope[];
+  /** The one project the token works on; null = the owner's member projects. */
+  projectId: string | null;
+  /** True once `expires_at` has passed (by the DB clock); the caller refuses it. */
+  expired: boolean;
+}
+
 /**
- * Resolve a `furan_pat_*` token to its CURRENT user (role + active state),
- * returning null when the token is unknown or the user is deactivated. Returns
- * the matched `tokenId` so the caller can update `last_used`. Single source of
- * truth for both PAT auth branches (REST hook + tRPC soft-auth) so they can't
- * drift from each other or from {@link loadActiveUser}.
+ * Resolve a `furan_pat_*` token to its CURRENT user (role + active state) and
+ * the token's grant (scopes, bound project, expiry), returning null when the
+ * token is unknown or the user is deactivated. An expired token still
+ * resolves, with `expired: true`, so the caller can answer `token_expired` and
+ * audit it. Single source of truth for both PAT auth branches (REST hook +
+ * tRPC soft-auth) so they can't drift from each other or from
+ * {@link loadActiveUser}.
  */
 export async function loadActiveUserByPat(
   db: DB,
   rawToken: string,
-): Promise<{ id: string; role: UserRole; tokenId: string } | null> {
+): Promise<PatOwner | null> {
   const hash = hashToken(rawToken);
   const rows = await db
     .select({
       tokenId: tokens.id,
       userId: tokens.userId,
+      scopes: tokens.scopes,
+      projectId: tokens.projectId,
+      expired: sql<boolean>`coalesce(${tokens.expiresAt} <= now(), false)`,
       role: users.role,
       isActive: users.isActive,
     })
@@ -62,5 +80,24 @@ export async function loadActiveUserByPat(
     .limit(1);
   const row = rows[0];
   if (!row || !row.isActive) return null;
-  return { id: row.userId, role: row.role, tokenId: row.tokenId };
+  return {
+    id: row.userId,
+    role: row.role,
+    tokenId: row.tokenId,
+    scopes: parseScopes(row.scopes),
+    projectId: row.projectId,
+    expired: row.expired,
+  };
+}
+
+/**
+ * The stored scopes, narrowed to the known set. `tokens_scopes_chk` already
+ * guarantees it; an unknown value is dropped rather than trusted, and a token
+ * left with none falls back to `read`, the narrowest scope.
+ */
+function parseScopes(stored: string[]): TokenScope[] {
+  const known = stored.filter(
+    (s): s is TokenScope => tokenScopeSchema.safeParse(s).success,
+  );
+  return known.length > 0 ? known : ["read"];
 }
