@@ -298,6 +298,13 @@ test.describe.serial("sdk: @furan/playwright fixture", () => {
     expect(await buildCount(projectId)).toBe(1);
   });
 
+  test("when only the ignored clocks change, every test passes", async () => {
+    // Same colour as the first run; the clocks (viewport and below-the-fold
+    // element shots) differ, and their locator ignore regions mask them.
+    const r = await playwright({});
+    expect(r.exitCode, r.all).toBe(0);
+  });
+
   test("a changed page fails its test with the review link", async () => {
     const r = await playwright({ FIXTURE_COLOR: "#ff2020" });
     expect(r.exitCode, r.all).toBe(1);
