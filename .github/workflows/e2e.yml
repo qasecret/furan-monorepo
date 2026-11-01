@@ -63,6 +63,10 @@ jobs:
       - name: Build images from HEAD
         run: pnpm --filter @furan/e2e e2e:images
 
+      # tests/sdk/js-client.spec.ts drives the built CLI and Playwright fixture.
+      - name: Build the JS client packages
+        run: pnpm turbo run build --filter=@furan/cli --filter=@furan/playwright
+
       # Orchestrator: compose up (S3) → wait health → seed → playwright → down.
       - name: Run E2E (S3 stack)
         run: pnpm --filter @furan/e2e e2e:s3

@@ -459,9 +459,15 @@ importers:
       '@axe-core/playwright':
         specifier: ^4.13.0
         version: 4.13.0(playwright-core@1.63.0)
+      '@furan/cli':
+        specifier: workspace:*
+        version: link:../packages/cli
       '@furan/eslint-config':
         specifier: workspace:*
         version: link:../packages/eslint-config
+      '@furan/playwright':
+        specifier: workspace:*
+        version: link:../packages/playwright
       '@furan/tsconfig':
         specifier: workspace:*
         version: link:../packages/tsconfig
