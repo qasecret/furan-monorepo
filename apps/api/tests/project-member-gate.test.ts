@@ -65,11 +65,11 @@ const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
 
 /** The scope settings, as the first statement of a procedure body reads them. */
-interface Scope {
+type Scope = {
   user_id: string | null;
   user_role: string | null;
   project_id: string | null;
-}
+};
 
 /** Marks the body's first statement in the wire log. */
 const BODY_MARK = "gate-probe:body";
@@ -245,11 +245,13 @@ function expectedTable(
   table: Record<CallerName, Row>,
   bodyOnMissing: string,
 ): Record<CallerName, Row> {
+  const answer = (cell: string) => (cell === BODY ? bodyOnMissing : cell);
   return Object.fromEntries(
-    CALLER_NAMES.map((name) => [
-      name,
-      table[name].map((cell) => (cell === BODY ? bodyOnMissing : cell)),
-    ]),
+    CALLER_NAMES.map((name) => {
+      const [inP, inQ, missing] = table[name];
+      const row: Row = [answer(inP), answer(inQ), answer(missing)];
+      return [name, row];
+    }),
   ) as Record<CallerName, Row>;
 }
 
