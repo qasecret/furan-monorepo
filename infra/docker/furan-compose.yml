@@ -255,6 +255,9 @@ services:
       REDIS_URL: redis://redis:6379
       INTEGRATIONS_PORT: 3400
       HEALTH_PORT: 3300
+      # Public dashboard origin; links the PR comment and commit status to the
+      # run and build pages. Unset = no links.
+      DASHBOARD_BASE_URL: ${DASHBOARD_BASE_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     restart: unless-stopped
 
