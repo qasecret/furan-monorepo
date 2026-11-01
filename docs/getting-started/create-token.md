@@ -25,7 +25,8 @@ Where you create it depends on your role. The dialog is the same.
 Then:
 
 1. Enter a **Label** that says where the token will be used, for example
-   `CI - main`, and click **Create**.
+   `CI - main`. Keep **Access: SDK & CI**, pick the project this job uploads
+   to under **Project**, keep the 90-day expiry, and click **Create**.
 2. Click **Copy**. The token is shown **once**: Furan stores only its hash, so
    nobody can show it to you again.
 3. Store it somewhere safe, typically your CI's secret store, as
@@ -33,8 +34,11 @@ Then:
 4. Tick "I've stored this token securely and understand it won't be shown
    again." and click **Close**.
 
-A token works on the projects its account can access. It can't create
-tokens or use admin features: those need a signed-in session.
+A token works on the project you bound it to (with **All my projects**, on
+the projects its account is a member of) until it expires. It can save the
+first baseline of a new test but never approves a change against an existing
+baseline, and it can't create tokens or use admin features: those need a
+signed-in session.
 
 ## You should see
 

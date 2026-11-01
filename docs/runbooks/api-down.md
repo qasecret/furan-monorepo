@@ -133,7 +133,7 @@ problem is at a layer above the api:
 - **`NEXT_PUBLIC_API_URL` mismatch** — the dashboard image is built with
   `NEXT_PUBLIC_API_URL` inlined at compile time (Next.js semantics). If
   the browser is trying to reach an old hostname, rebuild/repull the
-  dashboard image with the right value. See `docs/install/quickstart.md`
+  dashboard image with the right value. See `docs/maintainers/development.md`
   §6.
 
 - **`JWT_SECRET` rotation drift** — the api validates JWTs with whatever

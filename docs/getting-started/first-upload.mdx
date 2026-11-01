@@ -18,7 +18,9 @@ your project. Each screenshot is a **step**; the steps of one test run form a
 - The project ID from [step 2](create-project.md) and the token from
   [step 3](create-token.md).
 - A JUnit 5 test project (Gradle or Maven) for the SDK, or just `curl` for the
-  REST tab.
+  REST tab. From JavaScript or TypeScript, without a JVM, use `furan upload`
+  or the Playwright fixture instead: see the
+  [JavaScript / TypeScript guide](../integrations/javascript.md).
 
 Set three environment variables where your tests run (as CI secrets later):
 
@@ -168,6 +170,8 @@ curl -s -X POST $API/runs/$RUN/screenshots/base64 -H "Authorization: Bearer $PAT
 curl -s -X POST $API/runs/$RUN/complete -H "Authorization: Bearer $PAT" \
   -H 'Content-Type: application/json' -d '{}'
 ```
+
+More in [REST API upload](../sdk/rest.md).
 
 </TabItem>
 </Tabs>

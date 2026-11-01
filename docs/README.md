@@ -26,12 +26,19 @@ one-file install to its first reviewed diff in seven short pages:
 
 ## Install and operate
 
-- [Production install and upgrades](runbooks/production-deploy.md)
+- [One-file install (evaluation)](install/one-file.md)
+- [Production install (Docker Compose)](install/compose.md)
+- [Production deploy and upgrades](runbooks/production-deploy.md)
 - [HTTPS on a domain](runbooks/reverse-proxy-tls.md)
 - [Storage backends](runbooks/storage-backends.md)
 - [Backup and restore](runbooks/restore-from-backup.md)
 - [Upgrade notes: per-step review](runbooks/review-model-upgrade.md)
 - [Row-level security](runbooks/rls-enable.md)
+
+## Send screenshots
+
+- [Kotlin SDK](sdk/kotlin.mdx): Selenium, Playwright and Appium
+- [REST API upload](sdk/rest.md)
 
 ## CI
 
@@ -39,5 +46,6 @@ one-file install to its first reviewed diff in seven short pages:
 
 ## Troubleshooting
 
+- [First-install problems](troubleshooting/first-install.md)
 - [API down](runbooks/api-down.md)
 - [Diff queue backlog](runbooks/diff-queue-backlog.md)

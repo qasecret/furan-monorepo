@@ -27,6 +27,8 @@ const sidebars: SidebarsConfig = {
       label: "Install and operate",
       collapsed: false,
       items: [
+        "install/one-file",
+        "install/compose",
         "runbooks/production-deploy",
         "runbooks/reverse-proxy-tls",
         "runbooks/storage-backends",
@@ -34,6 +36,12 @@ const sidebars: SidebarsConfig = {
         "runbooks/review-model-upgrade",
         "runbooks/rls-enable",
       ],
+    },
+    {
+      type: "category",
+      label: "Send screenshots",
+      collapsed: false,
+      items: ["sdk/kotlin", "sdk/rest"],
     },
     {
       type: "category",
@@ -45,7 +53,11 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Troubleshooting",
       collapsed: false,
-      items: ["runbooks/api-down", "runbooks/diff-queue-backlog"],
+      items: [
+        "troubleshooting/first-install",
+        "runbooks/api-down",
+        "runbooks/diff-queue-backlog",
+      ],
     },
   ],
 };

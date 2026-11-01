@@ -57,251 +57,25 @@ docker compose -f furan-compose.yml up -d
 # open http://localhost:8080  →  sign in as  admin@furan.local / FuranAdmin123!
 ```
 
-nginx serves the whole thing on `:8080`; migrations self-apply from the image. This ships **default credentials and a default JWT secret** for zero-friction evaluation — before anything network-reachable, override `FURAN_BOOTSTRAP_ADMIN_PASSWORD`, `JWT_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` (export them before `up`), or keep the defaults off the network with `FURAN_BIND=127.0.0.1`. For a hardened, secret-generating install use [`./deploy.sh`](deploy.sh) or the 10-minute walkthrough below.
+nginx serves the whole thing on `:8080`; migrations self-apply from the image. This ships **default credentials and a default JWT secret** for zero-friction evaluation — before anything network-reachable, override `FURAN_BOOTSTRAP_ADMIN_PASSWORD`, `JWT_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` (export them before `up`), or keep the defaults off the network with `FURAN_BIND=127.0.0.1`. For a hardened, secret-generating install use [`./deploy.sh`](deploy.sh) or the [production install](docs/install/compose.md).
 
 > **v1.1.29+** is single-origin: nginx on `:8080` serves both the UI and the API, so the dashboard works from **any** browser (browse `http://<host>:8080`), not just the Docker host. Over plain http the password and the session cross the network unencrypted, so beyond a trusted network put HTTPS in front ([`reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md)).
 
-## Install in 10 minutes
-
-Time from a freshly-provisioned host to "logged into the dashboard": about 10 minutes. The walkthrough below is the **production-shaped** install (Docker Compose, all services from published images). For a from-source development setup see [`docs/install/quickstart.md`](docs/install/quickstart.md).
-
-### Prerequisites
-
-| Tool      | Version             | Why                            |
-| --------- | ------------------- | ------------------------------ |
-| Docker    | 24+ with Compose v2 | Runs all services + data plane |
-| Disk      | ~10 GB free         | Postgres + MinIO data          |
-| RAM       | ~4 GB free          | All services together          |
-| `openssl` | any recent          | Generates secrets              |
-
-Tested on **Linux x86_64**, **macOS arm64**, and **macOS x86_64**.
-
-### Step 1 — Clone and configure
-
-```bash
-git clone https://github.com/qasecret/furan-monorepo
-cd furan-monorepo
-cp .env.example .env
-```
-
-Open `.env` in your editor and replace **five** placeholder values — three secrets plus your first admin's login. The example ships them as `change-me…`, and the api **fails closed and refuses to boot** until every one is replaced.
-
-```bash
-# Generate each value and paste it into the matching key in .env:
-
-# JWT_SECRET — minimum 32 chars, the api fails closed if shorter
-openssl rand -hex 32
-
-# POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — any high-entropy value
-openssl rand -base64 24
-
-# FURAN_BOOTSTRAP_ADMIN_PASSWORD — your first admin's password
-openssl rand -hex 24
-```
-
-Required keys in `.env` (the api rejects the `change-me` placeholders for all of them):
-
-| Key                              | Purpose                                                 |
-| -------------------------------- | ------------------------------------------------------- |
-| `JWT_SECRET`                     | Signs dashboard session tokens. **Must be ≥32 chars.**  |
-| `POSTGRES_PASSWORD`              | Database password — used by every backend service.      |
-| `MINIO_ROOT_PASSWORD`            | Object-storage password for screenshot artifacts.       |
-| `FURAN_BOOTSTRAP_ADMIN_EMAIL`    | Your first admin's login email — you sign in with this. |
-| `FURAN_BOOTSTRAP_ADMIN_PASSWORD` | Your first admin's password (seeded on first boot).     |
-
-The api seeds that admin automatically the first time it boots against an empty `users` table. The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan`, `MINIO_BUCKET=furan` are safe to keep.
-
-> **Deploying on a domain (not `localhost`)?** The published dashboard image bakes `http://localhost:3000` as the browser's API URL, so client-side features (the diff viewer, live updates) only work for a viewer on the Docker host. A real HTTPS deployment behind `furan.example.com` needs a reverse proxy **and** a dashboard rebuilt with your public API URL — see [`docs/runbooks/reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md). The steps below assume `localhost`.
-
-### Step 2 — Start the full stack
-
-```bash
-docker compose --env-file .env -f infra/docker/compose.yml up -d
-```
-
-`--env-file .env` is required because Compose's project directory defaults to the directory of the first `-f` file (`infra/docker/`), so it would otherwise miss the `.env` you just edited at the repo root.
-
-This pulls and starts eight long-running services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
-
-> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.33`) or use `--mode from-head`.
-
-Wait ~30 seconds for healthchecks to settle, then verify everything is up:
-
-```bash
-docker compose --env-file .env -f infra/docker/compose.yml ps
-```
-
-Every long-running service should report `running (healthy)`. The `minio-perms`, `minio-init` and `migrate` containers will show `exited (0)` — that's intentional; they're one-shots (MinIO volume ownership, bucket creation, and schema migration) that the app services wait on before starting.
-
-### Step 3 — Sign in
-
-Browse to **<http://localhost:3001>** and sign in with the credentials you set in `FURAN_BOOTSTRAP_ADMIN_EMAIL` / `FURAN_BOOTSTRAP_ADMIN_PASSWORD` in Step 1. The API seeded that admin automatically on first boot when it saw an empty users table.
-
-### Step 4 — Create your first project
-
-1. From the empty `/projects` page, click **Create project**. Name it after your app; the main branch defaults to `main`.
-2. The project lands at `/projects/<projectId>` — bookmark this URL for the dashboard.
-
-### Step 5 — Mint a personal access token (PAT)
-
-1. Click your avatar → **Tokens**, or browse to **<http://localhost:3001/account/tokens>** (admins land on **Admin → API Keys**).
-2. Click **Create**, label it (e.g. `CI - main`), and keep the defaults unless you need otherwise:
-   - **Access: SDK & CI** — uploads runs and reads results. It can save the first baseline of a new test (`saveNewTests`), but it never approves a change against an existing baseline; that stays with a reviewer. Pick **Read-only** for a job that only reads results.
-   - **Project:** the project this job uploads to. **All my projects** covers every project you're a member of; even an admin's token has no access beyond that unless it is bound to a project.
-   - **Expires after:** 90 days by default (7 days to 1 year). The operator can lower the cap with `FURAN_PAT_MAX_LIFETIME_DAYS`, or set it to `0` to allow tokens that never expire.
-3. **Copy the raw token immediately** — it is shown once. The database only stores the SHA-256 hash; there is no recovery flow. If you lose it, delete and mint a new one.
-
-The PAT has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts. A token can't manage tokens, call admin endpoints or use the dashboard's API; those need a signed-in session. The token list shows each token's access, project, expiry, and when and from which address it was last used. Mint a replacement before a token expires, update the CI secret, then delete the old one.
-
-> **Upgrading from v1.1.32 or earlier:** tokens minted before scopes existed become **Legacy** tokens. They keep working as before (every project you can reach, any approve) but expire 90 days after the upgrade; the dashboard shows the date. Replace them with scoped tokens before then.
-
-You now have everything needed to send your first snapshot.
-
-### Adding more admins or resetting a password
-
-After the bootstrap admin exists, use the `seed-admin` CLI to add more admins or the `reset-password` CLI to recover an account.
-
-Add another admin:
-
-```bash
-docker compose --env-file .env -f infra/docker/compose.yml exec api \
-  node dist/cli/seed-admin.js \
-  --email another@example.com \
-  --password '<pick-a-strong-passphrase>'
-```
-
-Reset a password:
-
-```bash
-docker compose --env-file .env -f infra/docker/compose.yml exec api \
-  node dist/cli/reset-password.js \
-  --email someone@example.com
-```
-
-The CLI prompts for the new password and prints nothing on success.
-
-## Send your first snapshot
-
-The fastest path is from a JUnit 5 + Selenium test using the Kotlin SDK. Copy-paste-runnable examples live under [`packages/sdk-kotlin/examples`](packages/sdk-kotlin/examples) — one each for `sdk-selenium-junit5`, `sdk-playwright-junit5`, and `sdk-appium-junit5`.
-
-Add Furan as a test dependency (swap `furan-selenium` for `furan-playwright` or `furan-appium` to match your driver):
-
-```kotlin
-// build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:4.2.0")
-```
-
-In your test:
-
-```kotlin
-import io.furan.sdk.FuranConfig
-import io.furan.sdk.selenium.Furan
-import org.junit.jupiter.api.Test
-import org.openqa.selenium.chrome.ChromeDriver
-
-class CheckoutTest {
-    @Test
-    fun `checkout page renders correctly`() {
-        val driver = ChromeDriver()
-        Furan.use(FuranConfig.fromEnv(), driver, "checkout-page") { furan ->
-            driver.get("https://app.example.com/checkout")
-            furan.snapshot("checkout-page")
-        }
-        driver.quit()
-    }
-}
-```
-
-See [`packages/sdk-kotlin/README.md`](packages/sdk-kotlin/README.md) for the full SDK reference, including `snapshotAndAwait` for synchronous assertion-style tests, the `@FuranTest` JUnit 5 annotation, ignore regions, and the v2 runtime architecture.
-
-**From JavaScript / TypeScript** (no JVM): upload a folder of PNGs, where each subfolder becomes a test,
-
-```bash
-npm install --save-dev @furan/cli
-npx furan upload screenshots/
-```
-
-or check from inside a Playwright test:
-
-```ts
-import { test } from "@furan/playwright";
-
-test("checkout page", async ({ page, furan }) => {
-  await page.goto("https://app.example.com/checkout");
-  await furan.check("checkout-page");
-});
-```
-
-[`docs/integrations/javascript.md`](docs/integrations/javascript.md) covers both, Cypress, and the client library.
-
-Set three environment variables (locally for development, as CI secrets in production):
-
-```bash
-export FURAN_API_URL=http://localhost:3000          # or your deployed host
-export FURAN_API_TOKEN=furan_pat_<paste-from-step-5>
-export FURAN_PROJECT_ID=<paste-from-step-4>
-```
-
-Run the test. Furan will:
-
-1. Capture a PNG + per-element bbox map of the page.
-2. Upload to the API → enqueue capture + diff jobs.
-3. Compare against the project's baseline for this `(test name, branch, browser, viewport, OS/device)` identity. The first run has no baseline yet, so it's recorded as **New** for you to approve as the baseline — Furan does **not** auto-seed a baseline by default (enable auto-seed per project if you'd rather the first capture become the baseline automatically).
-4. Surface the run in the dashboard at `/projects/<projectId>` with status **New** (no baseline yet) or, once a baseline exists, **Passed** / **Unresolved** (a diff awaiting review) on subsequent runs.
-
-Open the run, click into the diff viewer, and you're looking at your first Furan diff.
-
-## Wire into CI (GitHub Actions)
-
-Copy [`docs/integrations/.examples/visual-regression.yml`](docs/integrations/.examples/visual-regression.yml) into `.github/workflows/` of your test repo, then set two repository secrets:
-
-| Secret            | Value                                                    |
-| ----------------- | -------------------------------------------------------- |
-| `FURAN_API_URL`   | Your Furan deployment URL (e.g. `https://furan.acme.io`) |
-| `FURAN_API_TOKEN` | The `furan_pat_*` from install step 5                    |
-
-The reference workflow runs your test suite, uploads diffs, posts a sticky PR comment, and updates the `furan/baselines` status check on every push. The full setup including the GitHub App and Slack webhook integration is documented in [`docs/integrations/github-actions.md`](docs/integrations/github-actions.md).
-
-Other CI systems and the GitHub App have their own guides in [`docs/integrations/`](docs/integrations/):
-
-- [`github-actions.md`](docs/integrations/github-actions.md) — GitHub Actions workflow with branch baselines
-- [`jenkins.md`](docs/integrations/jenkins.md) — Jenkins Declarative Pipeline, parallel stages in one build
-- [`gitlab-ci.md`](docs/integrations/gitlab-ci.md) — GitLab CI/CD with merge request baselines and `parallel:matrix`
-- [`github-app.md`](docs/integrations/github-app.md) — create, configure and verify the GitHub App
-
-A JavaScript project uses the one-step `furan upload` Action instead (`uses: qasecret/furan-monorepo/packages/cli@cli/v<version>`); see [its section](docs/integrations/github-actions.md#javascript--typescript-the-furan-upload-action) of the same page.
-
-## Direct image pulls
-
-If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
-
-```bash
-docker pull qasecret/furan-api:v1.1.33
-docker pull qasecret/furan-dashboard:v1.1.33
-docker pull qasecret/furan-capture-worker:v1.1.33
-docker pull qasecret/furan-diff-worker:v1.1.33
-docker pull qasecret/furan-integrations:v1.1.33
-```
-
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.33`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.33`), and ships with an SBOM artifact.
-
-## Common first-install problems
-
-**The dashboard shows "Cannot connect to API".** The browser is loading the dashboard but the API host isn't reachable from your browser. Check that `NEXT_PUBLIC_API_URL` in `.env` matches where you're actually serving the API — for the default Compose install that's `http://localhost:3000`.
-
-**`docker compose ... up -d` fails with port conflicts.** The default Compose stack binds ports `3000` (api), `3001` (dashboard), `5432` (postgres), `6379` (redis), and `9000` / `9001` (minio). If you already have something on those ports, either stop it or edit the port mappings in `infra/docker/compose.yml`.
-
-**API exits at boot with `FURAN_BOOTSTRAP_ADMIN_EMAIL must be replaced from .env.example placeholder` (or the same for `_PASSWORD`).** You forgot to edit the two new keys at the top of `.env`. Either replace `change-me` / `change-me-run: openssl rand -hex 24` with real values (the API will then seed a first admin) — or remove both lines entirely and seed via the `seed-admin` CLI (see "Adding more admins or resetting a password" above).
-
-**API exits at boot with `JWT_SECRET must be ≥32 chars`.** Generate a new one with `openssl rand -hex 32` and restart the api container.
-
-**Screenshots upload but the diff viewer is empty.** The diff worker may be down or stuck. Check `docker compose ... ps` for `diff-worker` health, and `docker compose ... logs diff-worker` for the last error. The [`docs/runbooks/api-down.md`](docs/runbooks/api-down.md) triage tree covers worker-stuck symptoms as well.
-
-**SDK upload fails with `401 unauthorized`.** Most likely cause: the PAT wasn't copied correctly, or it's been deleted. Mint a new one from `/account/tokens`. `401 token_expired` means the token's lifetime is over: mint a replacement.
-
-**SDK call fails with `403`.** The `code` says why: `token_project_mismatch` (the token is bound to another project — check `FURAN_PROJECT_ID`), `not_a_project_member` (an unbound token works only on projects its owner is a member of), `insufficient_scope` (a read-only token tried to upload), or `session_required` (tokens can't call that endpoint; sign in instead).
-
-**`furan upload` exits 1, 2 or 3.** 1: a screenshot needs review (open the link in the summary). 2: bad input or configuration, so nothing was sent (the message names the file or variable). 3: no verdict: the api was unreachable or refused the request, or the wait timed out (`--timeout`). `furan upload --dry-run` shows the resolved settings without sending anything; `response was not JSON` means `FURAN_API_URL` points at the dashboard instead of the api (with the one-file install the api is under `/api`).
+## Documentation
+
+Everything else (installing for production, sending screenshots, approving
+baselines, CI, operations) lives in the **documentation portal**: published at
+<https://qasecret.github.io/furan-monorepo/> with each release, served at
+`/docs` on your own install (for example `http://localhost:8080/docs`) so it
+matches the version you run, and written in [`docs/`](docs/README.md) here.
+
+- [Getting started](docs/getting-started/install.md): from the one-file install to your first reviewed diff, in seven short pages.
+- [Production install (Docker Compose)](docs/install/compose.md), and the [production deploy runbook](docs/runbooks/production-deploy.md) for upgrades and image ↔ migration lockstep.
+- [Kotlin SDK](docs/sdk/kotlin.mdx) (Selenium, Playwright, Appium), [JavaScript / TypeScript](docs/integrations/javascript.md) (`furan upload`, the Playwright fixture, the client) and [REST API upload](docs/sdk/rest.md).
+- CI: [GitHub Actions](docs/integrations/github-actions.md) (PR comments and a `furan/baselines` status check), [Jenkins](docs/integrations/jenkins.md), [GitLab CI](docs/integrations/gitlab-ci.md) and the [GitHub App](docs/integrations/github-app.md).
+- [First-install problems](docs/troubleshooting/first-install.md) and the operations runbooks: [HTTPS on a domain](docs/runbooks/reverse-proxy-tls.md), [storage backends](docs/runbooks/storage-backends.md), [backup and restore](docs/runbooks/restore-from-backup.md), [API down](docs/runbooks/api-down.md).
+
+Working on Furan itself? See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the [development setup](docs/maintainers/development.md).
 
 ## Repository layout
 
@@ -312,7 +86,8 @@ furan-monorepo/
 │   ├── dashboard/        Next.js 15 + React 19 + pixi.js diff viewer
 │   ├── capture-worker/   Playwright + sharp; BullMQ consumer
 │   ├── diff-worker/      diff-engine consumer (BullMQ)
-│   └── integrations/     GitHub App + Slack webhook
+│   ├── integrations/     GitHub App + Slack webhook
+│   └── docs/             Docusaurus documentation portal (served at /docs)
 ├── packages/
 │   ├── client/           @furan/client — JS/TS REST client (npm)
 │   ├── cli/              @furan/cli — `furan upload` + the GitHub Action (npm)
@@ -326,21 +101,8 @@ furan-monorepo/
 │   ├── telemetry/        pino + OpenTelemetry + prom-client
 │   └── shared-types/     Zod schemas shared across apps
 ├── infra/docker/         compose.yml + dev overlay + backup sidecar
-└── docs/                 install/, runbooks/, integrations/
+└── docs/                 portal content: getting-started/, install/, sdk/, runbooks/, …
 ```
-
-## Runbooks
-
-Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
-
-- [`production-deploy.md`](docs/runbooks/production-deploy.md) — the full Compose install, incl. image ↔ migration lockstep
-- [`reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md) — expose the stack on a domain with HTTPS
-- [`storage-backends.md`](docs/runbooks/storage-backends.md) — S3/MinIO vs HDD storage
-- [`api-down.md`](docs/runbooks/api-down.md) — first-call triage decision tree
-- [`restore-from-backup.md`](docs/runbooks/restore-from-backup.md) — backup + restore lifecycle
-- [`migration-deploy-order.md`](docs/maintainers/migration-deploy-order.md) — schema-additive-first deploy ordering
-- [`maven-central-publish.md`](docs/maintainers/maven-central-publish.md) — Kotlin SDK release flow
-- [`npm-publish.md`](docs/maintainers/npm-publish.md) — JS packages release flow
 
 ## Status and roadmap
 

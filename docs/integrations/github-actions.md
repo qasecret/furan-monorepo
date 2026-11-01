@@ -3,7 +3,7 @@
 Run the Furan Selenium SDK from GitHub Actions, get baselines reviewed via a
 sticky PR comment and a `furan/baselines` status check.
 
-Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](../install/quickstart.md))
+Assumes a self-hosted Furan deployment (see [Getting started](../getting-started/install.md))
 and a Furan project already created. Repository-to-project mapping is wired by
 the GitHub App + a one-time admin-UI link (see step 2 below).
 

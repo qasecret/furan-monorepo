@@ -79,6 +79,10 @@ another machine) and you get the Furan sign-in page.
   dashboard's origin.
 - **A service keeps restarting:** `docker compose -f furan-compose.yml logs <service>`
   shows why. For the API, see [API down](../runbooks/api-down.md).
+- **More install problems:** see [First-install problems](../troubleshooting/first-install.md).
+
+For a production install with generated secrets, see
+[Production install](../install/compose.md).
 
 ---
 

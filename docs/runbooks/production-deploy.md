@@ -5,7 +5,7 @@
 > **Scope:** the `docker compose -f infra/docker/compose.yml up -d` install
 > path — data plane (Postgres + Redis + MinIO) **and** the five app services,
 > all from pre-built images. This is the path users run; it is **not** the
-> `pnpm dev` host-process flow (see [`docs/install/quickstart.md`](../install/quickstart.md)
+> `pnpm dev` host-process flow (see the [development setup](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/development.md)
 > for that).
 
 > **Latest release: `v1.1.33`** — the five app images are pinned to it in
@@ -217,7 +217,7 @@ and check `docker logs docker-api-1` for a `column ... does not exist` error.
 
 > **What §4 does and does not prove.** These checks confirm the **API plane** is
 > fully functional — which is the primary ingestion path (SDK / CI / PAT / curl,
-> per [install/quickstart.md §11](../install/quickstart.md#11-first-capture--first-diff)).
+> per [REST API upload](../sdk/rest.md)).
 > They do **not** exercise the dashboard **UI login**. On a plain `http://localhost`
 > deploy of the **published** images, the dashboard renders (`/login` → 200) but
 > **you cannot sign in through the browser**: login is a Next.js Server Action that
@@ -266,7 +266,7 @@ docker compose -p docker ... down -v --remove-orphans
 ## 7. References
 
 - [reverse-proxy-tls.md](reverse-proxy-tls.md) — expose the stack on a domain with HTTPS (the dashboard-URL constraint + a worked TLS proxy)
-- [install/quickstart.md](../install/quickstart.md) — dev (`pnpm dev`) path + first-capture walkthrough
+- [Development setup](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/development.md) — dev (`pnpm dev`) path; first capture: [REST API upload](../sdk/rest.md)
 - [migration-deploy-order.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md) — schema-narrowing deploys
 - [server-reads-upgrade.md](server-reads-upgrade.md) and [review-model-upgrade.md](review-model-upgrade.md) — release-specific upgrade steps (§3, "Upgrading an existing install")
 - [storage-backends.md](storage-backends.md) — S3 vs HDD
