@@ -38,14 +38,22 @@ pnpm turbo run build typecheck lint test --filter=@furan/client --filter=@furan/
 npm login            # with 2FA
 for pkg in client playwright cli; do
   tarball="$(cd "packages/$pkg" && pnpm pack --pack-destination /tmp/furan-pkgs | tail -1)"
-  npm publish "$tarball" --access public
+  npm publish "$tarball" --access public --provenance=false
 done
 ```
 
 (`pnpm pack` rewrites the `workspace:^` dependency on `@furan/client` to
 `^<version>`; `npm publish <tarball>` then uploads exactly what was packed.
-A hand-published first version has no provenance attestation; every later one
+`--provenance=false` is needed here because the packages set
+`publishConfig.provenance`, which npm can only honour inside CI. A
+hand-published first version has no provenance attestation; every later one
 does.)
+
+The release PR's merge also starts `publish-npm.yml` for that first version.
+That run **fails** at the publish step (the packages don't exist on npm yet,
+so no trusted publisher can be attached); this is expected. Publish by hand as
+above, add the trusted publishers (step 3), then re-run the workflow if you
+want it green: it skips the versions that are already on npm.
 
 ### 3. Add the trusted publisher to each package
 

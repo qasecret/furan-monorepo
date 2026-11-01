@@ -213,7 +213,7 @@ with.
 - run: npx playwright test # or: npx cypress run, …
 - uses: qasecret/furan-monorepo/packages/cli@cli/v0.1.0
   with:
-    path: screenshots # one file, folder or glob per line
+    path: screenshots # a folder (recommended), file or glob, one per line
     api-url: ${{ secrets.FURAN_API_URL }}
     token: ${{ secrets.FURAN_API_TOKEN }}
     project-id: ${{ secrets.FURAN_PROJECT_ID }}
@@ -230,6 +230,10 @@ with.
 - The job summary gets a table of tests with review links, and the step
   outputs `build-id`, `build-url` and `status`
   (`passed` / `new` / `failed` / `error` / `uploaded`).
+- Prefer folders in `path`: each subfolder becomes a test and each step keeps
+  its folder in its name. A `**/*.png` glob passes files, and files from
+  different folders with the same name would share a baseline, so the CLI
+  refuses them.
 - Other inputs: `test`, `ignore` (one `x,y,width,height` per line),
   `match-level`, `browser`, `wait`, `timeout`, `version`, and `args` for any
   other `furan upload` flag, one per line. The connection inputs may be left

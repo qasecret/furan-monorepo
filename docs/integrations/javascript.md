@@ -90,8 +90,14 @@ screenshots/                     furan upload screenshots/
 
 A file you pass directly uses its own folder: `furan upload shots/*.png` puts
 `shots/home.png` in test `shots` as step `home`. `--test smoke` puts every
-step into one test named `smoke`. Two screenshots that map to the same step of
-one test are refused before anything is sent.
+step into one test named `smoke`.
+
+Two screenshots that would get the same step name **and** viewport anywhere in
+one upload are refused before anything is sent, because they would share one
+baseline. That happens with files from different folders that share a name
+(`furan upload light/home.png dark/home.png`, or a `**/*.png` glob): pass
+their parent folder instead (`furan upload shots/`), so each step keeps its
+folder in its name. The same file reached twice is uploaded once.
 
 The **viewport** label is each PNG's size (`--viewport 1280x720` sets one for
 all); the **browser** label is `image` (`--browser chrome` to change it). Both
@@ -188,9 +194,11 @@ test("adds an item", async ({ page, furan }) => {
 ```
 
 - Each Playwright test that calls `furan.check` becomes one Furan test, named
-  by its title path (`cart.spec.ts › adds an item`). Its steps are named
-  `<title path> › <name>`, so two tests that both check `"home"` keep separate
-  baselines.
+  by its project (when it has a name) and title path
+  (`chromium › cart.spec.ts › adds an item`). Its steps are named
+  `<that name> › <check name>`, so two tests that both check `"home"`, or two
+  projects that share a browser (light/dark themes, logged-in/out), keep
+  separate baselines. Renaming a project, file or test starts new baselines.
 - When the test ends, the fixture waits for the verdict (adding the wait to
   the test's timeout). A changed screenshot **fails the test** with the steps
   and the review link; a first run with no baseline passes with a warning
@@ -204,7 +212,9 @@ test("adds an item", async ({ page, furan }) => {
   label is the page's viewport size.
 
 **One batch per run.** In CI every worker joins the pipeline's batch on its
-own. For local runs, add the global setup so all workers share one batch:
+own (a worker that Playwright restarts after a failed test reuses it without
+asking the api again). For local runs, add the global setup so all workers
+share one batch:
 
 ```ts
 // playwright.config.ts
