@@ -1796,6 +1796,10 @@
                     "format": "uuid",
                     "type": "string"
                   },
+                  "commitSha": {
+                    "pattern": "^[0-9a-fA-F]{7,64}$",
+                    "type": "string"
+                  },
                   "name": {
                     "maxLength": 255,
                     "minLength": 1,
@@ -1806,8 +1810,17 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "prNumber": {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
                   "projectId": {
                     "format": "uuid",
+                    "type": "string"
+                  },
+                  "repo": {
+                    "pattern": "^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$",
                     "type": "string"
                   }
                 },
