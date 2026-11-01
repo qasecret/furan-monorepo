@@ -13,11 +13,36 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
       - name: Install Chrome
         uses: browser-actions/setup-chrome@v1
+      # FURAN_BUILD_ID must be a Furan build UUID, not a CI id: the SDK uses it
+      # as-is and POST /runs rejects anything else. This step creates the build
+      # (find-or-create on ciBuildId, so a re-run attaches to the same build)
+      # and exposes its UUID. The branch name is PR-author controlled, so it
+      # arrives via env: and the JSON is built with jq --arg.
+      - name: Open Furan build
+        id: furan_build
+        env:
+          FURAN_API_URL: ${{ secrets.FURAN_API_URL }}
+          FURAN_API_TOKEN: ${{ secrets.FURAN_API_TOKEN }}
+          FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
+          CI_BUILD_ID: github-${{ github.run_id }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          BUILD_NAME: "${{ github.workflow }} #${{ github.run_number }}"
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          BODY=$(jq -nc --arg ciBuildId "$CI_BUILD_ID" --arg branchName "$BRANCH_NAME" \
+            --arg name "$BUILD_NAME" --argjson number "$BUILD_NUMBER" \
+            '{ciBuildId: $ciBuildId, branchName: $branchName, name: $name, number: $number}')
+          RESP=$(curl -fsS -X POST "$FURAN_API_URL/projects/$FURAN_PROJECT_ID/builds" \
+            -H "Authorization: Bearer $FURAN_API_TOKEN" \
+            -H 'Content-Type: application/json' -d "$BODY")
+          ID=$(printf '%s' "$RESP" | jq -er .id)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
       - name: Run visual tests
         env:
           FURAN_API_URL: ${{ secrets.FURAN_API_URL }}
           FURAN_API_TOKEN: ${{ secrets.FURAN_API_TOKEN }}
           FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
-          FURAN_BUILD_ID: ${{ github.sha }}
+          FURAN_BUILD_ID: ${{ steps.furan_build.outputs.id }}
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
+          FURAN_PARENT_BRANCH: ${{ github.base_ref }}
         run: ./gradlew test --tests "*VisualTest*"
