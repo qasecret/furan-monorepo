@@ -122,6 +122,22 @@ describe("runUpload", () => {
     expect(f.test("a").result).not.toHaveBeenCalled();
   });
 
+  it("the first failed upload stops the queued ones", async () => {
+    const f = fakeFuran();
+    const d = deps(f);
+    d.readFile.mockImplementation(async (path: string) => {
+      if (path.endsWith("/a/0.png")) throw new Error("api gone");
+      return TINY_PNG;
+    });
+    const steps = Array.from({ length: 20 }, (_, i) => `a/${i}`);
+    await expect(
+      runUpload(plan(["a", steps]), uploadArgs({ concurrency: 1 }), d),
+    ).rejects.toThrow("api gone");
+    // Only what was already in flight may finish; nothing new starts.
+    expect(d.readFile.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(f.test("a").abort).toHaveBeenCalled();
+  });
+
   it("abort signal mid-upload aborts open tests", async () => {
     const f = fakeFuran();
     const controller = new AbortController();

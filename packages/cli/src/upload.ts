@@ -48,12 +48,28 @@ export async function runUpload(
   );
 
   const opened: FuranTest[] = [];
+  // The first failure halts the rest: queued work checks `halted` before it
+  // starts, so a dead api costs one request's retries, not one per step.
+  const halt = new AbortController();
+  const stopIfHalted = (): void => {
+    signal?.throwIfAborted();
+    halt.signal.throwIfAborted();
+  };
+  const guarded = <T>(fn: () => Promise<T>): Promise<T> =>
+    limit(async () => {
+      stopIfHalted();
+      try {
+        return await fn();
+      } catch (err) {
+        if (!halt.signal.aborted) halt.abort(err);
+        throw err;
+      }
+    });
   let tests: FuranTest[];
   try {
     tests = await settleAll(
       plan.map((planned) =>
-        limit(async () => {
-          signal?.throwIfAborted();
+        guarded(async () => {
           const test = await build.openTest(planned.name);
           opened.push(test);
           return test;
@@ -65,14 +81,13 @@ export async function runUpload(
         const test = tests[i]!;
         await settleAll(
           planned.steps.map((step) =>
-            limit(async () => {
-              signal?.throwIfAborted();
+            guarded(async () => {
               const png = await deps.readFile(step.file);
               await test.check(step.name, png, checkOptions(step, args));
             }),
           ),
         );
-        signal?.throwIfAborted();
+        stopIfHalted();
         await test.complete();
       }),
     );

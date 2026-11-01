@@ -78,7 +78,10 @@ export async function main(argv: string[], deps: MainDeps): Promise<number> {
   }
 
   try {
-    const plan = await planUpload(args.paths, { test: args.test });
+    const plan = await planUpload(args.paths, {
+      test: args.test,
+      viewport: args.viewport,
+    });
     const options = toOptions(args);
     if (args.dryRun) {
       deps.stdout(dryRun(plan, options, deps.env));

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { planUpload } from "../src/scan.js";
 
-import { TINY_PNG, tree } from "./helpers.js";
+import { pngHeader, TINY_PNG, tree } from "./helpers.js";
 
 const shape = (plan: Awaited<ReturnType<typeof planUpload>>) =>
   plan.map((t) => ({ test: t.name, steps: t.steps.map((s) => s.name) }));
@@ -85,6 +85,58 @@ describe("planUpload", () => {
         test: "smoke",
       }),
     ).rejects.toThrow(/step "home"/);
+  });
+
+  it("the same step name and size in two tests is an input error", async () => {
+    const root = await tree({ "light/home.png": null, "dark/home.png": null });
+    await expect(
+      planUpload([join(root, "light"), join(root, "dark")], { test: null }),
+    ).rejects.toThrow(/step "home".*share one baseline.*parent folder/s);
+  });
+
+  it("file arguments from different folders cannot share a step name", async () => {
+    const root = await tree({ "a/x.png": null, "b/x.png": null });
+    await expect(
+      planUpload([join(root, "a/x.png"), join(root, "b/x.png")], {
+        test: null,
+      }),
+    ).rejects.toThrow(/step "x"/);
+  });
+
+  it("the same step name at different sizes is allowed", async () => {
+    const root = await tree({
+      "desktop/home.png": null,
+      "mobile/home.png": pngHeader(375, 812),
+    });
+    const plan = await planUpload(
+      [join(root, "desktop"), join(root, "mobile")],
+      { test: null },
+    );
+    expect(shape(plan)).toEqual([
+      { test: "desktop", steps: ["home"] },
+      { test: "mobile", steps: ["home"] },
+    ]);
+  });
+
+  it("--viewport makes different sizes collide", async () => {
+    const root = await tree({
+      "desktop/home.png": null,
+      "mobile/home.png": pngHeader(375, 812),
+    });
+    await expect(
+      planUpload([join(root, "desktop"), join(root, "mobile")], {
+        test: null,
+        viewport: "800x600",
+      }),
+    ).rejects.toThrow(/step "home"/);
+  });
+
+  it("the same file passed twice is uploaded once", async () => {
+    const root = await tree({ "shots/a.png": null });
+    const shots = join(root, "shots");
+    expect(
+      shape(await planUpload([shots, join(shots, "a.png")], { test: null })),
+    ).toEqual([{ test: "shots", steps: ["a"] }]);
   });
 
   it("non-PNG file argument is an input error", async () => {

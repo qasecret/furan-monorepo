@@ -34,10 +34,16 @@ interface Found {
  * Map PNG files and folders to tests and steps (spec §5.2). Every PNG's header
  * and sidecar are checked here, before anything is uploaded; only each file's
  * first 33 bytes are read.
+ *
+ * A step's baseline is identified by its name and viewport (with the branch
+ * and labels every step of one upload shares), not by its test, so two
+ * screenshots with the same name and viewport anywhere in the upload are
+ * refused: they would silently share one baseline. `viewport` is `--viewport`
+ * (null: each PNG's size). The same file reached twice is uploaded once.
  */
 export async function planUpload(
   paths: string[],
-  opts: { test: string | null },
+  opts: { test: string | null; viewport?: string | null },
 ): Promise<PlannedTest[]> {
   const found: Found[] = [];
   for (const path of paths) {
@@ -57,7 +63,12 @@ export async function planUpload(
   }
 
   const tests = new Map<string, PlannedStep[]>();
+  const identities = new Map<string, string>();
+  const seenFiles = new Set<string>();
   for (const { root, file } of found) {
+    const real = await fsp.realpath(file);
+    if (seenFiles.has(real)) continue;
+    seenFiles.add(real);
     const rel = posix(relative(root, file));
     const folder = posix(dirname(rel));
     const testName =
@@ -77,6 +88,14 @@ export async function planUpload(
         `two screenshots map to step "${step.name}" in test "${testName}": ${clash.file} and ${file}`,
       );
     }
+    const identity = `${step.name}\u0000${opts.viewport ?? `${width}x${height}`}`;
+    const twin = identities.get(identity);
+    if (twin !== undefined) {
+      throw new FuranInputError(
+        `${twin} and ${file} both map to step "${step.name}" at the same viewport, so they would share one baseline; pass their parent folder instead, so each step keeps its folder in its name`,
+      );
+    }
+    identities.set(identity, file);
     steps.push(step);
     tests.set(testName, steps);
   }
