@@ -2133,8 +2133,28 @@
             "multipart/form-data": {
               "schema": {
                 "properties": {
+                  "accessibilityLevel": {
+                    "description": "WCAG level for the axe pass (needs `domHtml`).",
+                    "enum": [
+                      "AA",
+                      "AAA"
+                    ],
+                    "type": "string"
+                  },
+                  "accessibilityVersion": {
+                    "description": "WCAG version for the axe pass (needs `domHtml`).",
+                    "enum": [
+                      "WCAG_2_0",
+                      "WCAG_2_1"
+                    ],
+                    "type": "string"
+                  },
                   "browser": {
                     "description": "Browser id.",
+                    "type": "string"
+                  },
+                  "device": {
+                    "description": "Device label; part of the baseline identity.",
                     "type": "string"
                   },
                   "domHtml": {
@@ -2142,13 +2162,41 @@
                     "format": "binary",
                     "type": "string"
                   },
+                  "elementMapJson": {
+                    "description": "Optional element map JSON (at most 1 MB; larger is dropped).",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "ignoreDisplacements": {
+                    "description": "`true` runs the global-shift pre-alignment pass.",
+                    "type": "string"
+                  },
+                  "matchLevel": {
+                    "description": "Match level for this checkpoint. Default `Strict`.",
+                    "enum": [
+                      "Strict",
+                      "Layout",
+                      "Content",
+                      "IgnoreColors",
+                      "Dynamic"
+                    ],
+                    "type": "string"
+                  },
                   "name": {
                     "description": "Checkpoint name (required in v1.1+ shape; logged for traceability).",
+                    "type": "string"
+                  },
+                  "os": {
+                    "description": "Operating-system label; part of the baseline identity.",
                     "type": "string"
                   },
                   "pngBytes": {
                     "description": "PNG screenshot bytes. Max 50 MB. Required.",
                     "format": "binary",
+                    "type": "string"
+                  },
+                  "regions": {
+                    "description": "JSON object `{ ignore, layout, floating, content, accessibility }`, each an array of `{ x, y, width, height }` boxes (floating adds `maxUpOffset`/`maxDownOffset`/`maxLeftOffset`/`maxRightOffset`, accessibility adds `type`); at most 50 per kind. Invalid JSON or shape is refused with 400 `invalid_regions`. Regions mask diffs once the checkpoint is approved.",
                     "type": "string"
                   },
                   "viewport": {
@@ -2202,7 +2250,7 @@
                 }
               }
             },
-            "description": "Multipart parse failure, missing pngBytes, or other client error"
+            "description": "Multipart parse failure, missing pngBytes, invalid `regions` (`invalid_regions`), or other client error"
           },
           "401": {
             "content": {

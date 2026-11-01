@@ -158,6 +158,41 @@ export const uploadScreenshotForm = z.object({
     ),
   viewport: z.string().optional().describe("Viewport string e.g. `1280x720`."),
   browser: z.string().optional().describe("Browser id."),
+  os: z
+    .string()
+    .optional()
+    .describe("Operating-system label; part of the baseline identity."),
+  device: z
+    .string()
+    .optional()
+    .describe("Device label; part of the baseline identity."),
+  matchLevel: z
+    .enum(["Strict", "Layout", "Content", "IgnoreColors", "Dynamic"])
+    .optional()
+    .describe("Match level for this checkpoint. Default `Strict`."),
+  regions: z
+    .string()
+    .optional()
+    .describe(
+      "JSON object `{ ignore, layout, floating, content, accessibility }`, each an array of `{ x, y, width, height }` boxes (floating adds `maxUpOffset`/`maxDownOffset`/`maxLeftOffset`/`maxRightOffset`, accessibility adds `type`); at most 50 per kind. Invalid JSON or shape is refused with 400 `invalid_regions`. Regions mask diffs once the checkpoint is approved.",
+    ),
+  ignoreDisplacements: z
+    .string()
+    .optional()
+    .describe("`true` runs the global-shift pre-alignment pass."),
+  accessibilityLevel: z
+    .enum(["AA", "AAA"])
+    .optional()
+    .describe("WCAG level for the axe pass (needs `domHtml`)."),
+  accessibilityVersion: z
+    .enum(["WCAG_2_0", "WCAG_2_1"])
+    .optional()
+    .describe("WCAG version for the axe pass (needs `domHtml`)."),
+  elementMapJson: z
+    .string()
+    .openapi({ type: "string", format: "binary" })
+    .optional()
+    .describe("Optional element map JSON (at most 1 MB; larger is dropped)."),
 });
 
 export const uploadScreenshotResponse = z.object({
@@ -799,6 +834,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       let ignoreDisplacements = false;
       let accessibilityLevel: string | null = null;
       let accessibilityVersion: string | null = null;
+      let regionsRaw: string | null = null;
 
       try {
         const parts = req.parts();
@@ -833,6 +869,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               accessibilityLevel = value;
             else if (part.fieldname === "accessibilityVersion")
               accessibilityVersion = value;
+            else if (part.fieldname === "regions") regionsRaw = value;
             else if (part.fieldname === "domHtml" && !domHtml) domHtml = value;
             else if (part.fieldname === "elementMapJson" && !elementMapRaw)
               elementMapRaw = value;
@@ -841,6 +878,31 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       } catch (err) {
         req.log.warn({ err }, "multipart_parse_failed");
         return sendError(reply, 400, "invalid_multipart");
+      }
+
+      // ADR-080: the SDKs send the checkpoint's regions as one JSON field.
+      // Validated before anything is stored; a missing field means none.
+      let regions: z.infer<typeof screenshotFields.shape.regions> | undefined;
+      if (regionsRaw !== null) {
+        let json: unknown;
+        try {
+          json = JSON.parse(regionsRaw);
+        } catch {
+          return sendError(reply, 400, "invalid_regions", undefined, {
+            message: "regions is not valid JSON",
+          });
+        }
+        const parsed = screenshotFields.shape.regions.safeParse(json);
+        if (!parsed.success) {
+          return sendError(
+            reply,
+            400,
+            "invalid_regions",
+            undefined,
+            parsed.error.flatten(),
+          );
+        }
+        regions = parsed.data;
       }
 
       if (!pngBytes) {
@@ -857,6 +919,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         os,
         device,
         matchLevel,
+        ...(regions ? { regions } : {}),
         ignoreDisplacements,
         accessibilityLevel,
         accessibilityVersion,
