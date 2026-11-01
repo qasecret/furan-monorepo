@@ -236,6 +236,13 @@ Copy [`docs/integrations/.examples/visual-regression.yml`](docs/integrations/.ex
 
 The reference workflow runs your test suite, uploads diffs, posts a sticky PR comment, and updates the `furan/baselines` status check on every push. The full setup including the GitHub App and Slack webhook integration is documented in [`docs/integrations/github-actions.md`](docs/integrations/github-actions.md).
 
+Other CI systems and the GitHub App have their own guides in [`docs/integrations/`](docs/integrations/):
+
+- [`github-actions.md`](docs/integrations/github-actions.md) — GitHub Actions workflow with branch baselines
+- [`jenkins.md`](docs/integrations/jenkins.md) — Jenkins Declarative Pipeline, parallel stages in one build
+- [`gitlab-ci.md`](docs/integrations/gitlab-ci.md) — GitLab CI/CD with merge request baselines and `parallel:matrix`
+- [`github-app.md`](docs/integrations/github-app.md) — create, configure and verify the GitHub App
+
 ## Direct image pulls
 
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
