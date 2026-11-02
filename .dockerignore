@@ -69,3 +69,5 @@ docs/
 !packages/*/README.md
 # Docusaurus's local cache (apps/docs); the docs stage builds from scratch.
 **/.docusaurus/
+# Wrangler's local state (apps/docs, Cloudflare deploys only).
+**/.wrangler/
