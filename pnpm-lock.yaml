@@ -574,7 +574,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.51.2)
       yaml:
         specifier: ^2.9.0
         version: 2.9.1
@@ -598,7 +598,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.51.2)
 
   packages/config:
     dependencies:
@@ -780,7 +780,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.51.2)
 
   packages/queue:
     dependencies:
@@ -11972,7 +11972,7 @@ snapshots:
 
   '@babel/helper-member-expression-to-functions@7.29.7':
     dependencies:
-      '@babel/traverse': 7.29.12
+      '@babel/traverse': 7.29.10
       '@babel/types': 7.29.8
     transitivePeerDependencies:
       - supports-color
