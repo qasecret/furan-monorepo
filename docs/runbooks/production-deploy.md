@@ -8,10 +8,10 @@
 > `pnpm dev` host-process flow (see [`docs/install/quickstart.md`](../install/quickstart.md)
 > for that).
 
-> **Latest release: `v1.1.32`** — the five app images are pinned to it in
+> **Latest release: `v1.1.33`** — the five app images are pinned to it in
 > `infra/docker/compose.yml`, published to Docker Hub + GHCR, Trivy-scanned,
 > and cosign-signed (verify with the workflow identity
-> `build-images.yml@refs/tags/v1.1.32`). Deploy at this tag, or let
+> `build-images.yml@refs/tags/v1.1.33`). Deploy at this tag, or let
 > [`deploy.sh`](../../deploy.sh) handle the bring-up.
 
 This runbook was written and verified on a fresh host (2026-06-24).
@@ -27,7 +27,7 @@ same commit.** This is the single most important fact in this runbook.
 
 - **App services** (`api`, `dashboard`, `capture-worker`, `diff-worker`,
   `integrations`) run a **pinned, pre-built image tag** (currently
-  `qasecret/furan-api:v1.1.32`).
+  `qasecret/furan-api:v1.1.33`).
 - The **`migrate` one-shot** service bind-mounts
   `../../packages/db/migrations` — i.e. it applies **whatever migrations are
   in your local checkout**, not what shipped inside the image.
@@ -53,7 +53,7 @@ drifted tables — so the stack looked green while every project operation 500'd
 Pick **one** of these before `up -d`:
 
 1. **Deploy at a release tag** (recommended for end users): `git checkout
-v1.1.32` (the current release) so the migrations match the image pinned in
+v1.1.33` (the current release) so the migrations match the image pinned in
    that tagged `compose.yml`. This is exactly what an installer following the
    release gets. (Use whatever the latest `v1.1.x` tag is — `git tag -l 'v1.1.*'`.)
 2. **Pin the image to your checkout** (for deploying current `main` / a branch):
@@ -242,7 +242,7 @@ docker compose -p docker ... down -v --remove-orphans
 | `compose up` aborts: `Ports are not available … bind: address already in use`                                                                          | a foreign process already holds `3000` (api) or `3001` (dashboard) — classically a leftover `pnpm dev` from a source-run session                                                                                                                          | free the port (`lsof -nP -iTCP:3001 -sTCP:LISTEN` to find the holder, stop it) or `./deploy.sh --down` a prior stack, then re-run. `deploy.sh` now names the port + holder on this failure. |
 | dashboard `/login` renders but signing in returns 500 (`ECONNREFUSED 127.0.0.1:3000` in `docker logs …-dashboard-1`)                                   | published image bakes `NEXT_PUBLIC_API_URL=http://localhost:3000`; the login Server Action runs _inside_ the container, where `localhost:3000` is the dashboard, not the api — the runtime `NEXT_PUBLIC_API_URL` override is **inert** (baked at build)   | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with an origin reachable from both browser and container). The API/SDK/PAT path is unaffected.   |
 | dashboard "Cannot connect to API" from a **remote** browser                                                                                            | dashboard's browser bundle bakes `NEXT_PUBLIC_API_URL=http://localhost:3000` at image build — remote browsers can't reach it, and a proxy can't rewrite a baked absolute URL                                                                              | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with your public API URL + terminate TLS)                                                        |
-| signing in works, but the next page goes back to `/login`: Safari on `http://localhost`, or any browser on plain `http://<host>` (v1.1.31 and earlier) | the session cookie was always `Secure` in production, and a browser on plain http drops a `Secure` cookie                                                                                                                                                 | upgrade past v1.1.31, or serve the dashboard over HTTPS per [reverse-proxy-tls.md](reverse-proxy-tls.md)                                                                                    |
+| signing in works, but the next page goes back to `/login`: Safari on `http://localhost`, or any browser on plain `http://<host>` (v1.1.31 and earlier) | the session cookie was always `Secure` in production, and a browser on plain http drops a `Secure` cookie                                                                                                                                                 | upgrade to v1.1.33 or later, or serve the dashboard over HTTPS per [reverse-proxy-tls.md](reverse-proxy-tls.md)                                                                             |
 | logged-in with `--admin-email/--admin-password` but the dashboard/API rejects them (401)                                                               | when `infra/docker/.env` **already exists**, `deploy.sh` uses its `FURAN_BOOTSTRAP_ADMIN_*` values and **ignores** the `--admin-*` CLI flags (they only seed a _freshly generated_ `.env`); the admin is also only seeded when the `users` table is empty | use the creds in `infra/docker/.env`, or delete `.env` to regenerate with the flags, or reset via the CLI (`reset-password`)                                                                |
 
 ## 7. References

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { getEnv } from "@furan/config";
 import { createRedisConnection, type Queue } from "@furan/queue";
 import { bootstrapTelemetry } from "@furan/telemetry";
-import { afterAll, afterEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 
 import { envSchema } from "../src/env.js";
 import { createApiRuntime } from "../src/runtime.js";
@@ -72,6 +72,9 @@ describe("createApiRuntime", () => {
     await runtime.close();
 
     // BullMQ leaves a connection it was handed open: the runtime must end it.
-    expect(client.status).toBe("end");
+    // `disconnect()` only starts that: the status reads "end" once the socket
+    // has closed, which can be just after `close()` resolves. A connection
+    // nobody released stays "ready" and still fails here.
+    await vi.waitFor(() => expect(client.status).toBe("end"));
   });
 });
