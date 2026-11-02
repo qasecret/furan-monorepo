@@ -26,8 +26,9 @@ approve its steps all at once or one by one.
 step's screenshot becomes its baseline." Click **Approve N steps**.
 
 **One by one.** Open a step. The viewer shows the screenshot alone, with "No
-baseline yet. Approve this step to make it the baseline." Check it, then click
-**Save as baseline**. Do this for each step you want to keep.
+baseline yet. Save as baseline to compare later runs with this screenshot."
+Check it, then click **Save as baseline**. Do this for each step you want to
+keep.
 
 ### What makes a step "the same" next time
 
