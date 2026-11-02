@@ -1,6 +1,6 @@
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.KotlinJvm
-import com.vanniktech.maven.publish.SonatypeHost
+import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -27,12 +27,12 @@ tasks.test {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
+    publishToMavenCentral(automaticRelease = true)
     if (project.hasProperty("signingInMemoryKey") ||
         System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null) {
         signAllPublications()
     }
-    configure(KotlinJvm(javadocJar = JavadocJar.Empty(), sourcesJar = true))
+    configure(KotlinJvm(javadocJar = JavadocJar.Empty(), sourcesJar = SourcesJar.Sources()))
     coordinates("io.github.qasecret", "furan-playwright", project.version.toString())
     pom {
         name.set("Furan SDK — Playwright adapter")

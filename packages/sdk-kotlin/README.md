@@ -6,7 +6,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../../LICENSE)
 [![JDK](https://img.shields.io/badge/JDK-21+-blue)](https://adoptium.net/)
 
-Drop-in for any JUnit 5 + Selenium, Playwright, or Appium suite. JDK 21+, Kotlin 2.x. Five artifacts, pick the one matching your use case:
+Drop-in for any JUnit 5 + Selenium, Playwright, or Appium suite. JDK 21+; Kotlin projects need Kotlin 2.3 or newer (Java projects have no Kotlin requirement). Five artifacts, pick the one matching your use case:
 
 | Artifact                              | When to use                                           | Depends on   |
 | ------------------------------------- | ----------------------------------------------------- | ------------ |
@@ -52,7 +52,7 @@ repositories { mavenCentral() }
 
 dependencies {
     testImplementation("io.github.qasecret:furan-playwright:4.2.0") // x-release-please-version
-    testImplementation("com.microsoft.playwright:playwright:1.49.0")
+    testImplementation("com.microsoft.playwright:playwright:1.64.0")
 }
 ```
 
@@ -68,7 +68,7 @@ Maven:
 <dependency>
     <groupId>com.microsoft.playwright</groupId>
     <artifactId>playwright</artifactId>
-    <version>1.49.0</version>
+    <version>1.64.0</version>
     <scope>test</scope>
 </dependency>
 ```
@@ -84,6 +84,11 @@ dependencies {
     testImplementation("io.appium:java-client:9.5.0")
 }
 ```
+
+java-client 9.5.0 runs on Selenium 4.34.x, the version `furan-selenium` and
+`furan-appium` bring in. If a project that uses `furan-appium` also declares a
+newer Selenium, `AndroidDriver` / `IOSDriver` fail to load
+(`NoClassDefFoundError: org/openqa/selenium/html5/LocationContext`).
 
 ## Quick start
 

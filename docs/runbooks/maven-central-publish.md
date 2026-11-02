@@ -254,12 +254,12 @@ publication is wired correctly end-to-end.
 
 ## Notes / caveats
 
-- The vanniktech plugin's `publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL,
-automaticRelease = false)` targets the **new Central Portal** endpoint, not
-  the deprecated OSSRH staging API. Sonatype stopped accepting new namespaces
-  on OSSRH in 2026.
+- The vanniktech plugin's `publishToMavenCentral(automaticRelease = true)`
+  targets the **new Central Portal** endpoint (its only target; the plugin no
+  longer takes a `SonatypeHost`), not the deprecated OSSRH staging API.
+  Sonatype stopped accepting new namespaces on OSSRH in 2026.
 - Sources + javadoc jars are produced automatically by `KotlinJvm(javadocJar =
-JavadocJar.Empty(), sourcesJar = true)`. The empty Javadoc jar satisfies
+JavadocJar.Empty(), sourcesJar = SourcesJar.Sources())`. The empty Javadoc jar satisfies
   Central Portal's requirement without us shipping a meaningless Dokka build
   step.
 - The plugin's signing is conditional on `SIGNING_KEY_ID` / `SIGNING_PASSWORD`

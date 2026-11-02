@@ -1,6 +1,6 @@
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.KotlinJvm
-import com.vanniktech.maven.publish.SonatypeHost
+import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -46,7 +46,7 @@ tasks.test {
 // Generate io.furan.sdk.BuildInfo.SDK_VERSION from version.txt at build time, so
 // the User-Agent header + anonymous telemetry report the real published version
 // instead of a hand-maintained literal that silently drifts every release.
-val generateBuildInfo by tasks.registering {
+val generateBuildInfo = tasks.register("generateBuildInfo") {
     val versionFile = rootProject.file("version.txt")
     val outDir = layout.buildDirectory.dir("generated/sources/buildinfo/kotlin")
     inputs.file(versionFile)
@@ -78,7 +78,7 @@ mavenPublishing {
     // so trust the CI gate (sdk-build-and-example-compile must be green) +
     // the release-please Release-PR review step. To revert to the manual
     // Portal-click gate, flip to false here and in selenium/build.gradle.kts.
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
+    publishToMavenCentral(automaticRelease = true)
 
     // Sign only when signing keys are present (CI). publishToMavenLocal dry-runs
     // run without signing — see docs/runbooks/maven-central-publish.md "Dry-run".
@@ -89,7 +89,7 @@ mavenPublishing {
 
     // KotlinJvm component with Javadoc jar (empty placeholder is fine — kotlin doesn't produce
     // javadoc by default; the empty jar satisfies the Central Portal requirement).
-    configure(KotlinJvm(javadocJar = JavadocJar.Empty(), sourcesJar = true))
+    configure(KotlinJvm(javadocJar = JavadocJar.Empty(), sourcesJar = SourcesJar.Sources()))
 
     coordinates("io.github.qasecret", "furan-core", project.version.toString())
 

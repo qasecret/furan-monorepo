@@ -1,6 +1,6 @@
 import java.util.Properties
 
-plugins { id("org.jetbrains.kotlin.jvm") version "2.0.21" }
+plugins { id("org.jetbrains.kotlin.jvm") version "2.4.21" }
 java { toolchain.languageVersion.set(JavaLanguageVersion.of(21)) }
 // mavenLocal() MUST come before mavenCentral() so the in-tree SDK published by
 // the CI workflow's publish step wins over any Maven Central artifact.

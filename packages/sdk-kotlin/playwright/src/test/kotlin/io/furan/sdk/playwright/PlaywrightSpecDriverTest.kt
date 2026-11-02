@@ -85,7 +85,7 @@ class PlaywrightSpecDriverTest {
     @Test
     fun `getDriverInfo advertises web features and labels the browser per type`() {
         val page = mock<Page>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS)
-        whenever(page.context().browser().browserType().name()).thenReturn("chromium")
+        whenever(page.context().browser()!!.browserType().name()).thenReturn("chromium")
         // RETURNS_DEEP_STUBS leaves viewportSize() non-null by default.
 
         val info = PlaywrightSpecDriver(page).getDriverInfo()
@@ -107,7 +107,7 @@ class PlaywrightSpecDriverTest {
     @Test
     fun `getDriverInfo withholds RESIZE_VIEWPORT when the page has no viewport`() {
         val page = mock<Page>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS)
-        whenever(page.context().browser().browserType().name()).thenReturn("firefox")
+        whenever(page.context().browser()!!.browserType().name()).thenReturn("firefox")
         whenever(page.viewportSize()).thenReturn(null) // viewport:null context (OS window size)
 
         val info = PlaywrightSpecDriver(page).getDriverInfo()
