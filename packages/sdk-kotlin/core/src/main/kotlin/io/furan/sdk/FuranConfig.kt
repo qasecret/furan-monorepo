@@ -97,6 +97,14 @@ data class FuranConfig(
      * `FURAN_BROWSER`. Null (default) = use the adapter's detected browser.
      */
     val browser: String? = null,
+    /**
+     * The repository, pull request and commit this run is for, sent on every
+     * `POST /runs` so the Furan GitHub App can comment on the pull request and
+     * set the `furan/baselines` commit status. From `FURAN_REPO`,
+     * `FURAN_PR_NUMBER` and `FURAN_COMMIT_SHA`, or GitHub Actions' own
+     * variables (see [ScmContext]). Empty (default) = nothing is reported.
+     */
+    val scm: ScmContext = ScmContext(),
 ) {
     init {
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
@@ -167,6 +175,7 @@ data class FuranConfig(
                 os = env["FURAN_OS"]?.trim()?.takeIf { it.isNotEmpty() },
                 device = env["FURAN_DEVICE"]?.trim()?.takeIf { it.isNotEmpty() },
                 browser = env["FURAN_BROWSER"]?.trim()?.takeIf { it.isNotEmpty() },
+                scm = ScmContext.fromEnv(env),
             )
         }
 
@@ -351,6 +360,7 @@ data class FuranConfig(
                 os = (env["FURAN_OS"] ?: yamlString("os"))?.trim()?.takeIf { it.isNotEmpty() },
                 device = (env["FURAN_DEVICE"] ?: yamlString("device"))?.trim()?.takeIf { it.isNotEmpty() },
                 browser = (env["FURAN_BROWSER"] ?: yamlString("browser"))?.trim()?.takeIf { it.isNotEmpty() },
+                scm = ScmContext.fromEnv(env),
             )
         }
 

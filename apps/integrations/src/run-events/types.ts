@@ -49,9 +49,11 @@ export type RunEvent =
       // render context without re-querying test_runs.
       branchName?: string;
       diffPercent?: number;
-      // Optional repo+PR context. Without these the GitHub-side updaters
-      // can't act, but the event itself is still valid for other
-      // subscribers (Slack, outbound webhooks in T9).
+      // Optional repo+PR context. No publisher sets these today: the GitHub
+      // handler resolves them from the run's row (`test_runs`) and the
+      // project's installation link. When an event does carry them they win.
+      // The event is valid without them for other subscribers (Slack,
+      // outbound webhooks in T9).
       repoOwner?: string;
       repoName?: string;
       prNumber?: number;

@@ -34,7 +34,14 @@ export interface ProjectBroadcastEvent {
  * Phase 5 will tighten payload typing for the dashboard side.
  */
 export type RunEventType =
-  "run.checkpoint_added" | "run.checkpoint_diffed" | "run.completed";
+  | "run.checkpoint_added"
+  | "run.checkpoint_diffed"
+  | "run.completed"
+  // A reviewer's action (approve, reject, undo, force passed/failed) touched
+  // the run, so its stored status may have changed. Only the integrations
+  // service's GitHub updater acts on it; Slack and outbound webhooks keep to
+  // `run.completed`.
+  | "run.reviewed";
 
 export interface RunBroadcastEvent {
   type: RunEventType;

@@ -164,9 +164,11 @@ async function readRunFacts(
  * Only when the commit moved the run's status (`rollup.before !== rollup.after`):
  *  - run channel: `run.completed` with the run's status and totals as stored
  *    when the events are read, which the integrations subscriber fans out
- *    (GitHub status, Slack, outbound webhooks). GitHub-side fields
- *    (installationId, repoOwner, repoName, sha, prNumber) are omitted; both
- *    consumers cope without them;
+ *    (GitHub comment and status, Slack, outbound webhooks). GitHub-side fields
+ *    (installationId, repoOwner, repoName, sha, prNumber) are omitted on
+ *    purpose: the integrations service resolves them from the run's row and
+ *    its project's installation link (`apps/integrations/src/github/run-context.ts`),
+ *    so this and the other publishers need not carry them;
  *  - project channel: `testRun_updated { id, status }` (that same stored
  *    status) and `build_updated { id }`.
  * The common per-step commit leaves the status alone and so reads nothing.

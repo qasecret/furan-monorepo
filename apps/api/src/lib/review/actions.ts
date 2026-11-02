@@ -247,11 +247,15 @@ export async function requireBuildProject(
 // ---------------------------------------------------------------------------
 
 /**
- * Queues the project events for the runs an action changed, to go out after
- * the request commits: `testRun_updated` for every run (in the given order)
- * and `build_updated` once per affected build. Nothing for no runs. A replay
- * announces again: the events are idempotent "refetch" hints, and the
- * original's broadcast may have been lost.
+ * Queues the events for the runs an action changed, to go out after the
+ * request commits: `testRun_updated` for every run (in the given order) and
+ * `build_updated` once per affected build on the project channel, then
+ * `run.reviewed` for every run on its own run channel, which is what refreshes
+ * the pull request comment and `furan/baselines` status on GitHub (a review
+ * moves a run's status without a diff finishing, so nothing else would). The
+ * dashboard's events go first so a slow listener cannot delay them. Nothing
+ * for no runs. A replay announces again: the events are idempotent "refetch"
+ * hints, and the original's broadcast may have been lost.
  *
  * `knownBuilds` maps runs to their builds when the caller already read them
  * (the decision core locked the runs it decided): the builds are read only
@@ -282,6 +286,13 @@ export async function announceRuns(
       await ctx.broadcaster.publishProjectEvent(projectId, {
         event: "build_updated",
         data: { id },
+      });
+    }
+    for (const id of runIds) {
+      await ctx.broadcaster.publishRunEvent?.({
+        type: "run.reviewed",
+        runId: id,
+        payload: {},
       });
     }
   });

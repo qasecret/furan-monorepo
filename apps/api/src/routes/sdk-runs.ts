@@ -45,6 +45,20 @@ export const createRunBody = z.object({
   // of baseline resolution. Omitted
   // when the SDK has no parent configured.
   parentBranchName: z.string().min(1).max(255).optional(),
+  // Optional source-control context, sent by the SDK from `FURAN_REPO`,
+  // `FURAN_PR_NUMBER` and `FURAN_COMMIT_SHA` (or GitHub Actions' variables).
+  // The integrations service reads it back to post the pull request comment
+  // and the `furan/baselines` commit status. Strictly shaped here because the
+  // values later end up in GitHub API paths.
+  repo: z
+    .string()
+    .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/)
+    .optional(),
+  prNumber: z.number().int().min(1).max(2_147_483_647).optional(),
+  commitSha: z
+    .string()
+    .regex(/^[0-9a-fA-F]{7,64}$/)
+    .optional(),
 });
 
 export const createRunResponse = z.object({
@@ -607,6 +621,11 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               name: input.name,
               branchName: input.branchName,
               parentBranchName: input.parentBranchName ?? null,
+              // The slug was validated as `owner/name` above.
+              repoOwner: input.repo?.split("/")[0] ?? null,
+              repoName: input.repo?.split("/")[1] ?? null,
+              prNumber: input.prNumber ?? null,
+              commitSha: input.commitSha?.toLowerCase() ?? null,
               status: "running",
             })
             .returning({
@@ -713,9 +732,15 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         // The stored review counters (`pending_steps`, `failed_steps`,
         // migration 0043) are the dashboard's reads, not the SDK's: the REST
         // shape stays the run's columns from before them, plus autoApproved.
+        // So does the GitHub context (migration 0045): the SDK sends it on
+        // POST /runs and the integrations service reads it back by run id.
         const {
           pendingSteps: _pendingSteps,
           failedSteps: _failedSteps,
+          repoOwner: _repoOwner,
+          repoName: _repoName,
+          prNumber: _prNumber,
+          commitSha: _commitSha,
           ...run
         } = row;
         reply.code(200);

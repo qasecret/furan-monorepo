@@ -114,6 +114,9 @@ async function main(): Promise<void> {
     db,
     webhookQueue,
     ...(githubApp !== undefined ? { githubApp } : {}),
+    ...(env.DASHBOARD_BASE_URL !== undefined
+      ? { dashboardBaseUrl: env.DASHBOARD_BASE_URL }
+      : {}),
   });
 
   const shutdown = async (signal: string): Promise<void> => {

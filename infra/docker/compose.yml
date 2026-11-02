@@ -307,6 +307,9 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      # Public dashboard origin; links the PR comment and commit status to the
+      # run and build pages. Unset = no links.
+      DASHBOARD_BASE_URL: ${DASHBOARD_BASE_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     restart: unless-stopped
 

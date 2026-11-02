@@ -42,6 +42,14 @@ export const envSchema = z
       .optional()
       .transform((v) => (v ? v : undefined)),
 
+    // Public origin of the dashboard (e.g. https://furan.example.com). Used to
+    // link the PR comment, the commit status and webhook payloads to the run
+    // or build page. Unset = no links. Trailing slash dropped.
+    DASHBOARD_BASE_URL: z
+      .union([z.string().url(), z.literal("")])
+      .optional()
+      .transform((v) => (v ? v.replace(/\/+$/, "") : undefined)),
+
     OTLP_ENDPOINT: z
       .union([z.string().url(), z.literal("")])
       .optional()

@@ -227,6 +227,84 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(rows[0]!.parentBranchName).toBeNull();
   });
 
+  test("POST /runs persists the repo, PR and commit (split slug, lower-case sha)", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "feature/x",
+        name: "scm-context-snap",
+        repo: "Acme/site.v2",
+        prNumber: 42,
+        commitSha: "DEADBEEFcafe0123456789abcdef0123456789ab",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { runId: string };
+    const [row] = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.runId))
+      .limit(1);
+    expect(row!.repoOwner).toBe("Acme");
+    expect(row!.repoName).toBe("site.v2");
+    expect(row!.prNumber).toBe(42);
+    expect(row!.commitSha).toBe("deadbeefcafe0123456789abcdef0123456789ab");
+  });
+
+  test("POST /runs without repo, PR or commit leaves them null (push build, old SDK)", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "no-scm-context-snap",
+        commitSha: "0123456789abcdef0123456789abcdef01234567",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { runId: string };
+    const [row] = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.runId))
+      .limit(1);
+    expect(row!.repoOwner).toBeNull();
+    expect(row!.repoName).toBeNull();
+    expect(row!.prNumber).toBeNull();
+    expect(row!.commitSha).toBe("0123456789abcdef0123456789abcdef01234567");
+  });
+
+  test.each([
+    ["a repo without an owner", { repo: "just-a-name" }],
+    ["a repo with extra path segments", { repo: "a/b/c" }],
+    ["a PR number of zero", { prNumber: 0 }],
+    ["a fractional PR number", { prNumber: 1.5 }],
+    ["a non-hex commit", { commitSha: "xyz1234" }],
+    ["a too-short commit", { commitSha: "abc12" }],
+  ])("POST /runs rejects %s with 400 invalid_body", async (_label, extra) => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "feature/x",
+        name: "bad-scm-context-snap",
+        ...extra,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "invalid_body" });
+  });
+
   test("POST /runs with distinct names produces distinct run rows under one build (ADR-038)", async () => {
     // ADR-038: POST /runs creates test runs; variations are resolved at
     // POST /runs/:id/screenshots time. Each POST /runs creates a new run.
