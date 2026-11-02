@@ -46,7 +46,7 @@ describe("ConnectSdkCard", () => {
     ).toBe("p1");
     expect(
       within(card).getByText(
-        "The address your CI machines use to reach Furan.",
+        "If your CI reaches Furan by another address, use that one.",
       ),
     ).toBeDefined();
   });

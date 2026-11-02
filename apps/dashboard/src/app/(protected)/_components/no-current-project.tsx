@@ -8,7 +8,7 @@ import { useCurrentProject } from "./current-project-provider";
 import { CreateProjectDialog } from "@/app/(protected)/projects/_components/create-project-dialog";
 import { DocsLink } from "@/components/docs-link";
 import { Card } from "@/components/ui/card";
-import { useCommandRole } from "@/lib/commands/registry";
+import { useViewerRole } from "@/lib/commands/registry";
 import { isAtLeastAdmin } from "@/lib/roles";
 
 /**
@@ -18,7 +18,7 @@ import { isAtLeastAdmin } from "@/lib/roles";
  * first one, or choose one. Anyone else waits for an admin to add them.
  */
 export function NoCurrentProject() {
-  const role = useCommandRole();
+  const role = useViewerRole();
   const { projects } = useCurrentProject();
   const admin = isAtLeastAdmin(role);
 

@@ -1,8 +1,9 @@
 "use client";
 
 import {
+  createContext,
   createElement,
-  Fragment,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -185,6 +186,9 @@ function register(
     }));
 }
 
+/** The provider's role, as React context: right from the server render. */
+const ViewerRoleContext = createContext<ViewerRole>("guest");
+
 /**
  * Supplies the viewer's role to every command's ctx. Mounted once, in the
  * protected layout. It writes the role into the registry: straight away on
@@ -217,7 +221,16 @@ export function CommandRoleProvider({
     () => () => useCommandRegistry.setState({ role: "guest" }),
     [],
   );
-  return createElement(Fragment, null, children);
+  return createElement(ViewerRoleContext.Provider, { value: role }, children);
+}
+
+/**
+ * The viewer's role for rendering. Unlike `useCommandRole`, it is right in
+ * the server render too (the registry store is client-only, so it reads
+ * "guest" there): use it for what the page shows by role.
+ */
+export function useViewerRole(): ViewerRole {
+  return useContext(ViewerRoleContext);
 }
 
 /** The role commands are checked against. */

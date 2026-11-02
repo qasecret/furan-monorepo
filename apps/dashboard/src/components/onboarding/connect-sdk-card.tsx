@@ -5,7 +5,7 @@ import { Fragment } from "react";
 
 import { DocsLink } from "@/components/docs-link";
 import { CopyField } from "@/components/ui/copy-field";
-import { useCommandRole } from "@/lib/commands/registry";
+import { useViewerRole } from "@/lib/commands/registry";
 import { isAtLeastAdmin } from "@/lib/roles";
 import { useApiUrl } from "@/lib/use-api-url";
 
@@ -43,7 +43,7 @@ function Row({ name, children }: { name: string; children: React.ReactNode }) {
  */
 export function ConnectSdkCard({ projectId }: { projectId: string }) {
   const apiUrl = useApiUrl();
-  const tokenPage = tokenPageFor(useCommandRole());
+  const tokenPage = tokenPageFor(useViewerRole());
   return (
     <div
       className="w-full max-w-md space-y-3 text-left"
@@ -69,7 +69,7 @@ export function ConnectSdkCard({ projectId }: { projectId: string }) {
           />
         )}
         <p className="text-2xs text-fg-muted">
-          The address your CI machines use to reach Furan.
+          If your CI reaches Furan by another address, use that one.
         </p>
       </Row>
       <Row name="FURAN_PROJECT_ID">
