@@ -732,9 +732,15 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         // The stored review counters (`pending_steps`, `failed_steps`,
         // migration 0043) are the dashboard's reads, not the SDK's: the REST
         // shape stays the run's columns from before them, plus autoApproved.
+        // So does the GitHub context (migration 0045): the SDK sends it on
+        // POST /runs and the integrations service reads it back by run id.
         const {
           pendingSteps: _pendingSteps,
           failedSteps: _failedSteps,
+          repoOwner: _repoOwner,
+          repoName: _repoName,
+          prNumber: _prNumber,
+          commitSha: _commitSha,
           ...run
         } = row;
         reply.code(200);
