@@ -56,3 +56,47 @@ export async function readCounter(
     (await samples(registry, name)).filter((s) => matches(s, labels)),
   );
 }
+
+/** A histogram's cumulative buckets: `count` observations at or below `le`. */
+export interface HistogramBuckets {
+  /** Ascending by `le`; the last is `+Inf` (`Infinity`), holding every observation. */
+  buckets: { le: number; count: number }[];
+  count: number;
+}
+
+/**
+ * A histogram's cumulative bucket counts, summed over the label sets that
+ * carry every label in `labels` (all of them when none is given).
+ */
+export async function readBuckets(
+  registry: Registry,
+  name: string,
+  labels: Labels = {},
+): Promise<HistogramBuckets> {
+  const byLe = new Map<number, number>();
+  for (const s of await samples(registry, name)) {
+    if (s.metricName !== `${name}_bucket` || !matches(s, labels)) continue;
+    const le = s.labels.le === "+Inf" ? Infinity : Number(s.labels.le);
+    byLe.set(le, (byLe.get(le) ?? 0) + s.value);
+  }
+  const buckets = [...byLe]
+    .map(([le, count]) => ({ le, count }))
+    .sort((a, b) => a.le - b.le);
+  return { buckets, count: buckets.at(-1)?.count ?? 0 };
+}
+
+/**
+ * A gauge's value, averaged over the label sets that carry every label in
+ * `labels`; null when none has a value. Reading it runs the gauge's own
+ * `collect`, if it has one.
+ */
+export async function readGauge(
+  registry: Registry,
+  name: string,
+  labels: Labels = {},
+): Promise<number | null> {
+  const found = (await samples(registry, name)).filter((s) =>
+    matches(s, labels),
+  );
+  return found.length === 0 ? null : total(found) / found.length;
+}

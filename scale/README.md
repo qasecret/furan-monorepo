@@ -235,9 +235,14 @@ The budget table (ids, thresholds, owners, status) is in
   (`net::ERR_ABORTED`: the suite closing a context, or the page itself
   cancelling a refetch) is never a failure. The R8 note names the browser part.
 - **R4's call set** is what the viewer requests when it opens cold (D5),
-  including the header's needs-review badge. The server suite measures that
-  recorded list, which is also written to `viewer-calls.json` in the report
-  directory. Without the browser suite it measures the checked-in
+  including the header's needs-review badge. Since slice 3 the viewer reads
+  one step at a time: the run header (`runs.getById`, with no
+  `builds.getById`), the step list, and `runs.getStep` for the step on screen
+  and for the steps either side of it in the rail, which it fetches ahead.
+  The server suite sends every one of those requests (on long-run step 1,
+  the step and step 2) and pools a procedure's requests in R4.time. It
+  measures the recorded list, which is also written to `viewer-calls.json`
+  in the report directory. Without the browser suite it measures the checked-in
   [`src/suites/viewer-calls.json`](src/suites/viewer-calls.json). When the
   recorded list and the checked-in one name different procedures, the server
   suite stops with every R budget `error`, so the measured set cannot drift
@@ -299,7 +304,12 @@ numbers are not the commit's alone), the shape and the suites, then a
 **timeline**: each suite's start and end, and the quiesce line after it. Each budget is a
 row: id, the budget, the measured value, its unit, its status, the verdict and the
 owning slice. A **Notes** section carries per-budget detail (for example the
-cases behind a solo timing).
+cases behind a solo timing). A **Load** section gives, for each suite, the
+API's pool wait p95 (`furan_db_pool_wait_seconds`, estimated from its
+buckets, with the number of transactions) and the event-loop lag p99
+(`nodejs_eventloop_lag_p99_seconds`), both over that suite alone. They
+explain a budget's number and are not budgets. The pool wait omits
+transactions that never begin, such as a connect error.
 
 Verdicts:
 

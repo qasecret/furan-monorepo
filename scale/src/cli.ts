@@ -16,6 +16,7 @@ import { loginOnce, mintJwt, verifyAuth } from "./clients/http.js";
 import { ScaleEnvError, parseScaleEnv } from "./env.js";
 import { InterruptedError, describeError } from "./errors.js";
 import { runSuiteGuarded } from "./guard.js";
+import { openLoadWindow } from "./load.js";
 import { describeQuiesce, quiesce } from "./quiesce.js";
 import { writeReport, type SuiteRun } from "./report.js";
 import {
@@ -227,6 +228,9 @@ async function run(
   const timeline: SuiteRun[] = [];
   for (const suite of suites) {
     const runner = RUNNERS[suite];
+    // The api's pool wait and the event-loop lag over the suite alone (spec
+    // §8), for the report's load notes; reading them never fails the run.
+    const load = await openLoadWindow(stack.registries.api);
     const startedAt = new Date().toISOString();
     const started = performance.now();
     say(`suite ${suite}: started ${startedAt}`);
@@ -237,6 +241,7 @@ async function run(
       )),
     );
     const seconds = (performance.now() - started) / 1000;
+    const suiteLoad = await load.close();
     const endedAt = new Date().toISOString();
     say(`suite ${suite}: ended ${endedAt} (${seconds.toFixed(1)} s)`);
     stillRunning();
@@ -249,6 +254,7 @@ async function run(
       endedAt,
       seconds,
       ...(quiesced !== undefined && { quiesce: quiesced }),
+      load: suiteLoad,
     });
     stillRunning();
   }
