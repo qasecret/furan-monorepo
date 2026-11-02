@@ -13,6 +13,6 @@ dependencies {
 }
 ```
 
-The full guide (configuration, ignore regions, the JUnit 5 extension, every adapter) is in the documentation portal: [Kotlin SDK](https://qasecret.github.io/furan-monorepo/sdk/kotlin), also at `/docs/sdk/kotlin` on Furan installs newer than v1.1.33, with its source in [`docs/sdk/kotlin.mdx`](../../docs/sdk/kotlin.mdx). New to Furan? Start with [Getting started](https://qasecret.github.io/furan-monorepo/getting-started/install).
+The full guide (configuration, ignore regions, the JUnit 5 extension, every adapter) is in the documentation portal: [Kotlin SDK](https://furan-monorepo.rabindrabiswal404.workers.dev/sdk/kotlin), also at `/docs/sdk/kotlin` on Furan installs newer than v1.1.33, with its source in [`docs/sdk/kotlin.mdx`](../../docs/sdk/kotlin.mdx). New to Furan? Start with [Getting started](https://furan-monorepo.rabindrabiswal404.workers.dev/getting-started/install).
 
 Runnable examples: [`examples/`](examples/). Changes: [`CHANGELOG.md`](CHANGELOG.md). License: Apache 2.0.
