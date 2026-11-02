@@ -23,6 +23,9 @@ export const CAPABILITIES: Capability[] = [
   // sdk
   { id: "sdk.virtual.happy", area: "sdk", label: "virtual-SDK create→upload→complete→verdict" },
   { id: "sdk.kotlin.smoke", area: "sdk", label: "real Kotlin SDK smoke", configGated: true },
+  { id: "sdk.js.cli", area: "sdk", label: "furan CLI: verdicts, exit codes, folder mapping, one batch per ciBuildId" },
+  { id: "sdk.js.regions", area: "sdk", label: "JS ignore region saved with a first baseline masks a later change" },
+  { id: "sdk.js.playwright", area: "sdk", label: "@furan/playwright fixture: one batch across workers, a change fails its test" },
   // diff
   { id: "diff.identical_passes", area: "diff", label: "identical → passed" },
   { id: "diff.engine.odiff", area: "diff", label: "odiff engine diff" },

@@ -16,7 +16,9 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
+    "@furan/cli": "workspace:*",
     "@furan/eslint-config": "workspace:*",
+    "@furan/playwright": "workspace:*",
     "@furan/tsconfig": "workspace:*",
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.5",

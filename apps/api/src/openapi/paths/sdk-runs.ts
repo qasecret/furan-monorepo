@@ -61,7 +61,7 @@ export function registerSdkRunsPaths(): void {
       },
       400: {
         description:
-          "Multipart parse failure, missing pngBytes, or other client error",
+          "Multipart parse failure, missing pngBytes, invalid `regions` (`invalid_regions`), or other client error",
         content: { "application/json": { schema: errorResponseSchema } },
       },
       401: {

@@ -358,4 +358,121 @@ d("POST /runs/:id/screenshots checkpoint tests (ADR-038)", () => {
       expect(await runStatus()).toBe("failed");
     });
   });
+
+  // ADR-080: the multipart route reads the `regions` field the SDKs send (it
+  // was silently dropped since ADR-038, so SDK ignore regions never reached
+  // the server and approve had nothing to promote).
+  describe("regions field (ADR-080)", () => {
+    const upload = async (regions?: string): Promise<Response> => {
+      const form = new FormData();
+      form.append("name", "regions-step");
+      form.append("viewport", "1280x720");
+      form.append("browser", "chromium");
+      if (regions !== undefined) form.append("regions", regions);
+      form.append(
+        "pngBytes",
+        new Blob([TINY_PNG], { type: "image/png" }),
+        "snap.png",
+      );
+      return fetch(`http://127.0.0.1:${port}/runs/${s.runId}/screenshots`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.memberJwt}` },
+        body: form,
+      });
+    };
+    const shotsOfRun = () =>
+      h.db.select().from(screenshots).where(eq(screenshots.runId, s.runId));
+    const box = (x: number) => ({ x, y: x + 1, width: x + 2, height: x + 3 });
+
+    test("stores ignore and layout regions on the screenshot", async () => {
+      const res = await upload(
+        JSON.stringify({ ignore: [box(1)], layout: [box(5)] }),
+      );
+      expect(res.status).toBe(200);
+      const [shot] = await shotsOfRun();
+      expect(shot!.ignoreRegions).toEqual([box(1)]);
+      expect(shot!.layoutRegions).toEqual([box(5)]);
+      expect(shot!.floatingRegions).toBeNull();
+      expect(shot!.contentRegions).toBeNull();
+      expect(shot!.accessibilityRegions).toBeNull();
+    });
+
+    test("strips unknown keys such as selector", async () => {
+      const res = await upload(
+        JSON.stringify({ ignore: [{ ...box(1), selector: ".clock" }] }),
+      );
+      expect(res.status).toBe(200);
+      const [shot] = await shotsOfRun();
+      expect(shot!.ignoreRegions).toEqual([box(1)]);
+    });
+
+    test("no regions field leaves every region column null", async () => {
+      const res = await upload();
+      expect(res.status).toBe(200);
+      const [shot] = await shotsOfRun();
+      expect(shot!.ignoreRegions).toBeNull();
+      expect(shot!.layoutRegions).toBeNull();
+      expect(shot!.floatingRegions).toBeNull();
+      expect(shot!.contentRegions).toBeNull();
+      expect(shot!.accessibilityRegions).toBeNull();
+    });
+
+    test("malformed regions JSON → 400 invalid_regions, nothing stored", async () => {
+      const res = await upload("{");
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe(
+        "invalid_regions",
+      );
+      expect(await shotsOfRun()).toHaveLength(0);
+      const [run] = await h.db
+        .select({ checkpointCount: testRuns.checkpointCount })
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      expect(run!.checkpointCount).toBe(0);
+    });
+
+    test("51 ignore boxes → 400 invalid_regions", async () => {
+      const res = await upload(
+        JSON.stringify({ ignore: Array.from({ length: 51 }, () => box(1)) }),
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe(
+        "invalid_regions",
+      );
+      expect(await shotsOfRun()).toHaveLength(0);
+    });
+
+    test("approve promotes uploaded regions onto the variation, tagged sdk", async () => {
+      const res = await upload(JSON.stringify({ ignore: [box(10)] }));
+      expect(res.status).toBe(200);
+      const { screenshotId, testVariationId } = (await res.json()) as {
+        screenshotId: string;
+        testVariationId: string;
+      };
+      // What the diff worker leaves on a first run with no baseline.
+      await h.db
+        .update(screenshots)
+        .set({ verdict: "new", verdictAt: new Date() })
+        .where(eq(screenshots.id, screenshotId));
+      await h.db
+        .update(testRuns)
+        .set({ status: "new" })
+        .where(eq(testRuns.id, s.runId));
+
+      const approve = await fetch(
+        `http://127.0.0.1:${port}/runs/${s.runId}/approve`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${s.memberJwt}` },
+        },
+      );
+      expect(approve.status).toBe(200);
+
+      const [variation] = await h.db
+        .select({ ignoreRegions: testVariations.ignoreRegions })
+        .from(testVariations)
+        .where(eq(testVariations.id, testVariationId));
+      expect(variation!.ignoreRegions).toEqual([{ ...box(10), source: "sdk" }]);
+    });
+  });
 });

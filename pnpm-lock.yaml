@@ -459,9 +459,15 @@ importers:
       '@axe-core/playwright':
         specifier: ^4.13.0
         version: 4.13.0(playwright-core@1.63.0)
+      '@furan/cli':
+        specifier: workspace:*
+        version: link:../packages/cli
       '@furan/eslint-config':
         specifier: workspace:*
         version: link:../packages/eslint-config
+      '@furan/playwright':
+        specifier: workspace:*
+        version: link:../packages/playwright
       '@furan/tsconfig':
         specifier: workspace:*
         version: link:../packages/tsconfig
@@ -486,6 +492,55 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/cli:
+    dependencies:
+      '@furan/client':
+        specifier: workspace:^
+        version: link:../client
+    devDependencies:
+      '@furan/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@furan/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      eslint:
+        specifier: ^10.12.0
+        version: 10.12.0(jiti@2.7.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.1
+
+  packages/client:
+    devDependencies:
+      '@furan/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@furan/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      eslint:
+        specifier: ^10.12.0
+        version: 10.12.0(jiti@2.7.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
 
   packages/config:
     dependencies:
@@ -637,6 +692,34 @@ importers:
         specifier: ^8.71.1
         version: 8.71.1(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
     devDependencies:
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+
+  packages/playwright:
+    dependencies:
+      '@furan/client':
+        specifier: workspace:^
+        version: link:../client
+    devDependencies:
+      '@furan/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@furan/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      eslint:
+        specifier: ^10.12.0
+        version: 10.12.0(jiti@2.7.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
@@ -6855,11 +6938,6 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
-  yaml@2.9.0:
-    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
-    engines: {node: '>= 14.6'}
-    hasBin: true
-
   yaml@2.9.1:
     resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
     engines: {node: '>= 14.6'}
@@ -8246,7 +8324,7 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.12.0(@opentelemetry/api@1.9.1)
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   '@opentelemetry/context-async-hooks@2.12.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -13175,8 +13253,6 @@ snapshots:
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
-
-  yaml@2.9.0: {}
 
   yaml@2.9.1: {}
 

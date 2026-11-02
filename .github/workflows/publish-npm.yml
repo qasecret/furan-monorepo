@@ -1,0 +1,59 @@
+name: publish-npm
+
+# Publishes the JS packages (@furan/client, @furan/playwright, @furan/cli) to
+# npm. release-please keeps the three on one version (the linked-versions
+# plugin), so merging a Release PR tags client/v<x>, cli/v<x> and
+# playwright/v<x> together; the client tag alone triggers this workflow, which
+# publishes all three in dependency order.
+#
+# Auth is npm Trusted Publishing: GitHub's OIDC token proves this workflow to
+# npm, so no npm token is stored and every version gets a provenance
+# attestation. One-time setup per package: docs/runbooks/npm-publish.md.
+
+on:
+  push:
+    tags: ["client/v*"]
+  # Re-run a release (versions already on npm are skipped): pick the tag in
+  # "Use workflow from", or `gh workflow run publish-npm.yml --ref client/v<x>`.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm Trusted Publishing + provenance
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22 + pnpm 9.15.0 + install (shared composite action).
+      - uses: ./.github/actions/setup
+
+      # Trusted Publishing needs npm 11.5.1 or later.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
+
+      # Gate: a red package never reaches npm (a published version can't be
+      # reused). Same checks as ci.yml; these packages need no services.
+      - name: Build, typecheck, lint and test the JS packages
+        run: pnpm turbo run build typecheck lint test --filter=@furan/client --filter=@furan/cli --filter=@furan/playwright
+
+      # `pnpm pack` writes each workspace:^ dependency as ^<version>; npm then
+      # publishes the tarball. pnpm 9 packs from inside the package folder.
+      - name: Pack and publish (client, playwright, cli)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/pkgs"
+          mkdir -p "$dest"
+          for pkg in client playwright cli; do
+            version="$(node -p "require('./packages/$pkg/package.json').version")"
+            if npm view "@furan/$pkg@$version" version > /dev/null 2>&1; then
+              echo "@furan/$pkg@$version is already on npm; skipping"
+              continue
+            fi
+            tarball="$(cd "packages/$pkg" && pnpm pack --pack-destination "$dest" | tail -1)"
+            npm publish "$tarball" --access public --provenance
+          done

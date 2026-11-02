@@ -15,7 +15,7 @@ Furan fits if **all** of the following are true:
 - Your team is **2–20 people** running a web app that ships often enough that visual regressions hurt.
 - You want a **self-hosted** tool — either for data-residency reasons or to avoid per-snapshot SaaS billing.
 - You already use **GitHub** for code review (GitLab / Bitbucket / Azure DevOps adapters are deferred to a later release).
-- Your tests run on **JUnit 5 (Kotlin / Java)** with **Selenium, Playwright, or Appium** — or you're willing to drive Furan's REST API directly.
+- Your tests run on **JUnit 5 (Kotlin / Java)** with **Selenium, Playwright, or Appium**, or on **Node** (Playwright Test, Cypress, or anything that writes PNGs) — or you're willing to drive Furan's REST API directly.
 
 If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy, Furan is not there yet. See [Status and roadmap](#status-and-roadmap).
 
@@ -28,6 +28,7 @@ If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy,
 - **Branch-aware baselines** — feature branch → PR base → default branch fallback chain with atomic promotion when a PR merges. Feature work doesn't pollute `main`'s baselines.
 - **GitHub App** — sticky PR comments, `furan/baselines` status check, auto-promote on merge.
 - **JVM SDK family** — `furan-selenium`, `furan-playwright`, and `furan-appium` on Maven Central (`4.2.0`), each a drop-in for a JUnit 5 suite on that driver over a shared capture core, plus a `furan-junit5` `@FuranTest` annotation.
+- **JavaScript / TypeScript** — `furan upload` (`@furan/cli`) sends PNG folders from any CI and fails the job when a screenshot needs review, with a GitHub Action around it; `@furan/playwright` is a Playwright Test fixture (`await furan.check("cart")`); `@furan/client` is the zero-dependency client underneath. See [`docs/integrations/javascript.md`](docs/integrations/javascript.md).
 - **Access control & audit** — four-tier role hierarchy (owner ⊇ admin ⊇ editor ⊇ guest) enforced per request, an admin audit-log viewer, and an opt-in Postgres row-level-security backstop for tenant isolation.
 - **OpenAPI 3.1 spec** — `GET /openapi.json`. **Interactive docs** at `GET /docs` (Scalar).
 - **Operations** — per-project retention TTL, nightly Postgres backup sidecar, restore + api-down runbooks.
@@ -213,6 +214,26 @@ class CheckoutTest {
 
 See [`packages/sdk-kotlin/README.md`](packages/sdk-kotlin/README.md) for the full SDK reference, including `snapshotAndAwait` for synchronous assertion-style tests, the `@FuranTest` JUnit 5 annotation, ignore regions, and the v2 runtime architecture.
 
+**From JavaScript / TypeScript** (no JVM): upload a folder of PNGs, where each subfolder becomes a test,
+
+```bash
+npm install --save-dev @furan/cli
+npx furan upload screenshots/
+```
+
+or check from inside a Playwright test:
+
+```ts
+import { test } from "@furan/playwright";
+
+test("checkout page", async ({ page, furan }) => {
+  await page.goto("https://app.example.com/checkout");
+  await furan.check("checkout-page");
+});
+```
+
+[`docs/integrations/javascript.md`](docs/integrations/javascript.md) covers both, Cypress, and the client library.
+
 Set three environment variables (locally for development, as CI secrets in production):
 
 ```bash
@@ -248,6 +269,8 @@ Other CI systems and the GitHub App have their own guides in [`docs/integrations
 - [`gitlab-ci.md`](docs/integrations/gitlab-ci.md) — GitLab CI/CD with merge request baselines and `parallel:matrix`
 - [`github-app.md`](docs/integrations/github-app.md) — create, configure and verify the GitHub App
 
+A JavaScript project uses the one-step `furan upload` Action instead (`uses: qasecret/furan-monorepo/packages/cli@cli/v<version>`); see [its section](docs/integrations/github-actions.md#javascript--typescript-the-furan-upload-action) of the same page.
+
 ## Direct image pulls
 
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
@@ -278,6 +301,8 @@ GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.33`. Ev
 
 **SDK call fails with `403`.** The `code` says why: `token_project_mismatch` (the token is bound to another project — check `FURAN_PROJECT_ID`), `not_a_project_member` (an unbound token works only on projects its owner is a member of), `insufficient_scope` (a read-only token tried to upload), or `session_required` (tokens can't call that endpoint; sign in instead).
 
+**`furan upload` exits 1, 2 or 3.** 1: a screenshot needs review (open the link in the summary). 2: bad input or configuration, so nothing was sent (the message names the file or variable). 3: no verdict: the api was unreachable or refused the request, or the wait timed out (`--timeout`). `furan upload --dry-run` shows the resolved settings without sending anything; `response was not JSON` means `FURAN_API_URL` points at the dashboard instead of the api (with the one-file install the api is under `/api`).
+
 ## Repository layout
 
 ```
@@ -289,6 +314,9 @@ furan-monorepo/
 │   ├── diff-worker/      diff-engine consumer (BullMQ)
 │   └── integrations/     GitHub App + Slack webhook
 ├── packages/
+│   ├── client/           @furan/client — JS/TS REST client (npm)
+│   ├── cli/              @furan/cli — `furan upload` + the GitHub Action (npm)
+│   ├── playwright/       @furan/playwright — Playwright Test fixture (npm)
 │   ├── db/               Drizzle schema + migrations + scope helpers
 │   ├── diff-engine/      Image-first: pixel (odiff/pixelmatch/looks-same) + VLM + axe
 │   ├── rules-engine/     Project auto-rules that auto-resolve known diffs
@@ -312,6 +340,7 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 - [`restore-from-backup.md`](docs/runbooks/restore-from-backup.md) — backup + restore lifecycle
 - [`migration-deploy-order.md`](docs/runbooks/migration-deploy-order.md) — schema-additive-first deploy ordering
 - [`maven-central-publish.md`](docs/runbooks/maven-central-publish.md) — Kotlin SDK release flow
+- [`npm-publish.md`](docs/runbooks/npm-publish.md) — JS packages release flow
 
 ## Status and roadmap
 
@@ -319,7 +348,7 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 
 Not yet built (no schedule, will land when there's user signal):
 
-- **Non-JVM SDKs** — TypeScript / JavaScript, Python, C#, plus Cypress / Storybook. The JVM adapters (Selenium, Playwright, Appium) already ship.
+- **More SDKs** — Python, C#, plus a Cypress plugin and Storybook. The JVM adapters (Selenium, Playwright, Appium) and the JavaScript / TypeScript packages (`furan upload`, the Playwright Test fixture, the client) already ship.
 - **More VCS integrations** — GitLab, Bitbucket, Azure DevOps. The GitHub App already ships.
 - **Enterprise identity** — SSO / SCIM / SAML and multi-organization tenancy. Furan is single-organization today; role-based access control and the audit log already ship.
 
