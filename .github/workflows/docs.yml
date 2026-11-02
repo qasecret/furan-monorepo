@@ -14,7 +14,8 @@ name: docs
 #         the default branch, and would refuse a deploy from a release tag.
 #
 # The copy each release bundles at /docs is built by apps/dashboard/Dockerfile,
-# not here.
+# and the Cloudflare Pages copy that follows main is built by Cloudflare — not
+# here. docs/maintainers/docs-hosting.md lists all three builds.
 
 on:
   pull_request:
