@@ -64,11 +64,13 @@ const UNREADABLE_IMAGE = new RegExp(
     "Unsupported (?:critical chunk type|bit depth|color type)",
     "Unexpected end of input",
     "bad png",
-    // odiff
+    // odiff 3 (libspng)
     "spng_get_ihdr",
     // Accepted edge: odiff does not say which input ended early; an end of
     // stream is a read failure either way.
     'Failure\\("end of stream"\\)',
+    // odiff 4 (its own decoders): "Could not load comparison image: <path>"
+    "Could not load (?:base|comparison|compare) image",
   ].join("|"),
   "i",
 );

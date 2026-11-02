@@ -49,18 +49,22 @@ function pagePng(
 }
 
 /**
- * `odiff-bin` unpacks a native executable at install time (its postinstall
- * copies the one for this platform to `bin/odiff.exe`). When that is missing
- * or not executable (an install that skipped scripts, an unsupported
- * platform) the test is skipped, with the reason, not failed.
+ * `odiff-bin` 4 ships the native executable in a per-platform optional
+ * dependency (`@odiff/<platform>-<arch>`) and finds it with its own
+ * `findBinary()`, the lookup `compare()` uses. When that fails or the file is
+ * not executable (an install that skipped optional dependencies, an
+ * unsupported platform) the test is skipped, with the reason, not failed.
  */
 function odiffUnavailable(): string | null {
   let bin: string;
   try {
-    const entry = createRequire(import.meta.url).resolve("odiff-bin");
-    bin = join(dirname(entry), "bin", "odiff.exe");
+    const load = createRequire(import.meta.url);
+    const { findBinary } = load(
+      join(dirname(load.resolve("odiff-bin")), "binary.js"),
+    ) as { findBinary: () => string };
+    bin = findBinary();
   } catch (err) {
-    return `odiff-bin could not be resolved: ${String(err)}`;
+    return `odiff binary could not be resolved: ${String(err)}`;
   }
   try {
     accessSync(bin, constants.X_OK);
@@ -93,6 +97,52 @@ describe.skipIf(skipReason !== null)(
       const decoded = PNG.sync.read(bytes);
       expect(decoded.width).toBe(24);
       expect(decoded.height).toBe(16);
+    });
+  },
+);
+
+describe.skipIf(skipReason !== null)(
+  `runL1Odiff ignore regions${skipReason ? ` (SKIPPED: ${skipReason})` : ""}`,
+  () => {
+    // A 144x144 block recoloured at (100, 100).
+    const baseline = pagePng(400, 400);
+    const candidate = pagePng(400, 400, (x, y) =>
+      x >= 100 && x < 244 && y >= 100 && y < 244 ? [200, 30, 30] : null,
+    );
+
+    it("ignores exactly the region's pixels", async () => {
+      const r = await runL1Odiff(
+        baseline,
+        candidate,
+        [{ x: 100, y: 100, width: 40, height: 40 }],
+        DEFAULT_ENGINE_CONFIG,
+      );
+
+      expect(r.pixelMismatchCount).toBe(144 * 144 - 40 * 40);
+    });
+
+    it("still counts a change in the region's rows, outside it", async () => {
+      // odiff 3 ignored every row from the region's top to its bottom, so
+      // this change at x=300 went unseen.
+      const r = await runL1Odiff(
+        baseline,
+        pagePng(400, 400, (x, y) => (x === 300 && y === 20 ? [0, 0, 0] : null)),
+        [{ x: 0, y: 0, width: 40, height: 40 }],
+        DEFAULT_ENGINE_CONFIG,
+      );
+
+      expect(r.pixelMismatchCount).toBe(1);
+    });
+
+    it("skips a region that padding clamped to nothing", async () => {
+      const r = await runL1Odiff(
+        baseline,
+        candidate,
+        [{ x: 400, y: 0, width: 0, height: 40 }],
+        DEFAULT_ENGINE_CONFIG,
+      );
+
+      expect(r.pixelMismatchCount).toBe(144 * 144);
     });
   },
 );
@@ -159,6 +209,35 @@ describe.skipIf(skipReason !== null)(
       expect(r.regions).toHaveLength(0);
     });
 
+    it("reports the exact percentage of a small change, which fails a zero threshold", async () => {
+      // 40 pixels of 1280x800 is 0.00390625%; odiff 4 prints it as 0.00.
+      const baseline = pagePng(1280, 800);
+      const candidate = pagePng(1280, 800, (x, y) =>
+        x === 10 && y < 40 ? [0, 0, 255] : null,
+      );
+
+      const r = await runL1Odiff(
+        baseline,
+        candidate,
+        undefined,
+        DEFAULT_ENGINE_CONFIG,
+      );
+
+      expect(r.pixelMismatchCount).toBe(40);
+      expect(r.diffPercent).toBe(0.00390625);
+
+      const d = await runDiff({
+        baseline: { image: baseline },
+        candidate: { image: candidate },
+        config: {
+          diffThreshold: 0,
+          engine: "odiff",
+          engineConfig: DEFAULT_ENGINE_CONFIG,
+        },
+      });
+      expect(d.passed).toBe(false);
+    });
+
     it("still reports a pixel diff, a complete PNG and a region for same-size images", async () => {
       const baseline = pagePng(1280, 800);
       const candidate = pagePng(1280, 800, (x, y) =>
@@ -172,11 +251,10 @@ describe.skipIf(skipReason !== null)(
         DEFAULT_ENGINE_CONFIG,
       );
 
-      // About the 200x100 block; odiff skips a few antialiased edge pixels.
-      expect(r.pixelMismatchCount).toBeGreaterThan(19000);
-      expect(r.pixelMismatchCount).toBeLessThanOrEqual(200 * 100);
-      expect(r.diffPercent).toBeGreaterThan(0);
-      expect(r.diffPercent).toBeLessThan(100);
+      // The whole 200x100 block: its hard edges are not antialiasing (odiff 3
+      // skipped some of them).
+      expect(r.pixelMismatchCount).toBe(200 * 100);
+      expect(r.diffPercent).toBe(1.953125); // 20000 of 1280x800
       expect(r.diffImageBytes.subarray(-IEND.length).equals(IEND)).toBe(true);
       const decoded = PNG.sync.read(r.diffImageBytes);
       expect(decoded.width).toBe(1280);
@@ -211,8 +289,8 @@ describe.skipIf(skipReason !== null)(
     });
 
     it("with Allow diff dimensions on, a taller screenshot with a matching top compares the area both share, and passes", async () => {
-      // The project opted out of failing on a size change (R30): odiff
-      // compares only the shared area, as it did before R27.
+      // The project opted out of failing on a size change (R30): only the
+      // shared area is compared. odiff 4 alone would count the 300 extra rows.
       const r = await runL1Odiff(
         pagePng(1280, 800),
         pagePng(1280, 1100),
@@ -226,7 +304,22 @@ describe.skipIf(skipReason !== null)(
       expect(r.regions).toHaveLength(0);
     });
 
-    it("with Allow diff dimensions on, a change inside the shared area is still a pixel diff", async () => {
+    it("with Allow diff dimensions on, a shorter screenshot also compares the area both share, and passes", async () => {
+      // odiff 3 compared only the baseline's area, so a page that shrank
+      // counted its missing rows; the shared area is the same either way.
+      const r = await runL1Odiff(
+        pagePng(1280, 1100),
+        pagePng(1280, 800),
+        undefined,
+        { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: true },
+      );
+
+      expect(r.diffPercent).toBe(0);
+      expect(r.pixelMismatchCount).toBe(0);
+      expect(r.diffImageBytes).toHaveLength(0);
+    });
+
+    it("with Allow diff dimensions on, a change inside the shared area is a pixel diff of that area", async () => {
       const r = await runL1Odiff(
         pagePng(1280, 800),
         pagePng(1280, 1100, (x, y) =>
@@ -236,10 +329,29 @@ describe.skipIf(skipReason !== null)(
         { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: true },
       );
 
-      expect(r.pixelMismatchCount).toBeGreaterThan(0);
-      expect(r.diffPercent).toBeGreaterThan(0);
-      expect(r.diffPercent).toBeLessThan(100);
+      expect(r.pixelMismatchCount).toBe(200 * 100);
+      expect(r.diffPercent).toBe(1.953125); // 20000 of 1280x800
       expect(r.diffImageBytes.subarray(-IEND.length).equals(IEND)).toBe(true);
+      const decoded = PNG.sync.read(r.diffImageBytes);
+      expect(decoded.width).toBe(1280);
+      expect(decoded.height).toBe(800);
+    });
+
+    it("with Allow diff dimensions on, a width change compares the shared columns", async () => {
+      const block = (x: number, y: number): [number, number, number] | null =>
+        x >= 100 && x < 300 && y >= 100 && y < 200 ? [200, 30, 30] : null;
+      const r = await runL1Odiff(
+        pagePng(1024, 800, block),
+        pagePng(1280, 800),
+        undefined,
+        { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: true },
+      );
+
+      expect(r.pixelMismatchCount).toBe(200 * 100);
+      expect(r.diffPercent).toBe(2.44140625); // 20000 of 1024x800
+      const decoded = PNG.sync.read(r.diffImageBytes);
+      expect(decoded.width).toBe(1024);
+      expect(decoded.height).toBe(800);
     });
 
     it("runDiff fails a page that grew, with no image and no regions", async () => {

@@ -11,7 +11,7 @@ const IEND_CHUNK = Buffer.from([
 /**
  * `bytes` as a complete PNG.
  *
- * odiff writes its diff image without the closing IEND chunk (signature, IHDR
+ * odiff 3 wrote its diff image without the closing IEND chunk (signature, IHDR
  * and IDAT, nothing more). Node's PNG readers tolerate that; browsers refuse
  * to decode it. A PNG whose last 12 bytes are not IEND gets the constant IEND
  * chunk appended. Anything else comes back untouched: a PNG that is already

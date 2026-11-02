@@ -358,35 +358,36 @@ const l1Cluster = (pos: number, description = CLUSTER) => ({
 });
 // The red→blue recolour of the square at 0 and at 96: diff image, signature.
 const DIFF_RECOLOR_0 =
-  "0a1b2ebad1c92266b1ad454f36c738d6ffc5287e108057f3a9c749c79739e50b";
+  "4a7bcfd1ad73d96539bd02275177dfcd02f5728c4775f8430b2721852dd7633c";
 const SIG_RECOLOR_0 =
   "v1:ce99865c4693f33bf0ec4c2ef4e8cba2d20f9e8cbca17dd2002377f965d34838";
 const DIFF_RECOLOR_96 =
-  "80df4d02a5cdf0232187cc468e07c98c482978c2fc8cbfd594c7fb88e78e283a";
+  "cb7895ead1515fea18bfe8e51b2c5f39563f4b8ac73a228d79d3af563c895d8d";
 const SIG_RECOLOR_96 =
   "v1:17875aee0d990933d8caaf10e0179018a81a50e4a2442cb4c4f5fa31e803a9d2";
 // The square moved from 0 to 144: diff image.
 const DIFF_MOVED_0_144 =
-  "dea792f6f0b03904c2ec0c7abdfbbf04a6ab112875b1f22da3eff1e3e90b86a8";
+  "5e080de49254078504527d5bdd1fadeca7216d8f3a8a619a5b6f204f53aea84c";
 // The strict step's signature (its breach region plus the recolour cluster).
 const SIG_STRICT_0 =
   "v1:fb0f1951837b4b8b4a28741bf60d85ce84702c29eaee33f423f8f88db5a15313";
 // The square moved from 96 to 240 under Layout: diff image.
 const DIFF_KEPT_96_240 =
-  "e070367ab7de5022db159fe03b778190d93ba22a4b0c879c61cae14af4c30f71";
+  "363aad828756ea5576c9c0909dd3f034ce6cfaeffecaff48a1a26d479d7dcf53";
 
-// A step's own numbers: the recolour of one 144px square (20521 px of 400²),
+// A step's own numbers: the recolour of one 144px square (all 20736 px of
+// 400²; odiff 3 skipped 215 of its edge pixels as antialiasing),
 // a move (the square leaves one place and appears in another), and a step
 // compared at 0% (identical, masked, or auto-approved without a diff).
 const RECOLOR_NUMBERS = {
   baselineSource: "this_branch",
-  diffPercent: 12.825625,
-  pixelMismatchCount: 20521,
+  diffPercent: 12.96,
+  pixelMismatchCount: 20736,
 };
 const MOVED_NUMBERS = {
   baselineSource: "this_branch",
-  diffPercent: 25.785625,
-  pixelMismatchCount: 41257,
+  diffPercent: 25.92,
+  pixelMismatchCount: 41472,
 };
 const ZERO = {
   baselineSource: "this_branch",
@@ -443,8 +444,8 @@ const GOLDEN: Record<string, Outcome> = {
       masked: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
     },
     run: {
-      diffPercent: 25.785625,
-      pixelMisMatchCount: 61778,
+      diffPercent: 25.92,
+      pixelMisMatchCount: 62208,
       diffName: DIFF_MOVED_0_144,
       baselineSource: "this_branch",
       vlmDescription: null,
@@ -466,8 +467,8 @@ const GOLDEN: Record<string, Outcome> = {
       same: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
     },
     run: {
-      diffPercent: 12.825625,
-      pixelMisMatchCount: 20521,
+      diffPercent: 12.96,
+      pixelMisMatchCount: 20736,
       diffName: DIFF_RECOLOR_0,
       baselineSource: "this_branch",
       vlmDescription: null,
@@ -497,10 +498,10 @@ const GOLDEN: Record<string, Outcome> = {
       ocr: {
         ...RECOLOR_0,
         // The matched date region (0,0 40×40) masks part of the recolour.
-        diffPercent: 9.2125,
-        pixelMismatchCount: 14740,
+        diffPercent: 11.96,
+        pixelMismatchCount: 19136,
         diffImageKey:
-          "8e7689fdc35c431648faf3340ef2b0f3980c7490722dfe7be765cc7a68b8cd72",
+          "52f511f958eb848e527e5aa2a74411502a7d53b097fd9400dd4a615418de9ba9",
         ocrAudit: [
           {
             bbox: { x: 0, y: 0, width: 40, height: 40 },
@@ -534,8 +535,8 @@ const GOLDEN: Record<string, Outcome> = {
       },
     },
     run: {
-      diffPercent: 12.825625,
-      pixelMisMatchCount: 35261,
+      diffPercent: 12.96,
+      pixelMisMatchCount: 39872,
       diffName: DIFF_RECOLOR_0,
       baselineSource: "this_branch",
       vlmDescription: null,
@@ -603,8 +604,8 @@ const GOLDEN: Record<string, Outcome> = {
       },
     },
     run: {
-      diffPercent: 25.785625,
-      pixelMisMatchCount: 102820,
+      diffPercent: 25.92,
+      pixelMisMatchCount: 103680,
       diffName: DIFF_KEPT_96_240,
       baselineSource: "this_branch",
       vlmDescription: null,
@@ -618,8 +619,8 @@ const GOLDEN: Record<string, Outcome> = {
       ruled: { ...RECOLOR_0, verdict: "passed", ruleWonRegions: 1 },
     },
     run: {
-      diffPercent: 12.825625,
-      pixelMisMatchCount: 20521,
+      diffPercent: 12.96,
+      pixelMisMatchCount: 20736,
       diffName: DIFF_RECOLOR_0,
       baselineSource: "this_branch",
       vlmDescription: null,
