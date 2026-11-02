@@ -24,10 +24,45 @@ public packages). Owning the scope also keeps the private `@furan/*` workspace
 package names (`@furan/db`, `@furan/shared-types`, …) from being registered by
 someone else, which protects the monorepo from dependency confusion.
 
-### 2. Publish the first version by hand
+### 2. Publish the first version
 
 npm lets you attach a trusted publisher only to a package that exists, so the
-very first version of each package is published from a maintainer's machine.
+very first version of each package is published with a token: either from
+GitHub Actions with a short-lived token (recommended, and the version gets a
+provenance attestation), or by hand from a maintainer's machine.
+
+#### From GitHub Actions with a bootstrap token
+
+1. On npmjs.com, Access Tokens → Generate New Token → **Granular Access
+   Token**: expiration 7 days, **Bypass two-factor authentication** on,
+   Packages and scopes **Read and write** for the `@furan` scope (or all
+   packages), Organizations **No access**.
+2. Store it as the repository secret `NPM_TOKEN` (it is read from your
+   terminal, never echoed):
+
+   ```bash
+   gh secret set NPM_TOKEN --repo qasecret/furan-monorepo
+   ```
+
+3. Run the workflow from `main`, not from the release tag: a run started on
+   the tag uses the tag's copy of the workflow, which predates the token
+   support. `main` must still carry the released versions (no later JS
+   release merged), which `node -p "require('./packages/client/package.json').version"`
+   confirms.
+
+   ```bash
+   gh workflow run publish-npm.yml --repo qasecret/furan-monorepo --ref main
+   ```
+
+4. After it has published all three, add the trusted publishers (step 3),
+   then delete the secret and revoke the token on npmjs.com:
+
+   ```bash
+   gh secret delete NPM_TOKEN --repo qasecret/furan-monorepo
+   ```
+
+#### By hand
+
 After the first release PR (step 2 of the release flow below) is merged and
 tagged, check out that tag and run, in this order:
 
@@ -50,10 +85,11 @@ hand-published first version has no provenance attestation; every later one
 does.)
 
 The release PR's merge also starts `publish-npm.yml` for that first version.
-That run **fails** at the publish step (the packages don't exist on npm yet,
-so no trusted publisher can be attached); this is expected. Publish by hand as
-above, add the trusted publishers (step 3), then re-run the workflow if you
-want it green: it skips the versions that are already on npm.
+Without `NPM_TOKEN` that run **fails** at the publish step with `ENEEDAUTH`
+(the packages don't exist on npm yet, so no trusted publisher can be
+attached); this is expected. Publish with a token as above, add the trusted
+publishers (step 3), then re-run the workflow if you want it green: it skips
+the versions that are already on npm.
 
 ### 3. Add the trusted publisher to each package
 
