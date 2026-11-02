@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
+import { ProjectIdRow } from "./_components/project-id-row";
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 
 import { Card } from "@/components/ui/card";
@@ -56,6 +57,7 @@ export default async function ProjectSettingsPage({
           Manage your project settings, diff configuration, and retention
           policies.
         </p>
+        <ProjectIdRow projectId={projectId} />
       </div>
       <ProjectSettingsForm projectId={projectId} userRole={me.data.role} />
     </PageContainer>

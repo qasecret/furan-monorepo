@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 
+import { ConnectSdkCard } from "@/components/onboarding/connect-sdk-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
-import { browserEnv } from "@/lib/env";
 import { formatRelativeTime } from "@/lib/format";
 import { batchHref } from "@/lib/review-url";
-import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import type { RouterOutputs } from "@/lib/trpc";
 
 type BuildRow = RouterOutputs["builds"]["list"]["items"][number];
@@ -95,30 +94,13 @@ export function NoBatchesMatch({ onClear }: { onClear: () => void }) {
   );
 }
 
-/** No batch in the project at all: the SDK quick start and the token link. */
-export function NoBatchesYet() {
+/** No batch in the project at all: connect the SDK (first-run spec §4.5). */
+export function NoBatchesYet({ projectId }: { projectId: string }) {
   return (
     <div className="p-6" data-testid="inbox-empty-none">
       <EmptyState
         title="No batches yet"
-        description={
-          <>
-            Connect the SDK to start sending runs.{" "}
-            <code className="font-mono text-xs">
-              io.github.qasecret:furan-selenium:{FURAN_SDK_VERSION}
-            </code>{" "}
-            · API: {browserEnv.NEXT_PUBLIC_API_URL}
-          </>
-        }
-        action={
-          <Link
-            href="/account/tokens"
-            className="text-brand-text hover:underline focus-ring"
-            data-testid="inbox-empty-token-link"
-          >
-            Create a personal access token →
-          </Link>
-        }
+        action={<ConnectSdkCard projectId={projectId} />}
       />
     </div>
   );

@@ -935,18 +935,18 @@ describe("Batches: empty states name a next action", () => {
     expect(screen.queryByText("Nothing needs review.")).toBeNull();
   });
 
-  test("no batches shows the SDK quick start", () => {
+  test("no batches shows the Connect the SDK card", () => {
     serve({ main: result([]), latest: result([]) });
     render(<InboxPage context={ctxOf()} />);
 
     expect(screen.getByText("No batches yet")).toBeDefined();
+    expect(screen.getByTestId("connect-sdk-card")).toBeDefined();
     expect(
-      screen.getByText(/io\.github\.qasecret:furan-selenium:/),
-    ).toBeDefined();
-    const link = screen.getByRole("link", {
-      name: /create a personal access token/i,
-    });
-    expect(link.getAttribute("href")).toBe("/account/tokens");
+      screen.getByTestId("connect-project-id").querySelector("code")
+        ?.textContent,
+    ).toBe("p1");
+    expect(screen.queryByText(/furan-selenium:/)).toBeNull();
+    expect(screen.queryByText(/personal access token/i)).toBeNull();
     expect(screen.queryByText("Nothing needs review.")).toBeNull();
   });
 

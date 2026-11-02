@@ -352,7 +352,7 @@ export function InboxPage({ context }: Props) {
     if (serverEmpty) {
       if (latest.isLoading) return <LoadingRows />;
       if (latest.data && latest.data.items.length === 0) {
-        return <NoBatchesYet />;
+        return <NoBatchesYet projectId={currentProjectId} />;
       }
       if (context.status === "needs-review" && !context.branch) {
         return (
