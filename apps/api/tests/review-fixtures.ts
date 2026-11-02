@@ -4,14 +4,17 @@ import {
   auditLog,
   baselines,
   builds,
+  computeRunCounters,
   inArray,
   or,
   projectMembers,
   projects,
+  recomputeRunStatus,
   screenshots,
   testRuns,
   testVariations,
   users,
+  type DB,
 } from "@furan/db";
 import {
   rollupRunStatus,
@@ -174,16 +177,20 @@ async function insertRun(
   baselineRunId: () => Promise<string>,
 ): Promise<ReviewRun> {
   const override = spec.override ?? null;
+  const checkpoints = spec.checkpoints.map((c) => ({
+    verdict: c.verdict,
+    decision: null,
+    diffFailed: false,
+  }));
   const lifecycle =
     spec.lifecycle ??
-    rollupRunStatus({
-      lifecycle: "running",
-      override,
-      checkpoints: spec.checkpoints.map((c) => ({
-        verdict: c.verdict,
-        decision: null,
-      })),
-    });
+    rollupRunStatus({ lifecycle: "running", override, checkpoints });
+  // The stored pending counters a writer would have left for these rows
+  // (spec 2026-10-27 §3.1): no decision and no failed diff yet.
+  const counters = computeRunCounters(
+    { lifecycle, override, checkpoints },
+    lifecycle,
+  );
   const [run] = await h.db
     .insert(testRuns)
     .values({
@@ -194,6 +201,8 @@ async function insertRun(
       status: lifecycle,
       statusOverride: override,
       branchName: ctx.branch,
+      pendingSteps: counters.pendingSteps,
+      failedSteps: counters.failedSteps,
       createdAt: nextCaptureTime(),
     })
     .returning({ id: testRuns.id });
@@ -458,6 +467,29 @@ export async function addReviewBuild(
   );
   seed.extraBuilds.push({ buildId, branch, runIds: [run.runId] });
   return { ...run, buildId };
+}
+
+/**
+ * Brings the stored pending counters (`test_runs.pending_steps` /
+ * `failed_steps`, spec 2026-10-27 §3) of `runIds` in line with their rows, by
+ * recomputing each run through `recomputeRunStatus`, the app's one writer:
+ * one transaction per run, in ascending id order (the lock order of every
+ * multi-run writer).
+ *
+ * The seeds start with consistent counters, and every API write keeps them
+ * so. A test that writes a run's inputs directly by SQL (a verdict or
+ * `diff_failed_at`, a decision, an override, a step) and then reads anything
+ * served from the counters must call this first. Like the app, it writes the
+ * rollup status too, so a run seeded with a status that is not its rollup
+ * gets the rollup.
+ */
+export async function syncRunCounters(
+  db: DB,
+  runIds: readonly string[],
+): Promise<void> {
+  for (const runId of [...new Set(runIds)].sort()) {
+    await recomputeRunStatus(db, runId);
+  }
 }
 
 /**

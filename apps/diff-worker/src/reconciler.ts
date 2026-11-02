@@ -510,6 +510,37 @@ async function failStuckStep(
 }
 
 /**
+ * The empty-run rule's scan: `running` runs not updated since `cutoff` that
+ * have no step, in ascending id order. Exported for its plan test.
+ *
+ * `status = 'running'` is a literal, not a bound parameter, so that the
+ * partial index `test_runs_running_idx (updated_at) WHERE status = 'running'`
+ * (migration 0043) is provably usable by every plan, a generic one included:
+ * postgres.js prepares the statement, and Postgres may switch it to a generic
+ * plan, which cannot prove a partial index's predicate from a parameter (it
+ * would scan another index over every run's status instead).
+ */
+export function staleEmptyRunsQuery(db: DB, cutoff: Date) {
+  const noStep = notExists(
+    db
+      .select({ id: screenshots.id })
+      .from(screenshots)
+      .where(eq(screenshots.runId, testRuns.id)),
+  );
+  return db
+    .select({ id: testRuns.id, projectId: testRuns.projectId })
+    .from(testRuns)
+    .where(
+      and(
+        sql`${testRuns.status} = 'running'`,
+        lt(testRuns.updatedAt, cutoff),
+        noStep,
+      ),
+    )
+    .orderBy(asc(testRuns.id));
+}
+
+/**
  * The stale-run sweeper's rule for a run no step was ever uploaded to: a
  * `running` run with no step, untouched since `cutoff`, becomes `empty`
  * (`checkpoint_count = 0`, `completed_at = now`). `empty` is a lifecycle state
@@ -520,6 +551,10 @@ async function failStuckStep(
  * finished or gained a step since the list was read. A run that throws is
  * rolled back, logged (`reconciler_run_failed`) and counted; the runs after it
  * are still visited.
+ *
+ * It need not recompute the run's stored pending counters (spec 2026-10-27
+ * §3.2): the run has no step (re-checked under the lock, which every upload
+ * takes first), so they are 0 before and after, whatever the status.
  */
 async function emptyStaleRuns(
   db: DB,
@@ -527,23 +562,7 @@ async function emptyStaleRuns(
   cutoff: Date,
   now: Date,
 ): Promise<{ emptied: number; errors: number }> {
-  const noStep = notExists(
-    db
-      .select({ id: screenshots.id })
-      .from(screenshots)
-      .where(eq(screenshots.runId, testRuns.id)),
-  );
-  const stale = await db
-    .select({ id: testRuns.id, projectId: testRuns.projectId })
-    .from(testRuns)
-    .where(
-      and(
-        eq(testRuns.status, "running"),
-        lt(testRuns.updatedAt, cutoff),
-        noStep,
-      ),
-    )
-    .orderBy(asc(testRuns.id));
+  const stale = await staleEmptyRunsQuery(db, cutoff);
 
   let emptied = 0;
   let errors = 0;

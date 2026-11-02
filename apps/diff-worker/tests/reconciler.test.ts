@@ -35,7 +35,11 @@ import {
 import { commitStep } from "../src/commit-step.js";
 import type { StepResult } from "../src/diff-step.js";
 import type { HandlerDeps } from "../src/handler.js";
-import { reconcileStuckSteps, type ReconcileQueue } from "../src/reconciler.js";
+import {
+  reconcileStuckSteps,
+  staleEmptyRunsQuery,
+  type ReconcileQueue,
+} from "../src/reconciler.js";
 
 import { counterValue } from "./helpers/metrics.js";
 
@@ -1054,4 +1058,91 @@ desc("reconcileStuckSteps", () => {
       );
     },
   );
+});
+
+/** A query parameter as a SQL literal, for `EXECUTE` of a prepared statement. */
+function literal(value: unknown): string {
+  const text =
+    value instanceof Date ? value.toISOString() : String(value as string);
+  return `'${text.replaceAll("'", "''")}'`;
+}
+
+desc("the empty-run scan's plan", () => {
+  let db: DB;
+  let closeDb: () => Promise<void>;
+
+  beforeAll(() => {
+    const created = createDb();
+    db = created.db;
+    closeDb = created.close;
+  });
+
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  it("uses test_runs_running_idx under a generic plan", async () => {
+    // The scan as the reconciler sends it. postgres.js prepares it, and after
+    // five executions Postgres may switch to a generic plan, which cannot
+    // prove a partial index's predicate from a bound parameter. Force that
+    // plan and check the partial index is still the one read.
+    const query = staleEmptyRunsQuery(db, new Date()).toSQL();
+    const name = `furan_empty_runs_${randomUUID().replaceAll("-", "")}`;
+    class Rollback {
+      constructor(readonly rows: { "QUERY PLAN": string }[]) {}
+    }
+    let plan: { "QUERY PLAN": string }[];
+    try {
+      plan = await db
+        .transaction(async (tx) => {
+          // On a near-empty test_runs (other suites truncate it) reading the
+          // whole table in id order through its primary key costs about as
+          // much as the partial index plus a sort, and the planner may take
+          // either. Give it a table where reading every run is clearly
+          // dearer, so the choice turns only on whether it can prove the
+          // partial index's predicate under a generic plan. ANALYZE counts
+          // this transaction's own rows; everything is rolled back below.
+          const [p] = await tx
+            .insert(projects)
+            .values({ name: `plan-${randomUUID()}`, mainBranchName: "main" })
+            .returning();
+          const [b] = await tx
+            .insert(builds)
+            .values({ projectId: p!.id })
+            .returning();
+          await tx.execute(sql`
+            INSERT INTO test_runs (project_id, build_id, name, branch_name, status)
+            SELECT ${p!.id}, ${b!.id}, 'plan-' || g, 'main', 'passed'
+            FROM generate_series(1, 5000) g`);
+          await tx.execute(sql`ANALYZE test_runs`);
+          await tx.execute(sql`SET LOCAL plan_cache_mode = force_generic_plan`);
+          await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+          await tx.execute(sql.raw(`PREPARE ${name} AS ${query.sql}`));
+          const args = query.params.map(literal).join(", ");
+          const rows = await tx.execute<{ "QUERY PLAN": string }>(
+            sql.raw(
+              `EXPLAIN EXECUTE ${name}${args.length > 0 ? `(${args})` : ""}`,
+            ),
+          );
+          throw new Rollback([...rows]);
+        })
+        .then(
+          () => {
+            throw new Error("the plan transaction must roll back");
+          },
+          (err: unknown) => {
+            if (err instanceof Rollback) return err.rows;
+            throw err;
+          },
+        );
+    } finally {
+      // ANALYZE wrote test_runs' row estimate in place, outside the rolled-back
+      // transaction: measure the real table again for the tests after this one.
+      await db.execute(sql`ANALYZE test_runs`);
+    }
+    const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
+    expect(text).toContain("test_runs_running_idx");
+    // The status is a literal, so the only parameter left is the cutoff.
+    expect(query.params).toHaveLength(1);
+  });
 });
