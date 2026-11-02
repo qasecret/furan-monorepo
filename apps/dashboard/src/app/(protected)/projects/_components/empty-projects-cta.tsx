@@ -1,5 +1,6 @@
 import { CreateProjectDialog } from "./create-project-dialog";
 
+import { DocsLink } from "@/components/docs-link";
 import { Card } from "@/components/ui/card";
 import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
@@ -19,11 +20,19 @@ export function EmptyProjectsCta({ role }: Props) {
           <div>
             <h2 className="text-lg font-semibold text-fg">No projects yet</h2>
             <p className="text-sm text-fg-secondary">
-              Create your first project to get started. You&apos;ll mint a
-              personal access token and connect the SDK next.
+              Create your first project. Next you&apos;ll create an API token
+              and connect the SDK.
             </p>
           </div>
-          <CreateProjectDialog />
+          <div className="flex flex-wrap items-center gap-3">
+            <CreateProjectDialog />
+            <DocsLink
+              slug="getting-started/create-project"
+              className="text-sm text-brand-text hover:underline focus-ring"
+            >
+              Creating a project
+            </DocsLink>
+          </div>
         </div>
       </Card>
     );

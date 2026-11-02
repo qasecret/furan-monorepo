@@ -20,6 +20,7 @@ import { StatusChips } from "./status-chips";
 import { useUrlText } from "./use-url-text";
 
 import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
+import { NoCurrentProject } from "@/app/(protected)/_components/no-current-project";
 import { Button } from "@/components/ui/button";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { Input } from "@/components/ui/input";
@@ -320,16 +321,7 @@ export function InboxPage({ context }: Props) {
     show: (status) => setContext({ status }),
   });
 
-  if (!currentProjectId) {
-    return (
-      <div
-        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-fg-muted"
-        data-testid="inbox-no-project"
-      >
-        No project assigned. Ask an admin to add you to a project.
-      </div>
-    );
-  }
+  if (!currentProjectId) return <NoCurrentProject />;
 
   // What the body shows when there is no row to show.
   const showTable = list.isLoading || rows.length > 0;

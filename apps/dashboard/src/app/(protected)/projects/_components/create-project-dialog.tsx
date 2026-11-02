@@ -48,10 +48,10 @@ type FormValues = z.output<typeof schema>;
  * + zod + REST fetch. 409 surfaces as an inline name-field error so the user
  * can rename without losing context.
  *
- * On 201 we router.push(`/projects/<id>`) so the new project's settings page
- * is the next surface — that's where the user mints a PAT and configures the
- * SDK — and router.refresh() so the layout's project list (the palette's
- * "Jump to project") includes it.
+ * On 201 we router.push(`/projects/<id>`), which lands on the new project's
+ * Builds page, whose empty state connects the SDK (the API URL, the project
+ * ID and where to create an API token), and router.refresh() so the layout's
+ * project list (the palette's "Jump to project") includes it.
  */
 export function CreateProjectDialog({
   open: openProp,
