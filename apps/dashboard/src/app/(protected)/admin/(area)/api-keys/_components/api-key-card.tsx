@@ -5,48 +5,24 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteTokenButton } from "../../../../account/tokens/_components/delete-token-button";
+import {
+  formatDate,
+  relative,
+  type TokenRow,
+} from "../../../../account/tokens/_components/token-grant";
+import {
+  ExpiryText,
+  ProjectText,
+  ScopeBadge,
+} from "../../../../account/tokens/_components/token-grant-badges";
 
 interface Props {
-  id: string;
-  label: string;
-  createdAt: string | Date;
-  lastUsedAt: string | Date | null;
+  token: TokenRow;
   onDeleted: () => void;
 }
 
-function fmtDate(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function relative(date: string | Date | null): string {
-  if (!date) return "Never";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (Number.isNaN(d.getTime())) return "—";
-  const diffMs = Date.now() - d.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  return d.toLocaleDateString();
-}
-
-export function ApiKeyCard({
-  id,
-  label,
-  createdAt,
-  lastUsedAt,
-  onDeleted,
-}: Props) {
+export function ApiKeyCard({ token, onDeleted }: Props) {
+  const { id, label, createdAt, lastUsedAt, lastUsedIp } = token;
   const [copied, setCopied] = useState(false);
   const maskedKey = `furan_pat_**********************${id.slice(-4)}`;
 
@@ -68,12 +44,22 @@ export function ApiKeyCard({
           <KeyRound className="h-4 w-4 text-brand-text" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-fg">{label}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-fg">{label}</span>
+            <ScopeBadge token={token} />
+          </div>
           <div className="truncate font-mono text-xs tabular-nums text-fg-muted">
             {maskedKey}
           </div>
-          <div className="mt-1 flex items-center gap-3 font-mono text-2xs tabular-nums text-fg-muted">
-            <span>Created {fmtDate(createdAt)}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <ProjectText token={token} />
+            <span aria-hidden className="text-edge-strong">
+              &middot;
+            </span>
+            <ExpiryText token={token} />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 font-mono text-2xs tabular-nums text-fg-muted">
+            <span>Created {formatDate(createdAt)}</span>
             <span aria-hidden className="text-edge-strong">
               &middot;
             </span>
@@ -82,6 +68,7 @@ export function ApiKeyCard({
               <span className={lastUsedAt ? "" : "italic"}>
                 {relative(lastUsedAt)}
               </span>
+              {lastUsedAt && lastUsedIp ? ` from ${lastUsedIp}` : null}
             </span>
           </div>
         </div>

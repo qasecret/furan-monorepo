@@ -18,6 +18,7 @@ export async function registerRunEventsRoute(
   app.get(
     "/api/v1/runs/:id/events",
     {
+      config: { tokenAccess: "read" },
       preHandler: [
         app.authenticate,
         requireProjectMember("read", {

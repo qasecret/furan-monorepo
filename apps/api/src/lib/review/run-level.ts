@@ -4,6 +4,7 @@ import {
   and,
   asc,
   eq,
+  inArray,
   isNotNull,
   isNull,
   screenshots,
@@ -115,6 +116,32 @@ async function refuseFailedSteps(tx: Tx, run: LockedRun): Promise<void> {
 }
 
 /**
+ * The targets whose verdict is `new`: a first image with no baseline yet. What
+ * a scoped API token's approve may accept (`saveNewTests`, ADR-064 step B); a
+ * change against an existing baseline is left pending for a reviewer.
+ */
+async function keepNewCheckpoints(
+  tx: Tx,
+  targets: ReviewTarget[],
+): Promise<ReviewTarget[]> {
+  if (targets.length === 0) return targets;
+  const rows = await tx
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        inArray(
+          screenshots.id,
+          targets.map((t) => t.screenshotId),
+        ),
+        eq(screenshots.verdict, "new"),
+      ),
+    );
+  const fresh = new Set(rows.map((r) => r.id));
+  return targets.filter((t) => fresh.has(t.screenshotId));
+}
+
+/**
  * Approves every pending checkpoint of a run: `inbox.approve` (source `inbox`)
  * and the SDK's `POST /runs/:id/approve` (`sdk`). The run is locked first and
  * must be reviewable (`lockReviewableRun`), and none of its undecided
@@ -124,16 +151,19 @@ async function refuseFailedSteps(tx: Tx, run: LockedRun): Promise<void> {
  */
 export async function approveRunPending(
   ctx: ReviewActionCtx,
-  input: { runId: string; source: DecisionSource },
+  input: { runId: string; source: DecisionSource; onlyNew?: boolean },
 ): Promise<{ runId: string; decided: DecideResult["decided"] }> {
   const projectId = await requireRunProject(ctx.tx, input.runId);
   const run = await lockReviewableRun(ctx.tx, projectId, input.runId);
   await refuseFailedSteps(ctx.tx, run);
-  const { targets } = await selectPendingTargets(
+  const { targets: pending } = await selectPendingTargets(
     ctx.tx,
     { projectId, runId: run.id },
     NO_CAP,
   );
+  const targets = input.onlyNew
+    ? await keepNewCheckpoints(ctx.tx, pending)
+    : pending;
 
   const decided =
     targets.length === 0

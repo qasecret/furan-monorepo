@@ -1,7 +1,8 @@
 import { sql, tokens, type DB } from "@furan/db";
 
 /**
- * Record that a personal access token was just used.
+ * Record that a personal access token was just used, and from where (`ip`,
+ * the client address as `req.ip` resolves it under TRUST_PROXY).
  *
  * Throttled at the row level: `last_used_at` is only rewritten when it is
  * null or older than the window below, so the hot auth path performs at most
@@ -14,11 +15,12 @@ import { sql, tokens, type DB } from "@furan/db";
 export async function touchTokenLastUsed(
   db: DB,
   tokenId: string,
+  ip: string | null,
 ): Promise<void> {
   try {
     await db
       .update(tokens)
-      .set({ lastUsedAt: sql`now()` })
+      .set({ lastUsedAt: sql`now()`, lastUsedIp: ip })
       .where(
         sql`${tokens.id} = ${tokenId} and (${tokens.lastUsedAt} is null or ${tokens.lastUsedAt} < now() - interval '60 seconds')`,
       );

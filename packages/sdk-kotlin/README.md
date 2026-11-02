@@ -124,6 +124,13 @@ export FURAN_API_TOKEN=furan_pat_<from-dashboard>   # /account/tokens
 export FURAN_PROJECT_ID=<from-dashboard>            # /projects/<id>
 ```
 
+For CI, mint the token with **Access: SDK & CI** and bind it to the project in
+`FURAN_PROJECT_ID`; it expires after 90 days by default. Such a token can upload
+runs and, with `saveNewTests`, save the first baseline of a new test, but it
+can't approve a change against an existing baseline, reach other projects, or
+call admin endpoints. A refused call fails with the API's error code:
+`401 token_expired`, `403 token_project_mismatch` or `403 insufficient_scope`.
+
 ## Playwright
 
 `furan-playwright` wraps `FuranCapture` with the same open → snapshot → close

@@ -7,6 +7,16 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import {
+  expiry,
+  FALLBACK_TOKEN_POLICY,
+  lifetimeLabel,
+  projectLabel,
+  scopeLabel,
+  type ProjectOption,
+  type TokenPolicy,
+} from "./token-grant";
+
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,21 +30,48 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { browserEnv } from "@/lib/env";
+
+/** The project choice that leaves the token unbound. */
+const ALL_PROJECTS = "all";
+/** The lifetime choice for a token that never expires (operator cap 0). */
+const NO_EXPIRY = "never";
 
 const schema = z.object({
   label: z.string().min(1, "Label is required").max(80, "Label too long"),
+  scope: z.enum(["sdk", "read"]),
+  projectId: z.string().min(1),
+  lifetime: z.string().min(1),
 });
 
 type FormValues = z.infer<typeof schema>;
 
+interface CreatedToken {
+  token: string;
+  scopes: Array<"legacy" | "sdk" | "read">;
+  projectId: string | null;
+  expiresAt: string | null;
+}
+
 interface CreateTokenDialogProps {
+  /** Projects the token can be bound to; the first is preselected. */
+  projects?: ProjectOption[];
+  /** What the operator allows; defaults to the api's own defaults. */
+  policy?: TokenPolicy;
   onCreated?: () => void;
   children?: React.ReactNode;
 }
@@ -42,7 +79,10 @@ interface CreateTokenDialogProps {
 /**
  * Two-phase dialog for creating a personal access token.
  *
- * Phase 1: user types a label → POST /account/tokens.
+ * Phase 1: user types a label and picks what the token may do (ADR-064 step
+ *   B): its scope (`sdk` by default), a project (the first one preselected;
+ *   "All my projects" leaves it unbound) and a lifetime (the operator's
+ *   default) → POST /account/tokens.
  * Phase 2: shows the raw `furan_pat_*` value EXACTLY ONCE, with copy-to-
  *   clipboard. Dismissal is gated by an "I've stored this token securely"
  *   checkbox. While in phase 2, the dialog refuses to close via overlay /
@@ -50,25 +90,33 @@ interface CreateTokenDialogProps {
  *   the token without confirming they've saved it.
  *
  * Security invariants:
- *  - The raw token lives ONLY in component state (`rawToken`).
- *  - On close, `rawToken` is cleared. No setItem to localStorage or
+ *  - The raw token lives ONLY in component state (`created`).
+ *  - On close, `created` is cleared. No setItem to localStorage or
  *    sessionStorage anywhere in this file — a dedicated test enforces this.
  */
 export function CreateTokenDialog({
+  projects = [],
+  policy = FALLBACK_TOKEN_POLICY,
   onCreated,
   children,
 }: CreateTokenDialogProps) {
   const [open, setOpen] = useState(false);
-  const [rawToken, setRawToken] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreatedToken | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [copied, setCopied] = useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { label: "" },
+    defaultValues: {
+      label: "",
+      scope: "sdk",
+      projectId: projects[0]?.id ?? ALL_PROJECTS,
+      lifetime: String(policy.defaultLifetimeDays),
+    },
   });
+  const rawToken = created?.token ?? null;
 
   const resetAll = (): void => {
-    setRawToken(null);
+    setCreated(null);
     setAcknowledged(false);
     setCopied(false);
     form.reset();
@@ -89,22 +137,47 @@ export function CreateTokenDialog({
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: values.label }),
+        body: JSON.stringify({
+          label: values.label,
+          scopes: [values.scope],
+          projectId:
+            values.projectId === ALL_PROJECTS ? null : values.projectId,
+          expiresInDays:
+            values.lifetime === NO_EXPIRY ? null : Number(values.lifetime),
+        }),
       },
     );
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { code?: string };
-      toast.error(body?.code ?? "Failed to create token");
+      const body = (await res.json().catch(() => ({}))) as {
+        code?: string;
+        message?: string;
+      };
+      toast.error(body?.message ?? body?.code ?? "Failed to create token");
       return;
     }
-    const data = (await res.json()) as { token?: string };
+    const data = (await res.json()) as Partial<CreatedToken>;
     if (!data?.token) {
       toast.error(
         "Token created but raw value missing — please contact support",
       );
       return;
     }
-    setRawToken(data.token);
+    setCreated({
+      token: data.token,
+      scopes: data.scopes ?? [values.scope],
+      projectId: data.projectId ?? null,
+      expiresAt: data.expiresAt ?? null,
+    });
+  };
+
+  const createdSummary = (c: CreatedToken): string => {
+    const projectName =
+      projects.find((p) => p.id === c.projectId)?.name ?? null;
+    return [
+      scopeLabel(c.scopes),
+      projectLabel({ projectId: c.projectId, projectName }),
+      expiry(c.expiresAt).label,
+    ].join(" · ");
   };
 
   const handleCopy = async (): Promise<void> => {
@@ -137,7 +210,8 @@ export function CreateTokenDialog({
             <DialogHeader>
               <DialogTitle>Create personal access token</DialogTitle>
               <DialogDescription>
-                Pick a label that describes where this token will be used.
+                Give the token only what this CI job needs. You can&apos;t
+                change it later; create a new one instead.
               </DialogDescription>
             </DialogHeader>
             <Form {...form}>
@@ -163,6 +237,99 @@ export function CreateTokenDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="scope"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Access</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="scope-trigger">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="sdk">
+                            SDK &amp; CI: upload runs and read results
+                          </SelectItem>
+                          <SelectItem value="read">
+                            Read-only: read projects, builds and runs
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        An SDK token can save the first baseline of a new test,
+                        but never approves a change; that stays with a reviewer.
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="projectId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Project</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="project-trigger">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {projects.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value={ALL_PROJECTS}>
+                            All my projects
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        &ldquo;All my projects&rdquo; covers the projects
+                        you&apos;re a member of, now and later.
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="lifetime"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expires after</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="lifetime-trigger">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {policy.lifetimeDays.map((days) => (
+                            <SelectItem key={days} value={String(days)}>
+                              {lifetimeLabel(days)}
+                            </SelectItem>
+                          ))}
+                          {policy.allowNoExpiry && (
+                            <SelectItem value={NO_EXPIRY}>Never</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )}
+                />
                 <DialogFooter>
                   <Button
                     type="submit"
@@ -185,6 +352,14 @@ export function CreateTokenDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
+              {created && (
+                <p
+                  className="text-xs text-fg-muted"
+                  data-testid="created-token-summary"
+                >
+                  {createdSummary(created)}
+                </p>
+              )}
               <div className="flex items-stretch gap-2">
                 <code
                   aria-label="Personal access token"

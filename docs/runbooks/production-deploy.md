@@ -111,6 +111,8 @@ MINIO_ROOT_USER=furan
 MINIO_ROOT_PASSWORD=<high-entropy>
 JWT_SECRET=<openssl rand -hex 32 — api fails closed if <32 chars>
 JWT_EXPIRY=7d
+# Optional: longest API-token lifetime in days (default 365; 0 = no expiry allowed).
+# FURAN_PAT_MAX_LIFETIME_DAYS=365
 # Optional first-admin bootstrap: seeded ONLY when the users table is empty.
 FURAN_BOOTSTRAP_ADMIN_EMAIL=admin@local.test
 FURAN_BOOTSTRAP_ADMIN_PASSWORD=<strong>

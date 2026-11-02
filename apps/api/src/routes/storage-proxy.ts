@@ -18,6 +18,7 @@ import { z } from "zod";
 import { sendError } from "../lib/errors.js";
 import type { MemberProjectsCache } from "../lib/member-projects-cache.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
+import { bypassesMembership, isScopedToken } from "../lib/token-access.js";
 import type { AuthedUser } from "../plugins/auth.js";
 
 /**
@@ -58,7 +59,10 @@ export async function registerStorageProxyRoute(
 
   app.get(
     "/api/v1/storage/:key",
-    { onRequest: [app.authenticate] },
+    {
+      onRequest: [app.authenticate],
+      config: { tokenAccess: "read" },
+    },
     async (req, reply) => {
       const parsed = paramsSchema.safeParse(req.params);
       if (!parsed.success) {
@@ -228,16 +232,20 @@ export function keyOwnershipQuery(
 
 /**
  * True if `auth` may read the storage `key`. Admins/owners bypass — by role
- * only, so an admin's API token keeps it like the other membership gates
- * (ADR-064 step A). Guests are refused next, before any lookup, as those
- * gates refuse them: a guest reads no project's data, member or not, so the
- * answer never depends on the key. Otherwise the key must be referenced by a
- * row (see {@link KEY_OWNERSHIP_SOURCES}) in one of the caller's member
- * projects. The member-project set is cached per user (short TTL) since the
- * diff viewer fetches many keys per page and the set is stable between
- * membership changes; the ownership check itself is never cached. The role is
- * the live one (see `plugins/auth.ts`), so a demotion to guest applies to the
- * next fetch even while the cached set still names the user's projects.
+ * only, so an admin's session or `legacy` token keeps it like the other
+ * membership gates (ADR-064 step A); a scoped API token doesn't bypass by
+ * role (step B). Guests are refused next, before any lookup, as those gates
+ * refuse them: a guest reads no project's data, member or not, so the answer
+ * never depends on the key. Otherwise the key must be referenced by a row
+ * (see {@link KEY_OWNERSHIP_SOURCES}) in one of the projects the caller may
+ * read: its member projects, or for a scoped API token its bound project (an
+ * admin's bound token reads it as a member would) or, unbound, its member
+ * projects with no admin bypass (step B). The member-project set is cached per
+ * user (short TTL) since the diff viewer fetches many keys per page and the
+ * set is stable between membership changes; the ownership check itself is
+ * never cached. The role is the live one (see `plugins/auth.ts`), so a
+ * demotion to guest applies to the next fetch even while the cached set still
+ * names the user's projects.
  */
 async function callerCanAccessKey(
   db: DB,
@@ -245,10 +253,17 @@ async function callerCanAccessKey(
   key: string,
   cache: MemberProjectsCache | null,
 ): Promise<boolean> {
-  if (isAtLeastAdmin(auth.role)) return true;
+  const scoped = isScopedToken(auth);
+  if (!scoped && isAtLeastAdmin(auth.role)) return true;
   if (auth.role === "guest") return false;
 
-  const projectIds = await memberProjectIds(db, auth.id, cache);
+  let projectIds = await memberProjectIds(db, auth.id, cache);
+  if (scoped && auth.projectId !== null) {
+    const bound = auth.projectId;
+    projectIds = bypassesMembership(auth, bound)
+      ? [bound]
+      : projectIds.filter((id) => id === bound);
+  }
   if (projectIds.length === 0) return false;
 
   const rows = await db.execute<{ owned: boolean }>(

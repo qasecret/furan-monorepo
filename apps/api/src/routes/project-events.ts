@@ -105,6 +105,7 @@ export async function registerProjectEventsRoute(
   app.get(
     "/api/v1/projects/:id/events",
     {
+      config: { tokenAccess: "read" },
       preHandler: [
         app.authenticate,
         requireProjectMember("read", { from: { params: "id" } }),

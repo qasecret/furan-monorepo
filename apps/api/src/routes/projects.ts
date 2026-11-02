@@ -11,6 +11,7 @@ import {
 import { sendError, sendSessionRequired } from "../lib/errors.js";
 import { toPublicProject } from "../lib/project-ai-config.js";
 import { hasAdminSurface, isAtLeastAdmin } from "../lib/roles.js";
+import { bypassesMembership, isScopedToken } from "../lib/token-access.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 export const mergeBody = z.object({
@@ -48,46 +49,54 @@ export const projectListResponse = z.array(projectResponse);
 export async function registerProjectsRoutes(
   app: FastifyInstance,
 ): Promise<void> {
-  app.get("/projects", { preHandler: app.authenticate }, async (req, reply) => {
-    if (!req.auth) {
-      return sendError(reply, 401, "unauthenticated");
-    }
-    if (req.auth.role === "guest") return [];
-    const auth = req.auth;
-    // Listing EVERY project is an admin surface → session-only (ADR-064):
-    // an admin's API token gets session_required rather than a silently
-    // narrower list. No SDK/CI flow lists projects with a token.
-    const listAll = hasAdminSurface(auth);
-    if (!listAll && isAtLeastAdmin(auth.role)) {
-      return sendSessionRequired(reply);
-    }
-    return withRequestScope(app, req, async (db) => {
-      if (listAll) {
+  app.get(
+    "/projects",
+    { preHandler: app.authenticate, config: { tokenAccess: "read" } },
+    async (req, reply) => {
+      if (!req.auth) {
+        return sendError(reply, 401, "unauthenticated");
+      }
+      if (req.auth.role === "guest") return [];
+      const auth = req.auth;
+      // Listing EVERY project is an admin surface → session-only (ADR-064):
+      // an admin's `legacy` API token gets session_required rather than a
+      // silently narrower list. A scoped token lists the projects it works on:
+      // its bound project, or its owner's member projects (step B).
+      const scoped = isScopedToken(auth);
+      const listAll = hasAdminSurface(auth);
+      if (!listAll && !scoped && isAtLeastAdmin(auth.role)) {
+        return sendSessionRequired(reply);
+      }
+      return withRequestScope(app, req, async (db) => {
+        if (listAll) {
+          const rows = await db
+            .select()
+            .from(projects)
+            .orderBy(asc(projects.name));
+          return rows.map(toPublicProject);
+        }
+        // editor, or a scoped token — only member-of projects
+        const memberRows = await db
+          .select({ projectId: projectMembers.projectId })
+          .from(projectMembers)
+          .where(eq(projectMembers.userId, auth.id));
+        let ids = memberRows.map((r) => r.projectId);
+        if (scoped && auth.projectId !== null) {
+          const bound = auth.projectId;
+          ids = bypassesMembership(auth, bound)
+            ? [bound]
+            : ids.filter((id) => id === bound);
+        }
+        if (ids.length === 0) return [];
         const rows = await db
           .select()
           .from(projects)
+          .where(inArray(projects.id, ids))
           .orderBy(asc(projects.name));
         return rows.map(toPublicProject);
-      }
-      // editor — only member-of projects
-      const memberRows = await db
-        .select({ projectId: projectMembers.projectId })
-        .from(projectMembers)
-        .where(eq(projectMembers.userId, auth.id));
-      if (memberRows.length === 0) return [];
-      const rows = await db
-        .select()
-        .from(projects)
-        .where(
-          inArray(
-            projects.id,
-            memberRows.map((r) => r.projectId),
-          ),
-        )
-        .orderBy(asc(projects.name));
-      return rows.map(toPublicProject);
-    });
-  });
+      });
+    },
+  );
 
   app.post(
     "/projects",
@@ -136,6 +145,7 @@ export async function registerProjectsRoutes(
   app.get(
     "/projects/:id",
     {
+      config: { tokenAccess: "read" },
       preHandler: [
         app.authenticate,
         requireProjectMember("read", { from: { params: "id" } }),
@@ -182,6 +192,7 @@ export async function registerProjectsRoutes(
   app.post(
     "/projects/:id/merge",
     {
+      config: { tokenAccess: "sdk" },
       preHandler: [
         app.authenticate,
         requireProjectMember("write", { from: { params: "id" } }),

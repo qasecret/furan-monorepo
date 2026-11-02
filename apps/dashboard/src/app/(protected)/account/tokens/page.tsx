@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { TokensTable, type TokenRow } from "./_components/tokens-table";
+import { TokensTable } from "./_components/tokens-table";
+import { loadTokenPage } from "./_lib/load-token-page";
 
-import { apiGet } from "@/lib/api-client";
 import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
 
 export const metadata: Metadata = { title: "Tokens" };
@@ -13,8 +13,9 @@ export default async function TokensPage() {
   const role = await getViewerRole();
   if (isAtLeastAdmin(role)) redirect("/admin/api-keys");
 
-  const { data } = await apiGet<TokenRow[]>("/account/tokens");
-  const tokens = Array.isArray(data) ? data : [];
+  const { tokens, projects, policy } = await loadTokenPage();
 
-  return <TokensTable initialTokens={tokens} />;
+  return (
+    <TokensTable initialTokens={tokens} projects={projects} policy={policy} />
+  );
 }

@@ -19,6 +19,7 @@ import Fastify, {
 } from "fastify";
 
 import type { Env } from "./env.js";
+import { recordAuthFailure } from "./lib/auth-metrics.js";
 import type { Broadcaster } from "./lib/broadcast.js";
 import { errorLogLevel } from "./lib/error-log-level.js";
 import { sendError } from "./lib/errors.js";
@@ -26,6 +27,7 @@ import { loadActiveUserByPat } from "./lib/load-active-user.js";
 import type { MemberProjectsCache } from "./lib/member-projects-cache.js";
 import { registerRequestMetrics } from "./lib/request-metrics.js";
 import { resolveAuthUser } from "./lib/resolve-auth-user.js";
+import { auditTokenDenied } from "./lib/token-access.js";
 import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
 import { parseTrustProxy } from "./lib/trust-proxy.js";
@@ -312,14 +314,34 @@ async function softAuthenticate(
 
   if (isPatFormat(raw)) {
     const pat = await loadActiveUserByPat(app.db, raw);
+    if (pat?.expired) {
+      // Soft path: an expired token is just "not authenticated" here.
+      recordAuthFailure(app.telemetry.metrics, "expired_pat");
+      await auditTokenDenied(
+        app.db,
+        {
+          userId: pat.id,
+          tokenId: pat.tokenId,
+          reason: "expired",
+          method: req.method,
+          route: req.url.split("?")[0] ?? req.url,
+        },
+        req.log,
+      );
+      return;
+    }
     if (pat) {
+      // A scoped token resolves here too; `refuseScopedTokens` (trpc.ts)
+      // turns it away with FORBIDDEN session_required (ADR-064 step B).
       req.auth = {
         id: pat.id,
         role: pat.role,
         via: "pat",
         tokenId: pat.tokenId,
+        scopes: pat.scopes,
+        projectId: pat.projectId,
       };
-      await touchTokenLastUsed(app.db, pat.tokenId);
+      await touchTokenLastUsed(app.db, pat.tokenId, req.ip);
     }
     return;
   }

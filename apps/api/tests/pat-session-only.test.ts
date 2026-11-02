@@ -28,7 +28,8 @@ import type { AppRouter } from "../src/trpc/v1/router.js";
 import { createTestApp, type TestApp } from "./helpers.js";
 
 /**
- * ADR-064 step A — API tokens (`furan_pat_*`) are session-subordinate:
+ * ADR-064 step A — API tokens (`furan_pat_*`) are session-subordinate (as a
+ * `legacy` token, minted before step B, still is):
  *   - token management (`/account/tokens`) is session-only;
  *   - admin surfaces (requireRole ≥ admin, tRPC requireAdmin, analytics, the
  *     all-projects inbox / project list) are session-only, even for an
@@ -88,10 +89,12 @@ async function seedPrincipal(h: TestApp, role: Role): Promise<Principal> {
   if (!user) throw new Error(`${role} not seeded`);
   // Insert the PAT directly (same raw/hash pair the mint route produces) so
   // the mint route's per-instance rate limit doesn't couple these tests.
+  // `legacy`: a token minted before scopes (step B), which keeps exactly the
+  // step-A behavior tested here; scoped tokens are in token-scopes.test.ts.
   const { raw, hash } = generateRawToken();
   const [token] = await h.db
     .insert(tokens)
-    .values({ userId: user.id, label: `${role}-ci`, hash })
+    .values({ userId: user.id, label: `${role}-ci`, hash, scopes: ["legacy"] })
     .returning({ id: tokens.id });
   if (!token) throw new Error(`${role} token not seeded`);
   return {

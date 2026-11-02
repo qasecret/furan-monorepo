@@ -143,11 +143,16 @@ Browse to **<http://localhost:3001>** and sign in with the credentials you set i
 
 ### Step 5 — Mint a personal access token (PAT)
 
-1. Click your avatar → **Tokens**, or browse to **<http://localhost:3001/account/tokens>**.
-2. Click **Create**, label it (e.g. `CI - main`), and click **Generate**.
+1. Click your avatar → **Tokens**, or browse to **<http://localhost:3001/account/tokens>** (admins land on **Admin → API Keys**).
+2. Click **Create**, label it (e.g. `CI - main`), and keep the defaults unless you need otherwise:
+   - **Access: SDK & CI** — uploads runs and reads results. It can save the first baseline of a new test (`saveNewTests`), but it never approves a change against an existing baseline; that stays with a reviewer. Pick **Read-only** for a job that only reads results.
+   - **Project:** the project this job uploads to. **All my projects** covers every project you're a member of; even an admin's token has no access beyond that unless it is bound to a project.
+   - **Expires after:** 90 days by default (7 days to 1 year). The operator can lower the cap with `FURAN_PAT_MAX_LIFETIME_DAYS`, or set it to `0` to allow tokens that never expire.
 3. **Copy the raw token immediately** — it is shown once. The database only stores the SHA-256 hash; there is no recovery flow. If you lose it, delete and mint a new one.
 
-The PAT has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts.
+The PAT has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts. A token can't manage tokens, call admin endpoints or use the dashboard's API; those need a signed-in session. The token list shows each token's access, project, expiry, and when and from which address it was last used. Mint a replacement before a token expires, update the CI secret, then delete the old one.
+
+> **Upgrading from v1.1.32 or earlier:** tokens minted before scopes existed become **Legacy** tokens. They keep working as before (every project you can reach, any approve) but expire 90 days after the upgrade; the dashboard shows the date. Replace them with scoped tokens before then.
 
 You now have everything needed to send your first snapshot.
 
@@ -269,7 +274,9 @@ GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.33`. Ev
 
 **Screenshots upload but the diff viewer is empty.** The diff worker may be down or stuck. Check `docker compose ... ps` for `diff-worker` health, and `docker compose ... logs diff-worker` for the last error. The [`docs/runbooks/api-down.md`](docs/runbooks/api-down.md) triage tree covers worker-stuck symptoms as well.
 
-**SDK upload fails with `401 unauthorized`.** Most likely cause: the PAT wasn't copied correctly, or it's been deleted. Mint a new one from `/account/tokens`.
+**SDK upload fails with `401 unauthorized`.** Most likely cause: the PAT wasn't copied correctly, or it's been deleted. Mint a new one from `/account/tokens`. `401 token_expired` means the token's lifetime is over: mint a replacement.
+
+**SDK call fails with `403`.** The `code` says why: `token_project_mismatch` (the token is bound to another project — check `FURAN_PROJECT_ID`), `not_a_project_member` (an unbound token works only on projects its owner is a member of), `insufficient_scope` (a read-only token tried to upload), or `session_required` (tokens can't call that endpoint; sign in instead).
 
 ## Repository layout
 

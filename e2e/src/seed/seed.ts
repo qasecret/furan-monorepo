@@ -25,6 +25,13 @@ export interface SeededPrincipal {
 
 export interface SeedResult {
   bootstrapAdminJwt: string;
+  /**
+   * The bootstrap admin's API token (`sdk` scope, unbound). The bootstrap
+   * admin creates every e2e project, so it is a member of each, which is what
+   * an unbound scoped token needs: an admin's token has no membership bypass
+   * (ADR-064 step B). The SDK flows upload with it.
+   */
+  bootstrapAdminPat: string;
   principals: SeededPrincipal[];
   projects: { name: string; id: string }[];
 }
@@ -116,6 +123,7 @@ export async function seedAll(): Promise<SeedResult> {
 
   const result: SeedResult = {
     bootstrapAdminJwt: admin,
+    bootstrapAdminPat: await api.mintPat(admin, "e2e-sdk"),
     principals,
     projects,
   };

@@ -36,6 +36,12 @@ vi.mock("next/navigation", () => ({
 
 import { CreateTokenDialog } from "../src/app/(protected)/account/tokens/_components/create-token-dialog";
 import { DeleteTokenButton } from "../src/app/(protected)/account/tokens/_components/delete-token-button";
+import {
+  expiry,
+  lifetimeLabel,
+  scopeLabel,
+  type TokenRow,
+} from "../src/app/(protected)/account/tokens/_components/token-grant";
 import { TokensTable } from "../src/app/(protected)/account/tokens/_components/tokens-table";
 import { ApiKeysPanel } from "../src/app/(protected)/admin/(area)/api-keys/_components/api-keys-panel";
 
@@ -59,6 +65,23 @@ function setupFetch(
 }
 
 const RAW_TOKEN = "furan_pat_test_abc123def456ghi789";
+
+const DAY = 86_400_000;
+
+/** A `GET /account/tokens` row: an unbound `sdk` token, 90 days to go. */
+function tokenRow(over: Partial<TokenRow> & { id: string }): TokenRow {
+  return {
+    label: "CI",
+    createdAt: new Date().toISOString(),
+    lastUsedAt: null,
+    lastUsedIp: null,
+    scopes: ["sdk"],
+    projectId: null,
+    projectName: null,
+    expiresAt: new Date(Date.now() + 90 * DAY).toISOString(),
+    ...over,
+  };
+}
 
 beforeEach(() => {
   routerRefresh.mockReset();
@@ -88,18 +111,18 @@ describe("TokensTable", () => {
     const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
     const twoHrAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const tokens = [
-      {
+      tokenRow({
         id: "tok-1",
         label: "CI — main",
         createdAt: fiveMinAgo,
         lastUsedAt: twoHrAgo,
-      },
-      {
+      }),
+      tokenRow({
         id: "tok-2",
         label: "Laptop",
         createdAt: fiveMinAgo,
         lastUsedAt: null,
-      },
+      }),
     ];
     render(<TokensTable initialTokens={tokens} />);
 
@@ -116,18 +139,7 @@ describe("TokensTable", () => {
   // vanish into the row on hover, so it sits on the edge surface instead.
   test("row icon tile stays distinct from the row's hover fill", () => {
     setupFetch();
-    render(
-      <TokensTable
-        initialTokens={[
-          {
-            id: "tok-1",
-            label: "CI",
-            createdAt: new Date().toISOString(),
-            lastUsedAt: null,
-          },
-        ]}
-      />,
-    );
+    render(<TokensTable initialTokens={[tokenRow({ id: "tok-1" })]} />);
     const tile = screen
       .getByTestId("token-row-tok-1")
       .querySelector("svg")!.parentElement!;
@@ -195,8 +207,12 @@ describe("CreateTokenDialog", () => {
       (c) => c.url.endsWith("/account/tokens") && c.init?.method === "POST",
     );
     expect(post).toBeDefined();
+    // No projects to choose from → unbound; the api's default lifetime.
     expect(JSON.parse(String(post!.init?.body))).toEqual({
       label: "CI — main",
+      scopes: ["sdk"],
+      projectId: null,
+      expiresInDays: 90,
     });
   });
 
@@ -344,5 +360,194 @@ describe("DeleteTokenButton", () => {
       expect(del!.url).toMatch(/\/account\/tokens\/tok-9$/);
     });
     expect(onDeleted).toHaveBeenCalled();
+  });
+});
+
+// ADR-064 step B: scopes, project binding, expiry and last use.
+describe("token grant", () => {
+  test("labels: scope, lifetime, expiry state", () => {
+    expect(scopeLabel(["sdk"])).toBe("SDK & CI");
+    expect(scopeLabel(["read"])).toBe("Read-only");
+    expect(scopeLabel(["legacy"])).toBe("Legacy");
+    expect(lifetimeLabel(30)).toBe("30 days");
+    expect(lifetimeLabel(365)).toBe("1 year");
+
+    const now = Date.UTC(2026, 10, 1);
+    expect(expiry(null, now)).toEqual({
+      state: "never",
+      label: "Never expires",
+    });
+    expect(expiry(new Date(now - 1), now)).toEqual({
+      state: "expired",
+      label: "Expired",
+    });
+    expect(expiry(new Date(now + 3 * DAY), now)).toEqual({
+      state: "soon",
+      label: "Expires in 3 days",
+    });
+    expect(expiry(new Date(now + 90 * DAY), now).state).toBe("active");
+  });
+
+  test("the table shows access, project, expiry and where the token was last used", () => {
+    setupFetch();
+    render(
+      <TokensTable
+        initialTokens={[
+          tokenRow({
+            id: "bound",
+            scopes: ["read"],
+            projectId: "p-1",
+            projectName: "storefront",
+            lastUsedAt: new Date().toISOString(),
+            lastUsedIp: "203.0.113.9",
+          }),
+          tokenRow({
+            id: "expired",
+            expiresAt: new Date(Date.now() - DAY).toISOString(),
+          }),
+        ]}
+      />,
+    );
+    const bound = screen.getByTestId("token-row-bound");
+    expect(bound.textContent).toContain("Read-only");
+    expect(bound.textContent).toContain("storefront");
+    expect(bound.textContent).toContain("from 203.0.113.9");
+    const expired = screen.getByTestId("token-row-expired");
+    expect(expired.textContent).toContain("SDK & CI");
+    expect(expired.textContent).toContain("All my projects");
+    expect(expired.textContent).toContain("Expired");
+    expect(screen.queryByTestId("legacy-tokens-notice")).toBeNull();
+  });
+
+  test("legacy tokens get a notice with the date they stop working", () => {
+    setupFetch();
+    const expiresAt = new Date(Date.now() + 60 * DAY);
+    render(
+      <TokensTable
+        initialTokens={[
+          tokenRow({
+            id: "old",
+            scopes: ["legacy"],
+            expiresAt: expiresAt.toISOString(),
+          }),
+        ]}
+      />,
+    );
+    const notice = screen.getByTestId("legacy-tokens-notice");
+    expect(notice.textContent).toMatch(
+      /1 token was created before token scopes/,
+    );
+    expect(notice.textContent).toContain(
+      expiresAt.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+    );
+    expect(screen.getByTestId("token-row-old").textContent).toContain("Legacy");
+  });
+
+  test("the admin key card shows the grant too", () => {
+    setupFetch();
+    const { container } = render(
+      <ApiKeysPanel
+        initialTokens={[
+          tokenRow({
+            id: "k-1",
+            label: "nightly",
+            projectId: "p-2",
+            projectName: "checkout",
+          }),
+        ]}
+      />,
+    );
+    expect(container.textContent).toContain("nightly");
+    expect(container.textContent).toContain("SDK & CI");
+    expect(container.textContent).toContain("checkout");
+    expect(container.textContent).toMatch(/Expires /);
+  });
+
+  test("create: the first project is preselected; the summary names the grant", async () => {
+    const expiresAt = new Date(Date.now() + 30 * DAY).toISOString();
+    const { calls } = setupFetch(({ url, init }) => {
+      if (url.endsWith("/account/tokens") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "tok-new",
+            label: "CI",
+            createdAt: new Date().toISOString(),
+            scopes: ["sdk"],
+            projectId: "p-1",
+            expiresAt,
+            token: RAW_TOKEN,
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    render(
+      <CreateTokenDialog
+        projects={[
+          { id: "p-1", name: "storefront" },
+          { id: "p-2", name: "checkout" },
+        ]}
+        policy={{
+          lifetimeDays: [7, 30],
+          defaultLifetimeDays: 30,
+          allowNoExpiry: false,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("create-token-button"));
+    expect((await screen.findByTestId("project-trigger")).textContent).toBe(
+      "storefront",
+    );
+    expect(screen.getByTestId("lifetime-trigger").textContent).toBe("30 days");
+    fireEvent.input(screen.getByTestId("label-input"), {
+      target: { value: "CI" },
+    });
+    fireEvent.click(screen.getByTestId("submit-create-token"));
+
+    const summary = await screen.findByTestId("created-token-summary");
+    expect(summary.textContent).toMatch(/^SDK & CI · storefront · Expires /);
+    const post = calls.find(
+      (c) => c.url.endsWith("/account/tokens") && c.init?.method === "POST",
+    );
+    expect(JSON.parse(String(post!.init?.body))).toEqual({
+      label: "CI",
+      scopes: ["sdk"],
+      projectId: "p-1",
+      expiresInDays: 30,
+    });
+  });
+
+  test("create: the api's refusal message is shown", async () => {
+    const { toast } = await import("sonner");
+    setupFetch(({ url, init }) => {
+      if (url.endsWith("/account/tokens") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            code: "expiry_too_long",
+            message: "Tokens may last at most 30 days",
+            statusCode: 400,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+    render(<CreateTokenDialog />);
+    fireEvent.click(screen.getByTestId("create-token-button"));
+    fireEvent.input(await screen.findByTestId("label-input"), {
+      target: { value: "CI" },
+    });
+    fireEvent.click(screen.getByTestId("submit-create-token"));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Tokens may last at most 30 days",
+      );
+    });
   });
 });

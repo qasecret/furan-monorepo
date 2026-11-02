@@ -23,7 +23,7 @@ test.describe.serial("sdk: virtual-SDK happy path", () => {
   let baselineRunId = "";
 
   test.beforeAll(async () => {
-    ({ admin, pat } = ownerCreds()); // owner PAT bypasses membership → captures anywhere
+    ({ admin, pat } = ownerCreds()); // the bootstrap admin is a member of every project it creates
     const project = await api.createProject(admin, {
       name: `e2e-virtual-happy-${Date.now()}`,
     });
