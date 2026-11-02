@@ -1,6 +1,6 @@
 // Static security headers for every dashboard response (pages AND assets),
 // applied by next.config.mjs `headers()`. The per-request, nonce-based
-// Content-Security-Policy is set by src/middleware.ts instead.
+// Content-Security-Policy is set by src/proxy.ts instead.
 
 /** @type {{ key: string, value: string }[]} */
 export const SECURITY_HEADERS = [

@@ -39,7 +39,7 @@ const nextConfig = {
   // Don't advertise the framework (X-Powered-By: Next.js).
   poweredByHeader: false,
   // Static security headers on every response; CSP is per-request in
-  // src/middleware.ts. See security-headers.mjs.
+  // src/proxy.ts. See security-headers.mjs.
   async headers() {
     return [
       { source: "/:path*", headers: SECURITY_HEADERS },
