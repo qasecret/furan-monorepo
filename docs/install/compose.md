@@ -95,7 +95,7 @@ Browse to **<http://localhost:3001>** and sign in with the credentials you set i
 
 The token has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts. A token can't manage tokens, call admin endpoints or use the dashboard's API; those need a signed-in session. The token list shows each token's access, project, expiry, and when and from which address it was last used. Mint a replacement before a token expires, update the CI secret, then delete the old one.
 
-> **Upgrading from v1.1.32 or earlier:** tokens minted before scopes existed become **Legacy** tokens. They keep working as before (every project you can reach, any approve) but expire 90 days after the upgrade; the dashboard shows the date. Replace them with scoped tokens before then.
+> **Upgrading from v1.1.33 or earlier:** tokens minted before scopes existed become **Legacy** tokens. They keep working as before (every project you can reach, any approve) but expire 90 days after the upgrade; the dashboard shows the date. Replace them with scoped tokens before then.
 
 You now have everything needed to send your first snapshot: continue with [Send your first upload](../getting-started/first-upload.mdx), using `FURAN_API_URL=http://<host>:3000` for this install.
 
