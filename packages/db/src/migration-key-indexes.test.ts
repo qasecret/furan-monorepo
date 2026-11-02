@@ -233,10 +233,17 @@ describe.runIf(RUN_INTEGRATION)(
     });
 
     it("a lookup by the key alone still uses the leading column of each index", async () => {
-      await run(MIGRATION_0044);
       // The retention sweep reads `image_key IN (...)` with no project. The
       // planner is kept off a sequential scan so that the answer does not depend
       // on how many rows the shared test database holds.
+      //
+      // Planned on empty copies of the two tables, in a schema of this test's
+      // own that the rollback removes, with 0044's statements applied there. An
+      // index just built on the shared tables may be one the planner cannot use
+      // yet: built over a HOT-updated row whose old version an open transaction
+      // may still see (in any database of the cluster), it is marked
+      // `pg_index.indcheckxmin`, and the planner leaves it out of every plan
+      // for as long as a transaction older than the index is open.
       const lookups: Array<[string, string]> = [
         [
           "screenshots_image_key_idx",
@@ -263,19 +270,58 @@ describe.runIf(RUN_INTEGRATION)(
           "select image_name from test_runs where image_name = 'a'",
         ],
       ];
-      await db.transaction(async (tx) => {
-        await tx.execute(sql`SET LOCAL enable_seqscan = off`);
-        for (const [index, query] of lookups) {
-          const plan = await tx.execute<{ "QUERY PLAN": string }>(
-            sql.raw(`EXPLAIN ${query}`),
+      const schema = "key_idx_plan";
+      const rollback = new Error("rollback");
+      let defs: Record<string, string> = {};
+      const plans: Array<{ index: string; usesIt: boolean }> = [];
+      await db
+        .transaction(async (tx) => {
+          await tx.execute(sql`SET LOCAL client_min_messages = warning`);
+          await tx.execute(sql.raw(`CREATE SCHEMA ${schema}`));
+          for (const table of ["screenshots", "test_runs"]) {
+            await tx.execute(
+              sql.raw(`CREATE TABLE ${schema}.${table} (LIKE public.${table})`),
+            );
+          }
+          // 0044 names its tables and indexes unqualified: here, the copies.
+          await tx.execute(sql.raw(`SET LOCAL search_path = ${schema}`));
+          for (const stmt of MIGRATION_0044) await tx.execute(sql.raw(stmt));
+          const rows = await tx.execute<{
+            indexname: string;
+            indexdef: string;
+          }>(
+            sql`select indexname, indexdef from pg_indexes
+              where schemaname = ${schema}`,
           );
-          const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
-          expect({ index, usesIt: text.includes(index) }).toEqual({
-            index,
-            usesIt: true,
-          });
-        }
-      });
+          defs = Object.fromEntries(rows.map((r) => [r.indexname, r.indexdef]));
+
+          await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+          for (const [index, query] of lookups) {
+            const plan = await tx.execute<{ "QUERY PLAN": string }>(
+              sql.raw(`EXPLAIN ${query}`),
+            );
+            const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
+            plans.push({ index, usesIt: text.includes(index) });
+          }
+          throw rollback;
+        })
+        .catch((err: unknown) => {
+          if (err !== rollback) throw err;
+        });
+
+      // The copies hold the six indexes, each as the shared tables hold it, and
+      // no other index.
+      expect(defs).toEqual(
+        Object.fromEntries(
+          Object.entries(KEY_INDEXES).map(([name, def]) => [
+            name,
+            def.replace(" ON public.", ` ON ${schema}.`),
+          ]),
+        ),
+      );
+      expect(plans).toEqual(
+        lookups.map(([index]) => ({ index, usesIt: true })),
+      );
     });
 
     it("builds over existing rows without rewriting them, and finds them through the new indexes", async () => {
