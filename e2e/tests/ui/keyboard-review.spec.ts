@@ -363,10 +363,11 @@ test.describe.serial("ui: keyboard review", () => {
   const flipSingleKeysInHelp = async (now: "on" | "off"): Promise<void> => {
     await pressUntilFocused(page, "Shift+Tab", help(), 12);
     await page.keyboard.press("Enter");
-    // The menu gives its first item the focus as it opens: an arrow pressed
-    // before that would be the trigger's, not the menu's.
+    // The menu gives its first item (Getting started, a docs link) the focus
+    // as it opens: an arrow pressed before that would be the trigger's, not
+    // the menu's.
     await expect(
-      page.getByRole("menuitem", { name: "Keyboard shortcuts" }),
+      page.getByRole("menuitem", { name: /^Getting started/ }),
     ).toBeFocused();
     // End goes to the last item, the checkbox (a page with a tour has a Replay
     // tour item before it, so a count of ArrowDown presses would depend on it).

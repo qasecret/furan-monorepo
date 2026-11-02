@@ -1106,8 +1106,9 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   {
-    // The top bar's Help menu: Keyboard shortcuts, Replay tour (when the page
-    // has a tour) and the single-key switch.
+    // The top bar's Help menu: Getting started and Documentation (docs links),
+    // Keyboard shortcuts, Replay tour (when the page has a tour) and the
+    // single-key switch.
     name: "state-help-menu",
     path: "/inbox",
     open: async (p) => {
