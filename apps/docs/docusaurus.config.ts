@@ -5,11 +5,13 @@ import type { Config } from "@docusaurus/types";
 import { themes as prismThemes } from "prism-react-renderer";
 
 /**
- * The Furan documentation portal (ADR-081). One source, two builds:
+ * The Furan documentation portal (ADR-081). One source, three builds:
  *
  *  - bundled: the dashboard image serves it at `/docs` (the defaults below);
- *  - public: GitHub Pages, built with DOCS_BASE_URL=/furan-monorepo/ and
- *    DOCS_SITE_URL=https://qasecret.github.io by .github/workflows/docs.yml.
+ *  - releases: GitHub Pages, built with DOCS_BASE_URL=/furan-monorepo/ and
+ *    DOCS_SITE_URL=https://qasecret.github.io by .github/workflows/docs.yml;
+ *  - main: Cloudflare Pages at https://furan-docs.pages.dev, built by
+ *    Cloudflare with DOCS_BASE_URL=/ (docs/maintainers/docs-hosting.md).
  *
  * Content is the repo's `docs/` folder, read in place; `docs/maintainers/`
  * stays on GitHub only. `trailingSlash: false` makes pages `x.html`, which
@@ -58,7 +60,9 @@ const config: Config = {
           sidebarPath: "./sidebars.ts",
           // Replaces the defaults, so the underscore partials are restated.
           exclude: ["maintainers/**", "**/_*.{md,mdx}", "**/_*/**"],
-          editUrl: `${REPO}/edit/main/docs/`,
+          // A string would be joined with the file's path relative to this
+          // app (../../docs/…), which browsers collapse to /edit/docs/….
+          editUrl: ({ docPath }) => `${REPO}/edit/main/docs/${docPath}`,
         },
         blog: false,
         pages: false,
