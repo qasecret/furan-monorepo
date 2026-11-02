@@ -14,7 +14,7 @@ git clone https://github.com/qasecret/furan-monorepo && cd furan-monorepo
 pnpm install          # also installs the lefthook pre-commit hooks
 ```
 
-Then follow [docs/install/quickstart.md](docs/install/quickstart.md) steps 2–6
+Then follow [docs/maintainers/development.md](docs/maintainers/development.md) steps 2–6
 to configure `.env`, start the data plane, apply migrations, seed an admin, and
 run the api + dashboard with hot reload.
 

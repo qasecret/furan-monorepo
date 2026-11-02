@@ -151,7 +151,7 @@ Bearer`. The user's current role and active status are re-checked on each
   workers.
 - **Schema changes** are additive-first migrations applied by a one-shot
   `migrate` container — see
-  [`docs/runbooks/migration-deploy-order.md`](docs/runbooks/migration-deploy-order.md).
+  [`docs/maintainers/migration-deploy-order.md`](docs/maintainers/migration-deploy-order.md).
 
 ## Where to go next
 

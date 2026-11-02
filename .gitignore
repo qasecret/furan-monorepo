@@ -75,3 +75,9 @@ e2e/visual-out/
 # (local only; the build lives apart from a dev server's .next).
 scale/out/
 apps/dashboard/.next-scale/
+
+# Docusaurus cache (apps/docs)
+.docusaurus/
+
+# The docs portal, copied in by the dashboard image build (and local previews)
+apps/dashboard/public/docs/

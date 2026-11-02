@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HSTS_HEADER, SECURITY_HEADERS } from "./security-headers.mjs";
+import {
+  buildDocsCsp,
+  DOCS_REWRITES,
+  HSTS_HEADER,
+  readDocsScriptHashes,
+  SECURITY_HEADERS,
+} from "./security-headers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,6 +20,13 @@ const sdkVersion = readFileSync(
   path.resolve(__dirname, "../../packages/sdk-kotlin/version.txt"),
   "utf8",
 ).trim();
+
+// The docs portal (ADR-081): the dashboard image's docs stage copies the built
+// portal into public/docs before `next build`, with the hashes of its inline
+// scripts. Without it (next dev, tests) there is no /docs and no /docs policy.
+const docsScriptHashes = readDocsScriptHashes(
+  path.resolve(__dirname, "public/docs/csp-hashes.json"),
+);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -48,7 +61,25 @@ const nextConfig = {
         has: [{ type: "header", key: "x-forwarded-proto", value: "https" }],
         headers: [HSTS_HEADER],
       },
+      ...(docsScriptHashes
+        ? [
+            {
+              source: "/docs/:path*",
+              headers: [
+                {
+                  key: "Content-Security-Policy",
+                  value: buildDocsCsp(docsScriptHashes),
+                },
+              ],
+            },
+          ]
+        : []),
     ];
+  },
+  // /docs/x → public/docs/x.html, before dynamic routes: a path with no such
+  // file falls through to src/app/docs/[...slug] (the portal's 404 page).
+  async rewrites() {
+    return { beforeFiles: [], afterFiles: DOCS_REWRITES, fallback: [] };
   },
 };
 export default nextConfig;

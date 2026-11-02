@@ -2,6 +2,8 @@
 // applied by next.config.mjs `headers()`. The per-request, nonce-based
 // Content-Security-Policy is set by src/proxy.ts instead.
 
+import { readFileSync } from "node:fs";
+
 /** @type {{ key: string, value: string }[]} */
 export const SECURITY_HEADERS = [
   // Legacy twin of CSP `frame-ancestors 'none'` (clickjacking).
@@ -25,3 +27,59 @@ export const HSTS_HEADER = {
   key: "Strict-Transport-Security",
   value: "max-age=31536000",
 };
+
+// ── The docs portal at /docs (spec 2026-11-01-docs-portal §5, ADR-081) ──────
+// The dashboard image carries the built portal in public/docs. Its pages are
+// static HTML with a few inline scripts, so they skip the nonce proxy and
+// get this static policy instead: the same directives as src/lib/csp.ts, with
+// script-src allowing exactly the hashes the docs build wrote.
+
+/**
+ * @param {string[]} scriptHashes `'sha256-…'` sources from csp-hashes.json
+ * @returns {string}
+ */
+export function buildDocsCsp(scriptHashes) {
+  /** @type {Record<string, string[]>} */
+  const directives = {
+    "default-src": ["'self'"],
+    "script-src": ["'self'", ...scriptHashes],
+    "style-src": ["'self'", "'unsafe-inline'"],
+    "img-src": ["'self'", "blob:", "data:"],
+    "font-src": ["'self'", "data:"],
+    "connect-src": ["'self'"],
+    "worker-src": ["'self'", "blob:"],
+    "object-src": ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+    "frame-ancestors": ["'none'"],
+  };
+  return Object.entries(directives)
+    .map(([name, values]) => `${name} ${values.join(" ")}`)
+    .join("; ");
+}
+
+/**
+ * The docs build's inline-script hashes, or null when the docs aren't built
+ * (`next dev`, unit tests): then there's no /docs to protect.
+ * @param {string} file path to csp-hashes.json
+ * @returns {string[] | null}
+ */
+export function readDocsScriptHashes(file) {
+  let raw;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  return JSON.parse(raw).scriptHashes;
+}
+
+// Docusaurus builds pages as x.html (trailingSlash: false). These run as
+// afterFiles rewrites: after the filesystem, so real files (/docs/assets/…) are
+// served as-is, and before dynamic routes, so a page that doesn't exist falls
+// through to src/app/docs/[...slug] and gets the portal's 404.
+export const DOCS_REWRITES = [
+  { source: "/docs", destination: "/docs/index.html" },
+  { source: "/docs/:path+", destination: "/docs/:path+.html" },
+];

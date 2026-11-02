@@ -32,7 +32,7 @@ network namespaces, so one baked value cannot satisfy both:
 > and got `ECONNREFUSED`.
 
 The **published** dashboard image bakes `http://localhost:3000`
-(the default in [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts)).
+(the default in [`apps/dashboard/src/lib/env.ts`](https://github.com/qasecret/furan-monorepo/blob/main/apps/dashboard/src/lib/env.ts)).
 Two consequences:
 
 - **Server-side is broken even on a same-host `localhost` deploy.** Inside the
@@ -54,7 +54,7 @@ everything else is standard TLS plumbing.
 
 > **Fixed in `v1.1.28`:** server-side callers now resolve a separate runtime,
 > non-`NEXT_PUBLIC_` `API_INTERNAL_URL` (`serverApiUrl()` in
-> [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts); wired in
+> [`apps/dashboard/src/lib/env.ts`](https://github.com/qasecret/furan-monorepo/blob/main/apps/dashboard/src/lib/env.ts); wired in
 > `compose.yml` as `API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}`), so
 > a single image serves both the host browser (baked `localhost:3000`) and
 > in-container SSR (`http://api:3000`) — UI login works on a plain `localhost`
@@ -260,4 +260,4 @@ correct because, through the tunnel, the API really is on your `localhost`.
 
 - [production-deploy.md](production-deploy.md) — the base single-host install
 - [storage-backends.md](storage-backends.md) — S3 vs HDD
-- [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts) — where the browser URL default lives
+- [`apps/dashboard/src/lib/env.ts`](https://github.com/qasecret/furan-monorepo/blob/main/apps/dashboard/src/lib/env.ts) — where the browser URL default lives

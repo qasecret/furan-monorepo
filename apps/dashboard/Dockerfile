@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # apps/dashboard — Next.js 15 (App Router) with standalone output.
-# Three-stage build, distroless runtime, non-root.
+# Three-stage build (plus a docs stage), distroless runtime, non-root.
 #
 # Build context = repo root. The standalone output (.next/standalone)
 # pulls only the files Next traces — significantly smaller than a full
@@ -39,6 +39,28 @@ COPY packages/tsconfig/package.json       packages/tsconfig/
 RUN pnpm install --frozen-lockfile --filter @furan/dashboard... --ignore-scripts
 
 #####################################################################
+# Stage 1b: docs — the documentation portal served at /docs          #
+#####################################################################
+# The portal (apps/docs, Docusaurus) is built from the repo's docs/ folder in
+# its own stage, so its toolchain never reaches the runtime image: only the
+# static output does, copied into public/docs below (ADR-081). It installs
+# only @furan/docs and its one workspace dependency.
+FROM node:22-bookworm-slim AS docs
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+COPY pnpm-lock.yaml package.json pnpm-workspace.yaml ./
+COPY apps/docs/package.json               apps/docs/
+COPY packages/eslint-config/package.json  packages/eslint-config/
+RUN pnpm install --frozen-lockfile --filter @furan/docs... --ignore-scripts
+
+COPY apps/docs/ apps/docs/
+COPY docs/ docs/
+# The SDK version the snippets render (docusaurus.config.ts customFields).
+COPY packages/sdk-kotlin/version.txt packages/sdk-kotlin/
+RUN DOCS_BASE_URL=/docs/ pnpm --filter @furan/docs build
+
+#####################################################################
 # Stage 2: build                                                     #
 #####################################################################
 FROM node:22-bookworm-slim AS build
@@ -52,6 +74,9 @@ COPY packages/ packages/
 # needs to be present + compiled for the type-only import to resolve.
 COPY apps/api/        apps/api/
 COPY apps/dashboard/  apps/dashboard/
+# The built portal, before `next build`: next.config.mjs reads
+# public/docs/csp-hashes.json to build the /docs Content-Security-Policy.
+COPY --from=docs /app/apps/docs/build apps/dashboard/public/docs
 
 # The dashboard's BROWSER bundle inlines NEXT_PUBLIC_API_URL at build time
 # (Next bakes NEXT_PUBLIC_* into client JS — it cannot be changed at runtime).
@@ -92,6 +117,8 @@ ENV HOSTNAME=0.0.0.0
 # standalone — they must be layered in separately.
 COPY --from=build --chown=nonroot:nonroot /app/apps/dashboard/.next/standalone/      ./
 COPY --from=build --chown=nonroot:nonroot /app/apps/dashboard/.next/static           ./apps/dashboard/.next/static
+# public/ holds only the docs portal (/docs), which Next serves as static files.
+COPY --from=build --chown=nonroot:nonroot /app/apps/dashboard/public                 ./apps/dashboard/public
 
 USER nonroot
 EXPOSE 3001

@@ -1,0 +1,81 @@
+/*
+ * The portal wears the dashboard's design tokens. The values below are the
+ * token values in apps/dashboard/src/app/tokens.css — that file is the source
+ * of truth; change a value there first, then mirror it here.
+ *
+ * Links and the primary colour use --brand-text: dark green on white (lime on
+ * white is about 1.2:1) and lime on graphite. Fonts are bundled, not fetched.
+ */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+:root {
+  --ifm-font-family-base:
+    "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --ifm-font-family-monospace: "Geist Mono Variable", ui-monospace, monospace;
+  --ifm-code-font-size: 90%;
+
+  /* canvas / raised / sunken */
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #ffffff;
+  --ifm-code-background: #fafafa;
+  --ifm-hover-overlay: #f4f4f5;
+  /* fg / fg-secondary / fg-muted */
+  --ifm-font-color-base: #09090b;
+  --ifm-font-color-secondary: #52525b;
+  --ifm-color-content-secondary: #52525b;
+  --ifm-menu-color: #52525b;
+  /* edge */
+  --ifm-color-emphasis-300: #e4e4e7;
+  --ifm-toc-border-color: #e4e4e7;
+  --ifm-hr-border-color: #e4e4e7;
+  --ifm-table-border-color: #e4e4e7;
+
+  /* brand-text #3f6212 and its shades */
+  --ifm-color-primary: #3f6212;
+  --ifm-color-primary-dark: #395810;
+  --ifm-color-primary-darker: #36530f;
+  --ifm-color-primary-darkest: #2c450d;
+  --ifm-color-primary-light: #52722a;
+  --ifm-color-primary-lighter: #5c7a36;
+  --ifm-color-primary-lightest: #799159;
+}
+
+[data-theme="dark"] {
+  /* canvas / raised / sunken */
+  --ifm-background-color: #0b0b0d;
+  --ifm-background-surface-color: #131316;
+  --ifm-code-background: #08080a;
+  --ifm-hover-overlay: #1d1d21;
+  /* fg / fg-secondary / fg-muted */
+  --ifm-font-color-base: #fafafa;
+  --ifm-font-color-secondary: #a1a1aa;
+  --ifm-color-content-secondary: #a1a1aa;
+  --ifm-menu-color: #a1a1aa;
+  /* edge */
+  --ifm-color-emphasis-300: #26262b;
+  --ifm-toc-border-color: #26262b;
+  --ifm-hr-border-color: #26262b;
+  --ifm-table-border-color: #26262b;
+
+  /* brand-text #a8ff53 (lime) and its shades; lime needs black text */
+  --ifm-color-primary: #a8ff53;
+  --ifm-color-primary-dark: #97e64b;
+  --ifm-color-primary-darker: #8fd947;
+  --ifm-color-primary-darkest: #76b33a;
+  --ifm-color-primary-light: #b1ff64;
+  --ifm-color-primary-lighter: #b5ff6c;
+  --ifm-color-primary-lightest: #c2ff87;
+  --ifm-color-primary-contrast-foreground: #000000;
+  /* The search box's selected result sits on --ifm-color-primary (lime). */
+  --search-local-hit-active-color: #000000;
+}
+
+[data-theme="dark"] .button--primary {
+  color: #000000;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  box-shadow: none;
+}

@@ -1,7 +1,7 @@
 # Getting help
 
 - **Installing or running Furan** — start with the [README](README.md), the
-  [install quickstart](docs/install/quickstart.md), and the
+  [documentation](docs/README.md) (start with [Getting started](docs/getting-started/install.md)), and the
   [runbooks](docs/runbooks/) (API down, storage backends, reverse proxy + TLS,
   backup + restore, production deploy).
 - **Found a bug?** Open a [bug report](https://github.com/qasecret/furan-monorepo/issues/new?template=bug_report.yml).

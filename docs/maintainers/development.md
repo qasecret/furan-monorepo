@@ -1,25 +1,10 @@
-# Furan — install quickstart (v1.1)
+# Development setup (from source)
 
-> **Just want to try it?** Fastest path — one file, no clone, no `.env`:
->
-> ```bash
-> curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
-> docker compose -f furan-compose.yml up -d
-> # open http://localhost:8080 → admin@furan.local / FuranAdmin123!
-> ```
->
-> Ships **evaluation-default credentials + JWT secret** — override
-> `FURAN_BOOTSTRAP_ADMIN_PASSWORD` / `JWT_SECRET` / `POSTGRES_PASSWORD` /
-> `MINIO_ROOT_PASSWORD` (or set `FURAN_BIND=127.0.0.1`) before any networked use.
-> The `pnpm dev` flow below is the **development** path for iterating on source.
-
-> **Deploying for real?** Use the Docker-Compose production path in
-> **[`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md)** —
-> `docker compose -f infra/docker/compose.yml up -d` boots the **full** stack
-> (data plane + all five app services) from pre-built images, auto-runs
-> migrations, and auto-seeds the first admin. **This page** is the
-> **development** path: a Dockerised data plane plus the Node 22 app services
-> run from source via `pnpm dev`, for iterating on the code.
+> **Installing Furan to use it?** This page is for working on Furan's own
+> source. To install and use Furan, follow
+> [Getting started](../getting-started/install.md) in the documentation
+> portal (the one-file install), or the
+> [production install](../install/compose.md).
 
 ## What is Furan?
 
@@ -109,7 +94,7 @@ should report healthy / exited-0. `minio-perms` (volume ownership) and
 > plane + the five app services) from pre-built images published to Docker Hub
 > (`docker.io/qasecret/furan-*:v1.1.x`, GHCR mirror at `ghcr.io/qasecret/furan-*`;
 > cosign-signed, SBOM-attached). The smoothest path is the one-command
-> [`./deploy.sh`](../../deploy.sh) — it generates `.env`, enforces the lockstep
+> [`./deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh) — it generates `.env`, enforces the lockstep
 > rule, brings the stack up in order, health-waits, and runs the drift canary.
 > Otherwise run `docker compose -f infra/docker/compose.yml up -d` (no
 > `-f compose.dev.yml`) and skip the rest of this quickstart's `pnpm` sections.
@@ -191,8 +176,8 @@ later without losing work.
 ## 7. Sign in
 
 Open <http://localhost:3001/login> and sign in with the email + password
-you seeded in step 5. You should land on `/projects`, which will be empty
-on first install.
+you seeded in step 5. With no projects yet, an admin lands on **Admin →
+Projects** (`/admin/projects`).
 
 ## 8. Bootstrap your first project
 
@@ -235,7 +220,8 @@ Editors only see projects they are members of; admins see everything.
 
 Switch to your editor (or stay as admin), then:
 
-1. Navigate to **/account/tokens** → **Create** → label `CI - main`.
+1. As an admin: **Admin → API Keys** → **Generate new key**. As an editor:
+   **/account/tokens** → **Create token**. Label it `CI - main`.
 2. Keep **Access: SDK & CI**, pick the project this job uploads to, and keep
    the 90-day expiry (or pick another lifetime up to the operator's cap,
    `FURAN_PAT_MAX_LIFETIME_DAYS`).
@@ -251,37 +237,11 @@ tokens or call admin endpoints.
 
 ## 11. First capture + first diff
 
-Ingestion is **SDK-upload over REST** (the client captures the PNG and uploads
-the bytes). The Kotlin SDK (`io.github.qasecret:furan-selenium`) is the
-first-class path; CI uploads can also drive the REST endpoints directly. The
-sequence (all `Authorization: Bearer <PAT>` from step 10):
-
-```bash
-API=http://localhost:3000; PID=<projectId>     # from step 8
-# 1. Build
-BUILD=$(curl -s -X POST $API/projects/$PID/builds -H "Authorization: Bearer $PAT" \
-  -H 'Content-Type: application/json' -d '{"branchName":"main","name":"ci-1"}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
-# 2. Run
-RUN=$(curl -s -X POST $API/runs -H "Authorization: Bearer $PAT" -H 'Content-Type: application/json' \
-  -d "{\"projectId\":\"$PID\",\"buildId\":\"$BUILD\",\"name\":\"smoke\",\"branchName\":\"main\"}" \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).runId')
-# 3. Upload a screenshot (base64 JSON variant; multipart pngBytes also supported)
-curl -s -X POST $API/runs/$RUN/screenshots/base64 -H "Authorization: Bearer $PAT" \
-  -H 'Content-Type: application/json' \
-  -d "{\"pngBase64\":\"$(base64 < shot.png | tr -d '\n')\",\"name\":\"homepage\",\"viewport\":\"1280x720\",\"browser\":\"chromium\"}"
-# 4. Complete
-curl -s -X POST $API/runs/$RUN/complete -H "Authorization: Bearer $PAT" \
-  -H 'Content-Type: application/json' -d '{}'
-```
-
-The checkpoint identity is the tuple `(branchName, name, viewport, browser)` —
-reuse the same values on later runs so they diff against the same baseline. The
-`diff-worker` resolves the baseline and emits diff regions. On the **first** run
-for a variation there is no baseline, so the run is stored as a baseline
-**candidate** that a reviewer approves in the dashboard (ADR-036 — Furan does
-not auto-seed the first baseline by default; `autoApproveFeature` is off for new
-projects).
+Send the first upload with the SDK or the REST sequence in
+[Send your first upload](../getting-started/first-upload.mdx) and
+[REST API upload](../sdk/rest.md), using `API=http://localhost:3000` (the
+dev api). The first run of a step has no baseline: approve it in the
+dashboard (ADR-036 — Furan does not auto-seed the first baseline by default).
 
 <details><summary>Dev-only alternative: enqueue a capture job directly</summary>
 
@@ -347,14 +307,9 @@ approve the candidate in the dashboard to set it) and emits a diff row.
 
 ## 12. Verify the diff renders
 
-Open the **Inbox** (the review queue) or the build under
-**/projects/&lt;projectId&gt;/builds**. The first run for a variation has no
-baseline yet — open it and **Approve** the candidate to set the first baseline.
-Upload a **different** image for the same checkpoint (reuse `name` / `viewport`
-/ `browser`), and the diff-worker flags it: it lands in the Inbox as
-**Unresolved**, and the diff viewer shows baseline vs candidate with the changed
-regions highlighted. Approve to promote the candidate, or reject to keep the
-current baseline.
+Follow [Approve your first baselines](../getting-started/first-baseline.md)
+and [Review your first diff](../getting-started/first-diff.md) against the
+dev dashboard on <http://localhost:3001>.
 
 ## Next steps
 

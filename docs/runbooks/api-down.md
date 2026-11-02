@@ -133,7 +133,7 @@ problem is at a layer above the api:
 - **`NEXT_PUBLIC_API_URL` mismatch** — the dashboard image is built with
   `NEXT_PUBLIC_API_URL` inlined at compile time (Next.js semantics). If
   the browser is trying to reach an old hostname, rebuild/repull the
-  dashboard image with the right value. See `docs/install/quickstart.md`
+  dashboard image with the right value. See `docs/maintainers/development.md`
   §6.
 
 - **`JWT_SECRET` rotation drift** — the api validates JWTs with whatever
@@ -201,4 +201,4 @@ docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml \
 
 - [restore-from-backup.md](./restore-from-backup.md) — Postgres data recovery
 - [production-deploy.md](./production-deploy.md) — first-time install (env vars + compose bring-up)
-- [maven-central-publish.md](./maven-central-publish.md) — SDK release flow
+- [maven-central-publish.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/maven-central-publish.md) — SDK release flow

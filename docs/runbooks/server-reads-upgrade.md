@@ -98,7 +98,7 @@ calls it. The release before `0043` has no such code: it writes no counters.
    Stopping `integrations` too is optional: it writes none of the tables
    these migrations change. Let in-flight capture and diff jobs finish before
    stopping if you can (the queue checks are in
-   [`migration-deploy-order.md` §2](./migration-deploy-order.md#2-procedure--single-host-compose-default-install),
+   [`migration-deploy-order.md` §2](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md#2-procedure--single-host-compose-default-install),
    step 3).
 
    From a source checkout, stop `pnpm dev` (api, workers) and run
@@ -241,12 +241,12 @@ again, the migrations are already applied and do not run again; §5's repair,
 which every upgrade runs, fixes those counters.
 
 To return to the schema from before the upgrade, restore the snapshot from
-§2 ([`migration-deploy-order.md` §4](./migration-deploy-order.md#4-rollback)).
+§2 ([`migration-deploy-order.md` §4](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md#4-rollback)).
 That drops everything written since it was taken.
 
 ## 7. References
 
-- Migrations: [`packages/db/migrations/0043_server_reads.sql`](../../packages/db/migrations/0043_server_reads.sql) and [`0044_key_indexes_with_project.sql`](../../packages/db/migrations/0044_key_indexes_with_project.sql): each header documents its locks under both runners
-- The counters' definition: [`packages/db/src/run-counters.ts`](../../packages/db/src/run-counters.ts)
+- Migrations: [`packages/db/migrations/0043_server_reads.sql`](https://github.com/qasecret/furan-monorepo/blob/main/packages/db/migrations/0043_server_reads.sql) and [`0044_key_indexes_with_project.sql`](https://github.com/qasecret/furan-monorepo/blob/main/packages/db/migrations/0044_key_indexes_with_project.sql): each header documents its locks under both runners
+- The counters' definition: [`packages/db/src/run-counters.ts`](https://github.com/qasecret/furan-monorepo/blob/main/packages/db/src/run-counters.ts)
 - Spec: `furan-design/specs/2026-10-27-speed-at-scale-server-reads-design.md` (gitignored design dir)
-- Related runbooks: [`review-model-upgrade.md`](review-model-upgrade.md) (the `verify-review-rollup` CLI), [`migration-deploy-order.md`](migration-deploy-order.md), [`restore-from-backup.md`](restore-from-backup.md)
+- Related runbooks: [`review-model-upgrade.md`](review-model-upgrade.md) (the `verify-review-rollup` CLI), [`migration-deploy-order.md`](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md), [`restore-from-backup.md`](restore-from-backup.md)

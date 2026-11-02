@@ -81,7 +81,7 @@ mavenPublishing {
     publishToMavenCentral(automaticRelease = true)
 
     // Sign only when signing keys are present (CI). publishToMavenLocal dry-runs
-    // run without signing — see docs/runbooks/maven-central-publish.md "Dry-run".
+    // run without signing — see docs/maintainers/maven-central-publish.md "Dry-run".
     if (project.hasProperty("signingInMemoryKey") ||
         System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null) {
         signAllPublications()

@@ -4,7 +4,7 @@ Run the Furan Kotlin SDK from GitLab CI/CD: baselines follow your branches and
 merge request targets, parallel jobs report into one Furan build, and the job
 result tells you whether the screenshots matched.
 
-Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](../install/quickstart.md))
+Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/development.md))
 and a Furan project already created. Unlike the [GitHub Actions recipe](./github-actions.md),
 there is no merge request comment or commit status for GitLab: results are
 reviewed in the Furan dashboard, and the pipeline gate is the job exit status.
@@ -209,7 +209,7 @@ JDK 21 and Chrome (Selenium Manager resolves the matching driver).
 ## 4. Write a test
 
 Canonical reference:
-[`packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutAwaitTest.kt`](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutAwaitTest.kt).
+[`packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutAwaitTest.kt`](https://github.com/qasecret/furan-monorepo/blob/main/packages/sdk-kotlin/examples/sdk-selenium-junit5/src/test/kotlin/CheckoutAwaitTest.kt).
 
 Short version:
 
@@ -238,7 +238,7 @@ class CheckoutVisualTest {
 `FuranConfig.fromEnv()` requires `FURAN_API_URL`, `FURAN_API_TOKEN` and
 `FURAN_PROJECT_ID`, and reads `FURAN_BUILD_ID`, `FURAN_BRANCH` and
 `FURAN_PARENT_BRANCH` (plus the optional variables in the SDK
-[configuration table](../../packages/sdk-kotlin/README.md#configuration)) from the
+[configuration table](../sdk/kotlin.mdx#configuration)) from the
 process environment. `FURAN_BRANCH` defaults to `main` when unset, so a missing
 branch variable silently compares against, and writes baselines to, `main`.
 
@@ -315,5 +315,5 @@ return the result instead of throwing, so you can assert in test code.
 ## See also
 
 - [Jenkins recipe](./jenkins.md) and [GitHub Actions recipe](./github-actions.md)
-- [SDK reference and configuration table](../../packages/sdk-kotlin/README.md)
-- [SDK example project](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/): runnable Gradle reference
+- [SDK reference and configuration table](../sdk/kotlin.mdx)
+- [SDK example project](https://github.com/qasecret/furan-monorepo/tree/main/packages/sdk-kotlin/examples/sdk-selenium-junit5): runnable Gradle reference
