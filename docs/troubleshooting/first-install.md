@@ -30,7 +30,7 @@ the first boot, from `FURAN_BOOTSTRAP_ADMIN_PASSWORD` (default
 
 **Screenshots upload but the diff viewer is empty.** The diff worker may be down or stuck. Check `docker compose ... ps` for `diff-worker` health, and `docker compose ... logs diff-worker` for the last error. The [`docs/runbooks/api-down.md`](../runbooks/api-down.md) triage tree covers worker-stuck symptoms as well.
 
-**SDK upload fails with `401 unauthorized`.** Most likely cause: the PAT wasn't copied correctly, or it's been deleted. Create a new one: admins under **Admin → API Keys**, editors at `/account/tokens`. `401 token_expired` means the token's lifetime is over: create a replacement.
+**SDK upload fails with `401 unauthorized`.** Most likely cause: the API token wasn't copied correctly, or it's been deleted. Create a new one: admins under **Admin → API Tokens**, editors at `/account/tokens`. `401 token_expired` means the token's lifetime is over: create a replacement.
 
 **SDK call fails with `403`.** The `code` says why: `token_project_mismatch` (the token is bound to another project — check `FURAN_PROJECT_ID`), `not_a_project_member` (an unbound token works only on projects its owner is a member of), `insufficient_scope` (a read-only token tried to upload), or `session_required` (tokens can't call that endpoint; sign in instead).
 

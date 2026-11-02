@@ -84,16 +84,16 @@ Browse to **<http://localhost:3001>** and sign in with the credentials you set i
 1. A fresh install has no projects, so you land on **Admin → Projects**. Click **Create project**, name it after your app (the main branch defaults to `main`), and click **Create**.
 2. You land on the project's Builds page. The UUID in its URL (`/projects/<projectId>/builds`) is the project ID your tests need.
 
-## Step 5 — Create a personal access token (PAT)
+## Step 5 — Create an API token
 
-1. As an admin, open **Admin → API Keys** and click **Generate new key**. (Editors use **Personal access tokens** at `/account/tokens` and click **Create token**.)
+1. As an admin, open **Admin → API Tokens** and click **Create token**. (Editors use **API tokens** at `/account/tokens` and click **Create token**.)
 2. Enter a **Label** (e.g. `CI - main`), keep the defaults unless you need otherwise, and click **Create**:
    - **Access: SDK & CI** — uploads runs and reads results. It can save the first baseline of a new test (`saveNewTests`), but it never approves a change against an existing baseline; that stays with a reviewer. Pick **Read-only** for a job that only reads results.
    - **Project:** the project this job uploads to. **All my projects** covers every project you're a member of; even an admin's token has no access beyond that unless it is bound to a project.
    - **Expires after:** 90 days by default (7 days to 1 year). The operator can lower the cap with `FURAN_PAT_MAX_LIFETIME_DAYS`, or set it to `0` to allow tokens that never expire.
 3. **Copy the token immediately**: it is shown once. The database only stores the SHA-256 hash; there is no recovery flow. If you lose it, delete it and create a new one.
 
-The PAT has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts. A token can't manage tokens, call admin endpoints or use the dashboard's API; those need a signed-in session. The token list shows each token's access, project, expiry, and when and from which address it was last used. Mint a replacement before a token expires, update the CI secret, then delete the old one.
+The token has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts. A token can't manage tokens, call admin endpoints or use the dashboard's API; those need a signed-in session. The token list shows each token's access, project, expiry, and when and from which address it was last used. Mint a replacement before a token expires, update the CI secret, then delete the old one.
 
 > **Upgrading from v1.1.32 or earlier:** tokens minted before scopes existed become **Legacy** tokens. They keep working as before (every project you can reach, any approve) but expire 90 days after the upgrade; the dashboard shows the date. Replace them with scoped tokens before then.
 

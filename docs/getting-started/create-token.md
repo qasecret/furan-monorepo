@@ -5,7 +5,7 @@ sidebar_label: Create a token
 
 # 3. Create a token
 
-Your tests authenticate with a personal access token, a `furan_pat_…` value
+Your tests authenticate with an API token, a `furan_pat_…` value
 sent as a `Bearer` token. It acts as the account that created it.
 
 ## You need
@@ -17,10 +17,11 @@ sent as a `Bearer` token. It acts as the account that created it.
 
 Where you create it depends on your role. The dialog is the same.
 
-- **Admins:** **Admin → API Keys → Generate new key**. (Admins who open
+- **Admins:** **Admin → API Tokens → Create token**. (Admins who open
   `/account/tokens` land here too.)
-- **Editors:** open **Personal access tokens** at `/account/tokens`, or press
-  ⌘K / Ctrl+K and choose "API tokens", then click **Create token**.
+- **Editors:** open **API tokens** at `/account/tokens` (also in the account
+  menu), or press ⌘K / Ctrl+K and choose "API tokens", then click
+  **Create token**.
 
 Then:
 
