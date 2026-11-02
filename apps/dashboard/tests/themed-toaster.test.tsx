@@ -58,11 +58,12 @@ function topLevelRules(source: string): Map<string, string> {
 }
 
 /**
- * The action button of a toast. The `[data-sonner-toaster]` ancestor is what
- * makes the rule outrank sonner's own (equal specificity, loaded later).
+ * A styled toast, and its action button. The `[data-sonner-toaster]` ancestor
+ * is what makes the rules outrank sonner's own (equal specificity, loaded
+ * later).
  */
-const ACTION_BUTTON =
-  '[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button]';
+const TOAST = '[data-sonner-toaster] [data-sonner-toast][data-styled="true"]';
+const ACTION_BUTTON = `${TOAST} [data-button]`;
 
 beforeEach(() => {
   resolvedTheme = undefined;
@@ -95,19 +96,19 @@ describe("ThemedToaster", () => {
   test("uses the light toast theme when the resolved theme is light", async () => {
     resolvedTheme = "light";
     const { toaster } = await showToast("light toast");
-    expect(toaster.getAttribute("data-theme")).toBe("light");
+    expect(toaster.getAttribute("data-sonner-theme")).toBe("light");
   });
 
   test("uses the dark toast theme when the resolved theme is dark", async () => {
     resolvedTheme = "dark";
     const { toaster } = await showToast("dark toast");
-    expect(toaster.getAttribute("data-theme")).toBe("dark");
+    expect(toaster.getAttribute("data-sonner-theme")).toBe("dark");
   });
 
   test("defaults to dark before the theme resolves", async () => {
     resolvedTheme = undefined;
     const { toaster } = await showToast("unresolved toast");
-    expect(toaster.getAttribute("data-theme")).toBe("dark");
+    expect(toaster.getAttribute("data-sonner-theme")).toBe("dark");
   });
 
   test("drives sonner's surface variables from the raw design tokens", async () => {
@@ -148,12 +149,10 @@ describe("ThemedToaster", () => {
   // jsdom doesn't cascade stylesheets, so pin the rule text instead.
   test("globals.css gives toasts the overlay elevation and a focus ring, unlayered", () => {
     const rules = topLevelRules(globalsCss);
-    expect(rules.get('[data-sonner-toast][data-styled="true"]')).toBe(
-      "box-shadow: var(--elevation-overlay);",
+    expect(rules.get(TOAST)).toBe("box-shadow: var(--elevation-overlay);");
+    expect(rules.get(`${TOAST}:focus-visible`)).toBe(
+      "box-shadow: var(--elevation-overlay), 0 0 0 2px var(--ring);",
     );
-    expect(
-      rules.get('[data-sonner-toast][data-styled="true"]:focus-visible'),
-    ).toBe("box-shadow: var(--elevation-overlay), 0 0 0 2px var(--ring);");
   });
 
   // The "Undo" a review toast carries (`toast.success(label, { action })`) is
