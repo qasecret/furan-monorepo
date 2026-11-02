@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import {
   builds,
+  eq,
   projectMembers,
   projects,
   screenshots,
@@ -512,9 +513,10 @@ d("GET /api/v1/storage/:key", () => {
   // ── Ownership: every key source, both ways ──────────────────────────────
   // The proxy attributes a key to a project through exactly these six columns
   // (and only these). Each one is checked the same way: the owning project's
-  // member and an admin are served, anyone else is refused with the one
-  // `not_found` body that an unknown key also gets, so a refusal never says
-  // whether the key exists in another tenant.
+  // member and an admin are served, anyone else (a guest member of that
+  // project too) is refused with the one `not_found` body that an unknown key
+  // also gets, so a refusal never says whether the key exists in another
+  // tenant.
   const KEY_SOURCES: Array<{
     column: string;
     makeKey: () => string;
@@ -582,6 +584,11 @@ d("GET /api/v1/storage/:key", () => {
         const { outsider, ownKey } = await seedOutsiderWithOwnProject(h);
         // And someone who belongs to no project at all.
         const nobody = await seedUser(h, "editor");
+        // A guest who belongs to A: guests read no project's data.
+        const guestMember = await seedUser(h, "guest");
+        await h.db
+          .insert(projectMembers)
+          .values({ userId: guestMember.id, projectId: a.id });
 
         const get = (user: SeededUser, k: string) => getAs(h, user, k);
 
@@ -599,6 +606,7 @@ d("GET /api/v1/storage/:key", () => {
         const refusals = [
           await get(outsider, key),
           await get(nobody, key),
+          await get(guestMember, key),
           await get(member, unknownKey),
         ];
         for (const res of refusals) {
@@ -645,8 +653,9 @@ d("GET /api/v1/storage/:key", () => {
     },
   );
 
-  test("roles: an owner is served any stored key; a guest is held to membership like an editor", async () => {
-    const h = await createTestApp();
+  test("roles: an owner is served any stored key; a guest is refused, even in a project they belong to", async () => {
+    const cache = fakeCache();
+    const h = await createTestApp({ memberProjectsCache: cache });
     try {
       const storage = createStorage();
       const key = unrelatedKey();
@@ -668,8 +677,65 @@ d("GET /api/v1/storage/:key", () => {
       await storage.put(loose, TINY_PNG, "image/png");
       expect((await get(owner, loose)).statusCode).toBe(200);
 
-      expect((await get(guestMember, key)).statusCode).toBe(200);
-      expect((await get(guestOutsider, key)).statusCode).toBe(404);
+      // A guest reads no project's data, as at every project gate. Their own
+      // project's key, a stored key no row holds, a key with no bytes at all
+      // and another guest's request for that same key all get the one
+      // `not_found` body, so a guest learns nothing about which keys exist.
+      const refusals = [
+        await get(guestMember, key),
+        await get(guestMember, loose),
+        await get(guestMember, unrelatedKey()),
+        await get(guestOutsider, key),
+      ];
+      for (const res of refusals) {
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual(NOT_FOUND);
+      }
+      // Refused on the role, before any lookup: neither guest's member
+      // projects were read (a read fills the cache).
+      expect(await cache.get(guestMember.id)).toBeNull();
+      expect(await cache.get(guestOutsider.id)).toBeNull();
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("a member demoted to guest is refused on the next fetch, and served again once promoted", async () => {
+    // The role is the user's live one, not the token's claim, and it is
+    // checked before the cached member-project set, which names the project
+    // throughout.
+    const cache = fakeCache();
+    const h = await createTestApp({ memberProjectsCache: cache });
+    try {
+      const key = unrelatedKey();
+      await createStorage().put(key, TINY_PNG, "image/png");
+      const { project: a } = await seedProjectWithStep(h, { imageKey: key });
+      const member = await seedUser(h, "editor");
+      await h.db
+        .insert(projectMembers)
+        .values({ userId: member.id, projectId: a.id });
+      // One token throughout, issued while the member was an editor.
+      const token = h.app.jwt.sign({ sub: member.id, role: "editor" });
+      const get = () =>
+        h.app.inject({
+          method: "GET",
+          url: `/api/v1/storage/${key}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+      const setRole = (role: "editor" | "guest") =>
+        h.db.update(users).set({ role }).where(eq(users.id, member.id));
+
+      expect((await get()).statusCode).toBe(200);
+      expect(await cache.get(member.id)).toEqual([a.id]);
+
+      await setRole("guest");
+      const refused = await get();
+      expect(refused.statusCode).toBe(404);
+      expect(refused.json()).toEqual(NOT_FOUND);
+      expect(await cache.get(member.id)).toEqual([a.id]);
+
+      await setRole("editor");
+      expect((await get()).statusCode).toBe(200);
     } finally {
       await h.close();
     }
