@@ -851,7 +851,7 @@ describe("CommandPalette", () => {
       ["Go to", "Settings", "/projects/p1/settings"],
       ["Recent", "Members", "/admin/members"],
       ["Projects", "Jump to project: Beta", "/projects/p2/builds"],
-      ["Account", "API tokens", "/account/tokens"],
+      ["Account", "API tokens", "/admin/api-keys"],
     ];
     try {
       for (const [heading, label, href] of picks) {
@@ -1323,16 +1323,17 @@ describe("CommandPalette", () => {
       ["Go to", "Members", "/admin/members"],
       ["Go to", "Projects", "/admin/projects"],
       ["Go to", "Installations", "/admin/installations"],
-      ["Go to", "API keys", "/admin/api-keys"],
       ["Go to", "Auto rules", "/admin/auto-rules"],
       ["Go to", "Audit log", "/admin/audit-log"],
-      ["Account", "API tokens", "/account/tokens"],
+      ["Account", "API tokens", "/admin/api-keys"],
     ];
     render(<Shell role="admin" userId="" />);
     let palette = await openPalette();
-    expect(labels(palette, "Go to")).toEqual(
-      destinations.filter(([h]) => h === "Go to").map(([, label]) => label),
-    );
+    // Documentation, last, opens the portal in a new tab: not a destination.
+    expect(labels(palette, "Go to")).toEqual([
+      ...destinations.filter(([h]) => h === "Go to").map(([, label]) => label),
+      "Documentation",
+    ]);
     expect(labels(palette, "Account")).toEqual(["API tokens"]);
     // No option reads as a path, or is found by one.
     for (const option of within(palette).getAllByRole("option")) {
@@ -1359,11 +1360,15 @@ describe("CommandPalette", () => {
     expect(labels(await openPalette(), "Go to")).toEqual([
       "Batches",
       "Settings",
+      "Documentation",
     ]);
     cleanup();
     act(() => usePaletteStore.setState({ open: false }));
     render(<Shell role="editor" userId="" defaultProjectId={null} />);
-    expect(labels(await openPalette(), "Go to")).toEqual(["Batches"]);
+    expect(labels(await openPalette(), "Go to")).toEqual([
+      "Batches",
+      "Documentation",
+    ]);
   });
 
   test("Preferences lists the enabled preference and help commands and runs one", async () => {
@@ -1425,6 +1430,51 @@ describe("CommandPalette", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  test("Documentation opens the docs portal in a new tab", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      render(<Shell />);
+      const palette = await openPalette();
+      fireEvent.click(
+        within(group(palette, "Go to")).getByRole("option", {
+          name: "Documentation",
+        }),
+      );
+      expect(open).toHaveBeenCalledWith("/docs", "_blank", "noopener");
+      expect(pushMock).not.toHaveBeenCalled();
+      expect(usePaletteStore.getState().open).toBe(false);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  test("API tokens is one entry: Admin's page for admins, their own for editors", async () => {
+    const admin = render(<Shell role="admin" />);
+    let palette = await openPalette();
+    expect(
+      within(palette).queryAllByRole("option", { name: /API (keys|tokens)/ }),
+    ).toHaveLength(1);
+    expect(labels(palette, "Go to")).not.toContain("API keys");
+    fireEvent.click(
+      within(group(palette, "Account")).getByRole("option", {
+        name: "API tokens",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/admin/api-keys");
+    admin.unmount();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    pushMock.mockReset();
+    render(<Shell role="editor" />);
+    palette = await openPalette();
+    fireEvent.click(
+      within(group(palette, "Account")).getByRole("option", {
+        name: "API tokens",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/account/tokens");
+  });
+
   test("Recent is per user (user A's recent is absent for user B)", async () => {
     const a = render(<Shell userId="user-a" />);
     let palette = await openPalette();
@@ -1470,7 +1520,7 @@ describe("CommandPalette", () => {
       "Members",
       "Projects",
       "Installations",
-      "API keys",
+      "Analytics",
       "Auto rules",
       "Installations",
       "Audit log",
@@ -1485,7 +1535,7 @@ describe("CommandPalette", () => {
       "Audit log",
       "Installations",
       "Auto rules",
-      "API keys",
+      "Analytics",
       "Projects",
     ]);
   });

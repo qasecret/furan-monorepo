@@ -6,9 +6,10 @@ vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
 // AccountMenu reads the current project for its Settings link.
+const current = vi.hoisted(() => ({ id: "p1" as string | null }));
 vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
   useCurrentProject: () => ({
-    currentProjectId: "p1",
+    currentProjectId: current.id,
     currentProject: null,
     projects: [],
   }),
@@ -19,6 +20,7 @@ import { ROLE_STYLE } from "@/lib/role-style";
 
 afterEach(() => {
   cleanup();
+  current.id = "p1";
 });
 
 describe("AccountMenu", () => {
@@ -39,6 +41,37 @@ describe("AccountMenu", () => {
     const signOut = screen.getByRole("menuitem", { name: /sign out/i });
     expect(signOut.tagName).toBe("BUTTON");
     expect(signOut.getAttribute("type")).toBe("submit");
+  });
+
+  test.each([
+    ["owner", "/admin/api-keys"],
+    ["admin", "/admin/api-keys"],
+    ["editor", "/account/tokens"],
+  ] as const)("a %s's API tokens item goes to %s", async (role, href) => {
+    const user = userEvent.setup();
+    render(<AccountMenu email="me@x.io" initial="M" role={role} />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
+    expect(
+      screen.getByRole("menuitem", { name: "API tokens" }).getAttribute("href"),
+    ).toBe(href);
+  });
+
+  test("a guest has no API tokens item", async () => {
+    const user = userEvent.setup();
+    render(<AccountMenu email="me@x.io" initial="M" role="guest" />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
+    expect(screen.queryByRole("menuitem", { name: "API tokens" })).toBeNull();
+  });
+
+  test("API tokens is there without a current project", async () => {
+    current.id = null;
+    const user = userEvent.setup();
+    render(<AccountMenu email="me@x.io" initial="M" role="editor" />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
+    expect(
+      screen.getByRole("menuitem", { name: "API tokens" }).getAttribute("href"),
+    ).toBe("/account/tokens");
+    expect(screen.queryByRole("menuitem", { name: /settings/i })).toBeNull();
   });
 
   test("role chip uses the shared role style for every role", async () => {
