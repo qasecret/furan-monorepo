@@ -43,9 +43,20 @@ jobs:
 
       # `pnpm pack` writes each workspace:^ dependency as ^<version>; npm then
       # publishes the tarball. pnpm 9 packs from inside the package folder.
+      #
+      # Bootstrap only: npm attaches a trusted publisher to an existing package,
+      # so a package's first version needs a token (a short-lived granular npm
+      # token in the NPM_TOKEN secret, docs/maintainers/npm-publish.md). Delete
+      # the secret once the trusted publishers are added; without it this step
+      # publishes through Trusted Publishing alone.
       - name: Pack and publish (client, playwright, cli)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          fi
           dest="$RUNNER_TEMP/pkgs"
           mkdir -p "$dest"
           for pkg in client playwright cli; do
