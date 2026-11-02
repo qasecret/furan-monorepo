@@ -1,8 +1,6 @@
 import {
   and,
-  asc,
   builds,
-  desc,
   eq,
   inArray,
   screenshots,
@@ -27,8 +25,9 @@ import { assessRevert } from "./revert.js";
 import { loadActiveDecisionDetails, type ActiveDecision } from "./targets.js";
 
 /**
- * The review read model: what `runs.listCheckpoints` and `runs.getById`
- * report about each checkpoint's review. It is a projection of the rows the
+ * The review read model: what `runs.getStep` reports about a step's review,
+ * and `runs.listCheckpoints` about each step's (`listedReview`, the part of it
+ * the rail and the batch step cards draw). It is a projection of the rows the
  * decision core works on and reuses the core's loaders and rules
  * (`targets.ts`) for them: a checkpoint's state is
  * `checkpointReviewState(verdict, active decision)`, and the active decision
@@ -110,12 +109,30 @@ type NewerCapture = NonNullable<CheckpointReviewView["newerCapture"]>;
 
 /**
  * For each variation, the newest screenshot of it in a run captured after
- * `runId` (capture order: run `created_at, id`, as the core orders runs), with
- * its build's name. Two statements however many variations there are; the
- * second is skipped when nothing is newer. "After" is compared in SQL so the
- * run's microsecond timestamp is never rounded through a JS Date. (A run with
- * two screenshots of one variation is not expected; the earliest, by
- * `created_at, id`, is named, as `variations.history` does.)
+ * `runId`, in this run's project, with its build's name. "Newest" is the runs'
+ * capture order (`created_at, id`, as the core orders runs), on any branch; in
+ * that run, its earliest screenshot of the variation (`created_at, id`; a run
+ * holds one, by `screenshots_run_id_name_viewport_unique`). "After" is compared
+ * in SQL so the run's microsecond timestamp is never rounded through a JS Date.
+ *
+ * Two statements however many variations there are (the second is skipped
+ * when nothing is newer). Per variation, two bounded reads of
+ * `screenshots_variation_created_idx`, never a scan of its history. They rely
+ * on a step never being captured before its run was created (both are stamped
+ * by the database's `now()`; a step is written in its run's transaction or in
+ * one begun after it, an upload or a capture job), so every step of a run is
+ * captured no earlier than the run began:
+ *  1. `newest`: the variation's newest capture in a later run (the index
+ *     walked down from the newest capture, no further back than this run's
+ *     start), with its run's start; none means nothing is newer;
+ *  2. the newest later run is that run or one after it, so its captures were
+ *     made between that run's start and the newest capture: that range of the
+ *     index (the run and those captured alongside it) holds the answer, taken
+ *     in the runs' capture order. A run created later but captured sooner
+ *     (concurrent CI jobs) is still the newer one, as in the core's run order.
+ *     The closed range also keeps the planner's estimate small: an open one is
+ *     costed at a third of the variation's history, which over a few hundred
+ *     steps passes `jit_above_cost` and spends ~20 ms compiling.
  */
 async function loadNewerCaptures(
   db: DB | Tx,
@@ -125,37 +142,57 @@ async function loadNewerCaptures(
   const out = new Map<string, NewerCapture>();
   if (variationIds.length === 0) return out;
 
-  const newest = await db
-    .selectDistinctOn([screenshots.testVariationId], {
-      variationId: screenshots.testVariationId,
-      checkpointId: screenshots.id,
-      runId: testRuns.id,
-      buildId: testRuns.buildId,
-    })
-    .from(screenshots)
-    .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-    .where(
-      and(
-        inArray(screenshots.testVariationId, variationIds),
-        // Captured after this run, and in this run's project (a variation
-        // never spans projects; the pins, on the run and on the step it
-        // returns, keep a corrupt row from naming a foreign project's run,
-        // build or step).
-        sql`(${testRuns.createdAt}, ${testRuns.id}) > (select this_run.created_at, this_run.id from test_runs this_run where this_run.id = ${runId})`,
-        sql`${testRuns.projectId} = (select this_run.project_id from test_runs this_run where this_run.id = ${runId})`,
-        sql`${screenshots.projectId} = (select this_run.project_id from test_runs this_run where this_run.id = ${runId})`,
-      ),
-    )
-    .orderBy(
-      screenshots.testVariationId,
-      desc(testRuns.createdAt),
-      desc(testRuns.id),
-      asc(screenshots.createdAt),
-      asc(screenshots.id),
-    );
+  // A capture `step` of the variation in a run `run` after this one. The pins
+  // on the run and on the step keep a corrupt row (a variation never spans
+  // projects) from naming a foreign project's run, build or step.
+  const laterCapture = (step: string, run: string) => {
+    const [st, ru] = [sql.raw(step), sql.raw(run)];
+    return sql`${st}.test_variation_id = v.variation_id
+          and ${st}.project_id = this_run.project_id
+          and ${ru}.id = ${st}.run_id
+          and ${ru}.project_id = this_run.project_id
+          and (${ru}.created_at, ${ru}.id) > (this_run.created_at, this_run.id)`;
+  };
+  const newest = await db.execute<{
+    variation_id: string;
+    checkpoint_id: string;
+    run_id: string;
+    build_id: string;
+    project_id: string;
+  }>(sql`
+    select v.variation_id, n.checkpoint_id, n.run_id, n.build_id,
+           this_run.project_id
+    from (
+      select created_at, id, project_id from test_runs where id = ${runId}
+    ) this_run
+    cross join unnest(array[${sql.join(
+      variationIds.map((v) => sql`${v}`),
+      sql`, `,
+    )}]::uuid[]) as v(variation_id)
+    cross join lateral (
+      select r1.created_at as run_at, s1.created_at as captured_at
+      from screenshots s1, test_runs r1
+      where ${laterCapture("s1", "r1")}
+        and s1.created_at >= this_run.created_at
+      order by s1.created_at desc, s1.id desc
+      limit 1
+    ) newest
+    cross join lateral (
+      select s.id as checkpoint_id, r.id as run_id, r.build_id
+      from screenshots s, test_runs r
+      where ${laterCapture("s", "r")}
+        and s.created_at between newest.run_at and newest.captured_at
+      order by r.created_at desc, r.id desc, s.created_at, s.id
+      limit 1
+    ) n
+  `);
   if (newest.length === 0) return out;
 
-  const buildIds = [...new Set(newest.map((n) => n.buildId))];
+  // The newer runs' builds, named from this project's rows only: a run whose
+  // build is another project's (corrupt data) is named by its build id alone,
+  // as is a build the reader cannot see.
+  const projectId = newest[0]!.project_id;
+  const buildIds = [...new Set(newest.map((n) => n.build_id))];
   const buildRows = await db
     .select({
       id: builds.id,
@@ -168,18 +205,24 @@ async function loadNewerCaptures(
       >`case when count(distinct ${testRuns.name}) = 1 then min(${testRuns.name}) else null end`,
     })
     .from(builds)
-    .leftJoin(testRuns, eq(testRuns.buildId, builds.id))
-    .where(inArray(builds.id, buildIds))
+    .leftJoin(
+      testRuns,
+      and(
+        eq(testRuns.buildId, builds.id),
+        eq(testRuns.projectId, builds.projectId),
+      ),
+    )
+    .where(and(inArray(builds.id, buildIds), eq(builds.projectId, projectId)))
     .groupBy(builds.id);
   const buildName = new Map(buildRows.map((b) => [b.id, buildDisplayName(b)]));
 
   for (const n of newest) {
-    out.set(n.variationId, {
-      runId: n.runId,
-      checkpointId: n.checkpointId,
-      buildId: n.buildId,
+    out.set(n.variation_id, {
+      runId: n.run_id,
+      checkpointId: n.checkpoint_id,
+      buildId: n.build_id,
       buildName:
-        buildName.get(n.buildId) ?? buildDisplayName({ id: n.buildId }),
+        buildName.get(n.build_id) ?? buildDisplayName({ id: n.build_id }),
     });
   }
   return out;
@@ -234,36 +277,33 @@ async function loadUndoAvailability(
   return out;
 }
 
+/** A step as the review view reads it. */
+interface ReviewStep {
+  id: string;
+  verdict: CheckpointVerdict | null;
+  testVariationId: string;
+}
+
 /**
- * The review view of every checkpoint of a run, keyed by checkpoint id, with
- * `decision.undo` as `viewer` would find it. A constant number of statements
- * however many checkpoints the run has: the checkpoints, their active
- * decisions, the newer captures and those captures' builds (at most four), and
- * for the undo availability of the decisions one batched `assessRevert`.
+ * The review views of `steps` (steps of `runId`), given their active
+ * decisions: the newer captures and those captures' builds (at most two
+ * statements), and for the undo availability of the decisions one batched
+ * `assessRevert`.
  */
-export async function loadCheckpointReview(
+async function reviewViews(
   db: DB | Tx,
   runId: string,
+  steps: readonly ReviewStep[],
+  decisions: Map<string, ActiveDecision>,
   viewer: AuthedUser,
 ): Promise<Map<string, CheckpointReviewView>> {
-  const shots = await db
-    .select({
-      id: screenshots.id,
-      verdict: screenshots.verdict,
-      testVariationId: screenshots.testVariationId,
-    })
-    .from(screenshots)
-    .where(eq(screenshots.runId, runId));
-  if (shots.length === 0) return new Map();
-
-  const decisions = await loadActiveDecisionDetails(db, { runId });
   const newer = await loadNewerCaptures(db, runId, [
-    ...new Set(shots.map((s) => s.testVariationId)),
+    ...new Set(steps.map((s) => s.testVariationId)),
   ]);
   const undo = await loadUndoAvailability(db, [...decisions.values()], viewer);
 
   return new Map(
-    shots.map((s) => {
+    steps.map((s) => {
       const d = decisions.get(s.id) ?? null;
       const view: CheckpointReviewView = {
         verdict: s.verdict,
@@ -288,6 +328,53 @@ export async function loadCheckpointReview(
   );
 }
 
+/**
+ * The review view of every checkpoint of a run, keyed by checkpoint id, with
+ * `decision.undo` as `viewer` would find it. A constant number of statements
+ * however many checkpoints the run has: the checkpoints, their active
+ * decisions, the newer captures and those captures' builds (at most four), and
+ * for the undo availability of the decisions one batched `assessRevert`.
+ */
+export async function loadCheckpointReview(
+  db: DB | Tx,
+  runId: string,
+  viewer: AuthedUser,
+): Promise<Map<string, CheckpointReviewView>> {
+  const shots = await db
+    .select({
+      id: screenshots.id,
+      verdict: screenshots.verdict,
+      testVariationId: screenshots.testVariationId,
+    })
+    .from(screenshots)
+    .where(eq(screenshots.runId, runId));
+  if (shots.length === 0) return new Map();
+
+  const decisions = await loadActiveDecisionDetails(db, { runId });
+  return reviewViews(db, runId, shots, decisions, viewer);
+}
+
+/**
+ * The review view of one step of `run`, as `loadCheckpointReview` reports it
+ * for that step, with no read of the run's other steps: its active decision
+ * (in the run's project), its newer capture and that capture's build, and the
+ * decision's undo assessment (which reads the decision's whole action, as it
+ * always does).
+ */
+export async function loadStepReview(
+  db: DB | Tx,
+  run: { id: string; projectId: string },
+  step: ReviewStep,
+  viewer: AuthedUser,
+): Promise<CheckpointReviewView> {
+  const decisions = await loadActiveDecisionDetails(db, {
+    screenshotIds: [step.id],
+    projectId: run.projectId,
+  });
+  const views = await reviewViews(db, run.id, [step], decisions, viewer);
+  return views.get(step.id) ?? NO_REVIEW;
+}
+
 /** The view of a checkpoint the map has no entry for (a stale id). */
 export const NO_REVIEW: CheckpointReviewView = {
   verdict: null,
@@ -295,3 +382,37 @@ export const NO_REVIEW: CheckpointReviewView = {
   decision: null,
   newerCapture: null,
 };
+
+/**
+ * What the step list carries of a step's review (spec 2026-10-27 §5): what
+ * the rail and the batch step cards draw. A card offers Undo while the viewer
+ * may undo the decision, and names the newer capture's build in the question
+ * it asks before approving an older capture. Who decided and when, why an
+ * undo is refused, and the newer capture's run and step are the viewer's, and
+ * `getStep`'s to serve.
+ */
+export interface ListedReview {
+  verdict: CheckpointReviewView["verdict"];
+  state: CheckpointReviewView["state"];
+  decision: {
+    actionId: string;
+    kind: CheckpointDecisionKind;
+    undo: { allowed: boolean };
+  } | null;
+  newerCapture: { buildName: string } | null;
+}
+
+/** `view` as the step list carries it. */
+export function listedReview(view: CheckpointReviewView): ListedReview {
+  const { decision, newerCapture } = view;
+  return {
+    verdict: view.verdict,
+    state: view.state,
+    decision: decision && {
+      actionId: decision.actionId,
+      kind: decision.kind,
+      undo: { allowed: decision.undo.allowed },
+    },
+    newerCapture: newerCapture && { buildName: newerCapture.buildName },
+  };
+}

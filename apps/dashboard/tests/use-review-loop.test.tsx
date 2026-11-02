@@ -42,6 +42,7 @@ const utils = vi.hoisted(() => ({
   runs: {
     getById: { prefetch: vi.fn(), getData: vi.fn(), fetch: vi.fn() },
     listCheckpoints: { prefetch: vi.fn() },
+    getStep: { prefetch: vi.fn() },
   },
 }));
 
@@ -143,6 +144,7 @@ beforeEach(() => {
   utils.runs.getById.getData.mockReset();
   utils.runs.getById.fetch.mockReset();
   utils.runs.listCheckpoints.prefetch.mockReset();
+  utils.runs.getStep.prefetch.mockReset();
   // A target run that is already cached, with a name.
   utils.runs.getById.getData.mockReturnValue({ name: "Checkout" });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
@@ -1882,6 +1884,40 @@ describe("useReviewLoop: prefetch", () => {
     query.data = answer({ target: null, scope: "none" });
     setup();
     expect(utils.runs.getById.prefetch).not.toHaveBeenCalled();
+    expect(utils.runs.getStep.prefetch).not.toHaveBeenCalled();
+  });
+
+  test("prefetches the target step's own read, in this run or another, never the step on screen", () => {
+    // The viewer reads one step at a time (spec 2026-10-27 §5): the step
+    // the loop goes to next is warmed wherever it is.
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    const { rerender } = setup();
+    expect(utils.runs.getStep.prefetch).toHaveBeenCalledOnce();
+    expect(utils.runs.getStep.prefetch.mock.calls[0]![0]).toEqual({
+      runId: OTHER_RUN,
+      checkpointId: "step-9",
+    });
+
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-2" },
+      scope: "run",
+    });
+    rerender(args());
+    expect(utils.runs.getStep.prefetch).toHaveBeenCalledTimes(2);
+    expect(utils.runs.getStep.prefetch.mock.calls[1]![0]).toEqual({
+      runId: RUN,
+      checkpointId: "step-2",
+    });
+
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+      scope: "run",
+    });
+    rerender(args());
+    expect(utils.runs.getStep.prefetch).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -9,11 +9,12 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { formatRelativeTime } from "@/lib/format";
-import type { CheckpointItem } from "@/lib/review/optimistic";
+import type { StepDetail } from "@/lib/review/optimistic";
 import { describeSkip } from "@/lib/review/review-copy";
 import { reviewStateStyle } from "@/lib/status-style";
 
-type Decision = NonNullable<CheckpointItem["decision"]>;
+/** The step's decision as its own read has it (`runs.getStep`). */
+type Decision = NonNullable<StepDetail["review"]["decision"]>;
 
 /** Why Undo waits: its own call is on its way. */
 const UNDOING = "Undoing…";

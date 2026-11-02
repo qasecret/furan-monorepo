@@ -77,6 +77,8 @@ export function SensitivityControl({
   const mutation = trpc.runs.setDiffThresholdOverride.useMutation({
     onSuccess: (_data, vars) => {
       void utils.runs.getById.invalidate({ runId });
+      // Every step of the run is diffed again.
+      void utils.runs.getStep.invalidate({ runId });
       toast.success(
         vars.threshold === null
           ? "Reset to project default — re-running diff"

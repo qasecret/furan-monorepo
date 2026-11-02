@@ -21,6 +21,7 @@ import {
 } from "./cache-patch";
 import {
   decisionChange,
+  fieldIds,
   restoreChange,
   revertChange,
   type Actor,
@@ -297,7 +298,9 @@ export function useReviewMutations() {
     const action = ACTIONS.get(actionId);
     if (!action?.change) return;
     try {
-      await Promise.all(action.runIds.map((runId) => cancelRun(caches, runId)));
+      await Promise.all(
+        action.runIds.map((runId) => cancelRun(caches, runId, action.held)),
+      );
       action.rollback = action.inverse?.(caches);
       for (const runId of action.runIds) {
         patchRun(caches, runId, action.change);
@@ -353,6 +356,8 @@ export function useReviewMutations() {
     if (action) useInFlightStore.getState().release(action.held);
     void utils.runs.listCheckpoints.invalidate();
     void utils.runs.getById.invalidate();
+    // Every step read: the one on screen and the neighbours fetched ahead.
+    void utils.runs.getStep.invalidate();
     void utils.runs.list.invalidate();
     void utils.builds.getById.invalidate();
     // A decision (or its undo) moves a batch in or out of Needs review, so the
@@ -445,7 +450,7 @@ export function useReviewMutations() {
           // The decisions this undo clears, to put back if it fails.
           inverse: (c) => restoreChange(loadedDecisions(c, runIds, id)),
           // A decide on one of these steps waits for the undo to finish.
-          held: [...loadedDecisions(caches, runIds, id).keys()],
+          held: fieldIds(loadedDecisions(caches, runIds, id)),
         },
         () => revert.mutate({ actionId: id }),
       );

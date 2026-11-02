@@ -227,18 +227,14 @@ interface Assignment {
   defaultProjectId: string | null;
 }
 
-/** The parts of `runs.getById` this spec reads. */
-interface RunDetail {
-  screenshots: Array<{
-    id: string;
-    imageKey: string | null;
-    diffImageKey: string | null;
-  }>;
-  checkpointContexts: Record<
-    string,
-    { baselineScreenshot: { imageKey: string | null } | null }
-  >;
-  diffRegions: Array<{
+/** The parts of `runs.getStep` (one step, as the viewer reads it) this spec reads. */
+interface StepView {
+  step: { id: string; imageKey: string | null; diffImageKey: string | null };
+  baselineContext: {
+    baselineScreenshot: { imageKey: string | null } | null;
+  };
+  /** The step's regions, and the run's on no step (pre-v1.1.20). */
+  regions: Array<{
     screenshotId: string | null;
     severity: string;
     bbox: { x: number; y: number; width: number; height: number };
@@ -347,19 +343,20 @@ test.describe.serial("ui: viewer comparison modes", () => {
     });
     expect(current.status).toBe("unresolved");
 
-    // Each step's images, as the viewer will ask for them.
-    const run = await api.trpcQuery<RunDetail>(admin, "runs.getById", {
-      runId: current.runId,
-    });
+    // Each step's images, as the viewer will ask for them: one step's read
+    // at a time (spec 2026-10-27 §5).
+    const stepOf = (name: "half" | "next"): Promise<StepView> =>
+      api.trpcQuery<StepView>(admin, "runs.getStep", {
+        runId: current.runId,
+        checkpointId: current.checkpointIds[name],
+      });
+    const steps = { half: await stepOf("half"), next: await stepOf("next") };
     const keysOf = (name: "half" | "next"): string[] => {
-      const id = current.checkpointIds[name];
-      const shot = run.screenshots.find((s) => s.id === id);
+      const { step, baselineContext } = steps[name];
       const keys = [
-        id === undefined
-          ? null
-          : run.checkpointContexts[id]?.baselineScreenshot?.imageKey,
-        shot?.imageKey,
-        shot?.diffImageKey,
+        baselineContext.baselineScreenshot?.imageKey,
+        step.imageKey,
+        step.diffImageKey,
       ];
       if (!keys.every((k): k is string => typeof k === "string")) {
         throw new Error(
@@ -377,7 +374,7 @@ test.describe.serial("ui: viewer comparison modes", () => {
     // What the colour checks rely on: the first step's one region is its
     // right half, around the right sample point and not the left, so its
     // outline (R28) runs clear of both.
-    const regions = run.diffRegions.filter(
+    const regions = steps.half.regions.filter(
       (r) => r.screenshotId === current.checkpointIds.half,
     );
     expect(regions.map((r) => r.severity)).toEqual(["major"]);

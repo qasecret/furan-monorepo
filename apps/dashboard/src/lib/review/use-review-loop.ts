@@ -12,6 +12,7 @@ import {
 import { create } from "zustand";
 
 import type { ViewerMode } from "@/components/diff-viewer/comparison-modes";
+import { prefetchStep } from "@/components/diff-viewer/use-viewer-step";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { announce, reserveAnnouncement } from "@/lib/review/review-announcer";
 import { loopQuery, type ReviewContext } from "@/lib/review-context";
@@ -791,14 +792,22 @@ export function useReviewLoop({
     return () => clearTimeout(timer);
   }, [waiting]);
 
-  // Warm the target's run so the move shows it at once. The run on screen is
-  // already loaded and kept fresh by the viewer; refetching it is waste.
+  // Warm the target so the move shows it at once. Another run: its header
+  // and step list (the run on screen is already loaded and kept fresh by the
+  // viewer; refetching it is waste). Any run: the target step's own read,
+  // which the viewer reads one step at a time (spec 2026-10-27 §5), unless it
+  // is the step on screen.
   const targetRunId = next?.target?.runId;
+  const targetStepId = next?.target?.checkpointId;
   useEffect(() => {
     if (!targetRunId || targetRunId === runId) return;
     void utils.runs.getById.prefetch({ runId: targetRunId });
     void utils.runs.listCheckpoints.prefetch({ runId: targetRunId });
   }, [targetRunId, runId, utils]);
+  useEffect(() => {
+    if (!targetRunId || !targetStepId || targetStepId === checkpointId) return;
+    prefetchStep(utils, targetRunId, targetStepId);
+  }, [targetRunId, targetStepId, checkpointId, utils]);
 
   // K asks when it is pressed, not ahead: one more query per step, for a key
   // that is pressed rarely. At most one is on its way at a time.

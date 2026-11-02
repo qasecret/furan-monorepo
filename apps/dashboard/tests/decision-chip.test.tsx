@@ -2,9 +2,9 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DecisionChip } from "../src/components/diff-viewer/DecisionChip";
-import type { CheckpointItem } from "../src/lib/review/optimistic";
+import type { StepDetail } from "../src/lib/review/optimistic";
 
-type Decision = NonNullable<CheckpointItem["decision"]>;
+type Decision = NonNullable<StepDetail["review"]["decision"]>;
 
 const NOW = new Date("2026-10-10T12:00:00.000Z");
 
