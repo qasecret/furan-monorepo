@@ -1,6 +1,6 @@
 {
   "name": "@furan/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "furan upload: send PNG screenshots to Furan from any CI and fail the job when a screenshot needs review.",
   "license": "Apache-2.0",
   "type": "module",

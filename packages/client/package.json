@@ -1,6 +1,6 @@
 {
   "name": "@furan/client",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Send screenshots to Furan from Node: create a build and runs, upload PNG checkpoints with ignore regions, and wait for the verdict.",
   "license": "Apache-2.0",
   "type": "module",
