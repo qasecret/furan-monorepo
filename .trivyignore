@@ -51,6 +51,10 @@ CVE-2026-0861
 #
 # Owner: @qasecret-maintainer
 # Last reviewed: 2026-05-28 (v1.0.17 build-images run on v1.60.0-noble)
+# Re-scanned 2026-11-01 for the bump to v1.63.0-noble: none of the entries
+# below match v1.63.0-noble (on v1.60.0-noble only CVE-2026-33671 still
+# did). They stay until they are re-checked against the other four app
+# images, which read this same file.
 
 # Go stdlib in upstream-bundled Go CLIs (curl, kubectl, gh, docker, etc.)
 # inside the Playwright image. 2 CRITICAL + 18 HIGH on v1.60.0-noble.
