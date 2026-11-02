@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
   builds,
-  checkpointDecisions,
   diffRegions,
+  eq,
+  inArray,
   projectMembers,
   projects,
   screenshots,
@@ -13,6 +13,10 @@ import {
   testVariations,
   users,
 } from "@furan/db";
+import {
+  buildAggregateStatusSchema,
+  runStatusSchema,
+} from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import {
   afterAll,
@@ -23,21 +27,62 @@ import {
   test,
 } from "vitest";
 
+import { encodeKeysetCursor } from "../src/lib/keyset-cursor.js";
 import { hashPassword } from "../src/lib/password.js";
+import type { Context } from "../src/trpc/context.js";
+import { AGGREGATE_STATUS_RUNS, buildsRouter } from "../src/trpc/v1/builds.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
+import {
+  bodyStatements,
+  capturing,
+  type CapturedStatement,
+} from "./capturing-db.js";
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
+  decideDirectly,
+  failDiff,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
+
+describe("the aggregate status table", () => {
+  // The CASE that picks a build's status, its per-status counts and the
+  // status filter are all derived from AGGREGATE_STATUS_RUNS: this pins the
+  // table itself to spec §3.2.
+  test("is in precedence order, one row per aggregate status but empty", () => {
+    expect(AGGREGATE_STATUS_RUNS.map(([status]) => status)).toEqual([
+      "running",
+      "unresolved",
+      "failed",
+      "aborted",
+      "passed",
+    ]);
+    expect(
+      [...AGGREGATE_STATUS_RUNS.map(([status]) => status), "empty"].sort(),
+    ).toEqual([...buildAggregateStatusSchema.options].sort());
+  });
+
+  test("puts every run status but empty behind exactly one aggregate status", () => {
+    // A `new` run rolls up to passed while its steps still need review (the
+    // Passed chip adds `noPending` for that, Ruling R32).
+    expect(
+      AGGREGATE_STATUS_RUNS.find(([status]) => status === "passed")![1],
+    ).toEqual(["passed", "new"]);
+    const behind = AGGREGATE_STATUS_RUNS.flatMap(([, runs]) => runs);
+    expect([...behind].sort()).toEqual(
+      runStatusSchema.options.filter((s) => s !== "empty").sort(),
+    );
+  });
+});
 
 interface Seeded {
   editorId: string;
@@ -245,6 +290,52 @@ d("tRPC builds router", () => {
       properties: { region: "us-east-1" },
     });
     expect(res.items.map((b) => b.ciBuildId).sort()).toEqual(["p1", "p3"]);
+  });
+
+  test("a page past the end is empty, not an error", async () => {
+    await h.db.insert(builds).values([
+      { projectId: s.projectId, ciBuildId: "e1", branchName: "main" },
+      { projectId: s.projectId, ciBuildId: "e2", branchName: "main" },
+      { projectId: s.projectId, ciBuildId: "e3", branchName: "main" },
+    ]);
+    const client = mkClient(h, s.editorJwt);
+    const first = await client.builds.list.query({
+      projectId: s.projectId,
+      limit: 2,
+    });
+    expect(first.items).toHaveLength(2);
+    const second = await client.builds.list.query({
+      projectId: s.projectId,
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+
+    // A cursor at the oldest build, as the list would write it: nothing is
+    // older, whatever the filter.
+    const oldest = second.items[0]!.id;
+    const [row] = await h.db.execute<{ at: string }>(sql`
+      select to_char(created_at at time zone 'UTC',
+                     'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at
+      from builds where id = ${oldest}`);
+    const past = encodeKeysetCursor({ createdAt: row!.at, id: oldest });
+    for (const filter of [
+      {},
+      { needsReview: true },
+      { noPending: true },
+      { anyFailed: true },
+      { status: "empty" as const },
+      { status: "failed" as const },
+    ]) {
+      await expect(
+        client.builds.list.query({
+          projectId: s.projectId,
+          cursor: past,
+          ...filter,
+        }),
+      ).resolves.toEqual({ items: [], nextCursor: null });
+    }
   });
 
   test("list AND-joins multiple property filters", async () => {
@@ -465,27 +556,6 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
   /** The client of one of the seed's users. */
   const as = (user: { jwt: string }) => mkClient(h, user.jwt);
 
-  /** A decision row (an approve unless `decision`), active unless `reverted`. */
-  async function decide(
-    s: ReviewSeed,
-    runId: string,
-    shotId: string,
-    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
-  ): Promise<void> {
-    await h.db.insert(checkpointDecisions).values({
-      projectId: s.projectId,
-      runId,
-      screenshotId: shotId,
-      actionId: randomUUID(),
-      decision: opts.decision ?? "approved",
-      actorId: s.editor.id,
-      source: "viewer",
-      before: null,
-      revertedAt: opts.reverted ? new Date() : null,
-      revertedBy: opts.reverted ? s.editor.id : null,
-    });
-  }
-
   const idsOf = (page: { items: Array<{ id: string }> }) =>
     page.items.map((i) => i.id);
   const sorted = (ids: string[]) => [...ids].sort();
@@ -513,7 +583,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const bRun = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "b1", verdict: "unresolved" }] },
     });
-    await decide(s, bRun.runId, bRun.shots["b1"]!.id, {
+    await decideDirectly(h, s, [bRun.shots["b1"]!.id], {
       decision: "rejected",
     });
     // C: only passed steps: nothing to review.
@@ -524,7 +594,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const dRun = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "d1", verdict: "unresolved" }] },
     });
-    await decide(s, dRun.runId, dRun.shots["d1"]!.id, { reverted: true });
+    await decideDirectly(h, s, [dRun.shots["d1"]!.id], { reverted: true });
     // E: still running, so not reviewable: its steps are not pending.
     const e = await addReviewBuild(h, s, {
       spec: {
@@ -624,7 +694,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
       lifecycle: "failed",
       checkpoints: [{ name: "a-rejected", verdict: "unresolved" }],
     });
-    await decide(s, s.runId, s.shots["a-rejected"]!.id, {
+    await decideDirectly(h, s, [s.shots["a-rejected"]!.id], {
       decision: "rejected",
     });
     await addReviewRun(h, s, {
@@ -638,7 +708,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         checkpoints: [{ name: "b-rejected", verdict: "unresolved" }],
       },
     });
-    await decide(s, b.runId, b.shots["b-rejected"]!.id, {
+    await decideDirectly(h, s, [b.shots["b-rejected"]!.id], {
       decision: "rejected",
     });
     // C: only a pending run: to review, no failure.
@@ -711,7 +781,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     const c = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
     });
-    await decide(s, c.runId, c.shots["c1"]!.id);
+    await decideDirectly(h, s, [c.shots["c1"]!.id]);
     // D: one `new` step approved, its sibling still pending.
     const dBuild = await addReviewBuild(h, s, {
       spec: {
@@ -721,7 +791,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         ],
       },
     });
-    await decide(s, dBuild.runId, dBuild.shots["d-done"]!.id);
+    await decideDirectly(h, s, [dBuild.shots["d-done"]!.id]);
     // E: an unresolved step: not passed in the rollup.
     const e = await addReviewBuild(h, s, {
       spec: { checkpoints: [{ name: "e1", verdict: "unresolved" }] },
@@ -769,8 +839,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
         { name: "a-decided", verdict: "unresolved" },
       ],
     });
-    const aRun = s.runId;
-    await decide(s, aRun, s.shots["a-decided"]!.id);
+    await decideDirectly(h, s, [s.shots["a-decided"]!.id]);
     // A second run in the same build: one more pending step, and a run that is
     // still running (not reviewable, so none of its steps count).
     await addReviewRun(h, s, {
@@ -831,6 +900,164 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     ).toEqual({ [s.buildId]: 3, [c.buildId]: 3 });
   });
 
+  /**
+   * Writes runs' stored columns directly: the stale values a writer that
+   * skipped `recomputeRunStatus` (the counters) or the step count would
+   * leave. `fn` runs with them; both are restored after, whatever happens.
+   */
+  async function withStaleColumns(
+    stale: Record<
+      string,
+      { pendingSteps?: number; failedSteps?: number; checkpointCount?: number }
+    >,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const runIds = Object.keys(stale);
+    const kept = await h.db
+      .select({ id: testRuns.id, checkpointCount: testRuns.checkpointCount })
+      .from(testRuns)
+      .where(inArray(testRuns.id, runIds));
+    try {
+      for (const [runId, columns] of Object.entries(stale)) {
+        await h.db.update(testRuns).set(columns).where(eq(testRuns.id, runId));
+      }
+      await fn();
+    } finally {
+      for (const r of kept) {
+        await h.db
+          .update(testRuns)
+          .set({ checkpointCount: r.checkpointCount })
+          .where(eq(testRuns.id, r.id));
+      }
+      await syncRunCounters(h.db, runIds);
+    }
+  }
+
+  test("getById counts from the runs' columns: the list's pending number, steps from checkpoint_count", async () => {
+    // Run 1: two pending steps and a passed one. Run 2: a pending step whose
+    // diff failed: pending (the list and the badge count it), not approvable.
+    const s = await seed({
+      checkpoints: [
+        { name: "a1", verdict: "new" },
+        { name: "a2", verdict: "unresolved" },
+        { name: "a3", verdict: "passed" },
+      ],
+    });
+    const failed = await addReviewRun(h, s, {
+      checkpoints: [{ name: "a4", verdict: "unresolved" }],
+    });
+    await failDiff(h, failed.shots.a4!.id);
+
+    const client = as(s.editor);
+    const detail = () => client.builds.getById.query({ buildId: s.buildId });
+    const listed = async () => {
+      const page = await client.builds.list.query({ projectId: s.projectId });
+      return page.items.find((i) => i.id === s.buildId)!.pendingCheckpoints;
+    };
+
+    expect(await detail()).toMatchObject({
+      pendingCheckpoints: 3,
+      approvableCheckpoints: 2,
+      stepsTotal: 4,
+    });
+    expect(await listed()).toBe(3);
+    // Approve-pending acts on the approvable ones only: the batch's count.
+    const preview = await client.review.previewApproveBuild.query({
+      buildId: s.buildId,
+    });
+    expect(preview.pendingCheckpoints).toBe(2);
+
+    // The numbers are the columns', even stale: getById and the list agree.
+    await withStaleColumns(
+      {
+        [s.runId]: { pendingSteps: 7, failedSteps: 2, checkpointCount: 10 },
+        [failed.runId]: { pendingSteps: 0, failedSteps: 0 },
+      },
+      async () => {
+        expect(await detail()).toMatchObject({
+          pendingCheckpoints: 7,
+          approvableCheckpoints: 5,
+          stepsTotal: 11,
+        });
+        expect(await listed()).toBe(7);
+      },
+    );
+    expect(await detail()).toMatchObject({
+      pendingCheckpoints: 3,
+      approvableCheckpoints: 2,
+      stepsTotal: 4,
+    });
+    expect(await listed()).toBe(3);
+  });
+
+  test("getById: a batch whose only pending steps failed their diff has nothing approvable", async () => {
+    const s = await seed({
+      checkpoints: [
+        { name: "f1", verdict: "unresolved" },
+        { name: "f2", verdict: "new" },
+        { name: "ok", verdict: "passed" },
+      ],
+    });
+    await failDiff(h, s.shots.f1!.id);
+    await failDiff(h, s.shots.f2!.id);
+
+    const client = as(s.editor);
+    // Still pending (the list, the badge and the review loop stop on them),
+    // but approve-pending has nothing to act on until they are retried.
+    expect(
+      await client.builds.getById.query({ buildId: s.buildId }),
+    ).toMatchObject({ pendingCheckpoints: 2, approvableCheckpoints: 0 });
+    const page = await client.builds.list.query({ projectId: s.projectId });
+    expect(page.items.find((i) => i.id === s.buildId)).toMatchObject({
+      pendingCheckpoints: 2,
+    });
+    const preview = await client.review.previewApproveBuild.query({
+      buildId: s.buildId,
+    });
+    expect(preview.pendingCheckpoints).toBe(0);
+  });
+
+  test("getById is one statement, however many runs and steps the batch has", async () => {
+    const small = await seed({ checkpoints: [{ name: "s1", verdict: "new" }] });
+    const big = await seed({
+      checkpoints: [
+        { name: "b1", verdict: "new" },
+        { name: "b2", verdict: "unresolved" },
+        { name: "b3", verdict: "passed" },
+      ],
+    });
+    for (let i = 0; i < 5; i++) {
+      await addReviewRun(h, big, {
+        checkpoints: [
+          { name: `b${i}-1`, verdict: "unresolved" },
+          { name: `b${i}-2`, verdict: "new" },
+          { name: `b${i}-3`, verdict: "passed" },
+        ],
+      });
+    }
+    /** getById as an admin, with the request body's statements. */
+    const read = async (s: ReviewSeed) => {
+      const statements: CapturedStatement[] = [];
+      const res = await buildsRouter
+        .createCaller({
+          user: { id: s.admin.id, role: "admin", via: "jwt" },
+          db: capturing(h.db, statements),
+        } as unknown as Context)
+        .getById({ buildId: s.buildId });
+      return { res, statements: bodyStatements(statements) };
+    };
+    const one = await read(small);
+    const many = await read(big);
+    expect(one.res).toMatchObject({ runCount: 1, stepsTotal: 1 });
+    expect(many.res).toMatchObject({
+      runCount: 6,
+      stepsTotal: 18,
+      pendingCheckpoints: 12,
+    });
+    expect(one.statements).toHaveLength(1);
+    expect(many.statements).toHaveLength(1);
+  });
+
   test("builds.pendingCount counts builds, member-gated", async () => {
     // A: three pending steps over two runs count once.
     const s = await seed({
@@ -860,7 +1087,7 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     expect(await count(other.editor, other.projectId)).toEqual({ total: 1 });
 
     // It follows the decisions: deciding B's only step takes B out.
-    await decide(s, b.runId, b.shots["b1"]!.id, { decision: "rejected" });
+    await decideDirectly(h, s, [b.shots["b1"]!.id], { decision: "rejected" });
     expect(await count(s.editor, s.projectId)).toEqual({ total: 1 });
 
     // A project without builds is zero.

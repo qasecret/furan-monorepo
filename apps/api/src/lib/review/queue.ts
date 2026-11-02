@@ -15,10 +15,13 @@ import {
 } from "@furan/db";
 
 import {
-  buildHasPendingStep,
   buildPendingCount,
   facetCondition,
+  pendingBatchCount,
+  pendingBuildIds,
   pendingStepCondition,
+  pendingStepOfBuild,
+  storedPendingRun,
   type StepFacets,
 } from "./pending.js";
 import { buildDisplayName } from "./reads.js";
@@ -32,6 +35,12 @@ import { buildDisplayName } from "./reads.js";
  * query is pinned to the project. `findNext` trusts its input (the caller
  * checks that the `at` ids belong to the project and to each other) and
  * takes no locks: its answer is a hint.
+ *
+ * Which batches have pending work, and how many, come from the runs' stored
+ * counters (spec 2026-10-27 §4, `pendingBuildIds`), so neither the next batch
+ * nor the counts walk the project's batches. Every step pick, and every answer
+ * inside facets, still asks `pendingStepCondition`, with the stored counter
+ * as a pre-filter (`storedPendingRun`).
  */
 
 /**
@@ -136,6 +145,7 @@ async function stepInBatch(
           eq(testRuns.projectId, projectId),
           eq(screenshots.projectId, projectId),
           eq(testRuns.buildId, at.buildId),
+          storedPendingRun(),
           pendingStepCondition(facets),
           where,
         ),
@@ -158,9 +168,17 @@ async function stepInBatch(
  * The newest batch with a pending step inside `facets`, none of `exclude`,
  * among those matching `onBranch` (a condition over `builds b`; any when
  * undefined), with its pending steps (inside `facets`; `pending` is 0 unless
- * `countPending`). One statement with a `LIMIT 1` probe in `created_at DESC,
- * id DESC`, so it can stop at the first hit; the count is taken from the picked
- * row alone, outside the probe. Ties on `created_at` go to the greater id.
+ * `countPending`). Ties on `created_at` go to the greater id.
+ *
+ * One statement. The candidates are the project's batches with pending work
+ * by their stored counters (`pendingBuildIds`), each looked up in `builds`
+ * by its primary key and sorted newest first. With no facet the first one is
+ * the answer. With a facet the candidates are asked in that order, each by
+ * one probe of its pending runs (`pendingStepOfBuild`), until one has a
+ * pending step inside the facets. The cost follows the project's pending
+ * batches (one primary-key read each), never its history, so a project whose
+ * recent batches are all resolved costs no more than one whose newest is
+ * pending. The name and the count are taken from the picked row alone.
  */
 async function newestBatchWhere(
   db: DB | Tx,
@@ -182,6 +200,40 @@ async function newestBatchWhere(
   const pending = a.countPending
     ? buildPendingCount(a.projectId, sql`p.id`, a.facets)
     : sql`0`;
+  // The pending batch ids are read first and on their own (an InitPlan),
+  // then each is looked up by its primary key (a LATERAL with a LIMIT, which
+  // the planner cannot flatten). As a plain join the planner may turn it round
+  // and walk the project's batches in created_at order against the set, the
+  // walk this replaces, or misjudge the set's size into a parallel scan of
+  // test_runs.
+  const candidates = sql`
+    select b.id, b.name, b.number, b.ci_build_id, b.branch_name, b.created_at
+    from unnest(array(${pendingBuildIds(a.projectId)})) pending_builds(build_id)
+    cross join lateral (
+      select b.id, b.name, b.number, b.ci_build_id, b.branch_name, b.created_at
+      from ${builds} b
+      where b.id = pending_builds.build_id
+        and b.project_id = ${a.projectId}
+        ${notExcluded}
+        ${onBranch ? sql`and ${onBranch}` : sql``}
+      limit 1
+    ) b
+    order by b.created_at desc, b.id desc`;
+  // With a facet, the facet probe comes after the sort (OFFSET 0 keeps it
+  // from being pushed below it), one LATERAL per candidate in order, so the
+  // LIMIT stops at the first batch with a pending step inside the facets.
+  const picked =
+    facetCondition(a.facets) === undefined
+      ? sql`${candidates} limit 1`
+      : sql`
+        select c.id, c.name, c.number, c.ci_build_id, c.branch_name
+        from (${candidates} offset 0) c
+        cross join lateral (
+          ${pendingStepOfBuild(a.projectId, sql`c.id`, a.facets)}
+          limit 1
+        ) in_facets
+        order by c.created_at desc, c.id desc
+        limit 1`;
   const [row] = await db.execute<{
     id: string;
     name: string | null;
@@ -191,22 +243,13 @@ async function newestBatchWhere(
     test_name: string | null;
     pending: number | string;
   }>(sql`
-    select p.id, p.name, p.number, p.ci_build_id, p.branch_name, p.test_name,
+    select p.id, p.name, p.number, p.ci_build_id, p.branch_name,
+           -- The builds list's rule: the test name only when every run shares one.
+           (select case when count(distinct r.name) = 1 then min(r.name) end
+            from ${testRuns} r
+            where r.build_id = p.id and r.project_id = ${a.projectId}) as test_name,
            ${pending} as pending
-    from (
-      select b.id, b.name, b.number, b.ci_build_id, b.branch_name,
-             -- The builds list's rule: the test name only when every run shares one.
-             (select case when count(distinct r.name) = 1 then min(r.name) end
-              from ${testRuns} r
-              where r.build_id = b.id and r.project_id = ${a.projectId}) as test_name
-      from ${builds} b
-      where b.project_id = ${a.projectId}
-        ${notExcluded}
-        ${onBranch ? sql`and ${onBranch}` : sql``}
-        and ${buildHasPendingStep(a.projectId, sql`b.id`, { facets: a.facets })}
-      order by b.created_at desc, b.id desc
-      limit 1
-    ) p`);
+    from (${picked}) p`);
   if (!row) return null;
   return {
     buildId: row.id,
@@ -226,9 +269,8 @@ async function newestBatchWhere(
 /**
  * The newest batch with a pending step inside `facets`, none of `exclude`;
  * with `branchOf`, the batches on that build's branch first (NULL matching
- * NULL). That is two probes, the branch's first and then any branch, each
- * stopping at its first hit: a single `ORDER BY` over "is on the branch" would
- * have to look at every batch of the project before it could answer.
+ * NULL). That is two probes, the branch's first and then any branch; the
+ * second runs only when the first finds nothing.
  */
 async function newestBatch(
   db: DB | Tx,
@@ -251,21 +293,15 @@ async function newestBatch(
   return newestBatchWhere(db, a, undefined);
 }
 
-/** The project's batches with a pending step inside `facets`, but `exceptStepId`. */
-function pendingBatches(
-  projectId: string,
-  facets: StepFacets | undefined,
-  exceptStepId?: string,
-): SQL<number> {
-  return sql<number>`(select count(*) from ${builds} b where b.project_id = ${projectId} and ${buildHasPendingStep(projectId, sql`b.id`, { facets, exceptStepId })})`.mapWith(
-    Number,
-  );
-}
-
 /**
  * The counts, in one statement: the pending steps of the run and of the batch
  * inside `facets`, of the batch with none, and the project's batches with a
  * pending step inside `facets`; every count leaves out the step at hand.
+ *
+ * The step at hand is `at`'s batch's (the caller checks it), so it can only
+ * take that batch out of `projectBatches`: the batch counts when `batch`, its
+ * pending steps inside `facets` but that one, is above 0, and the other
+ * batches come from `pendingBatchCount`.
  */
 async function remainingIn(
   db: DB | Tx,
@@ -275,14 +311,20 @@ async function remainingIn(
 ): Promise<NextResult["remaining"]> {
   const inFacets = facetCondition(facets) ?? sql`true`;
   const inRun = at.runId === undefined ? sql`false` : eq(testRuns.id, at.runId);
+  const batch = sql`count(*) filter (where ${inFacets})`;
+  const otherBatches = pendingBatchCount(projectId, {
+    facets,
+    exceptBuildId: at.buildId,
+  });
   const [row] = await db
     .select({
       run: sql<number>`count(*) filter (where ${inRun} and ${inFacets})`.mapWith(
         Number,
       ),
-      batch: sql<number>`count(*) filter (where ${inFacets})`.mapWith(Number),
+      batch: sql<number>`${batch}`.mapWith(Number),
       batchUnfiltered: count(),
-      projectBatches: pendingBatches(projectId, facets, at.checkpointId),
+      projectBatches:
+        sql<number>`${otherBatches} + (${batch} > 0)::int`.mapWith(Number),
     })
     .from(screenshots)
     .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
@@ -291,6 +333,7 @@ async function remainingIn(
         eq(testRuns.projectId, projectId),
         eq(screenshots.projectId, projectId),
         eq(testRuns.buildId, at.buildId),
+        storedPendingRun(),
         pendingStepCondition(),
         notAt(at),
       ),
@@ -304,6 +347,17 @@ async function remainingIn(
  * pending step. Without `at`, the first pending step of the newest batch with
  * one, any branch, and `remaining` is about that batch (with no run).
  * `nextBatch` is filled in even when the target is still in the batch.
+ *
+ * The batches come from the runs' stored counters, the steps from
+ * `pendingStepCondition`. So, on an unfaceted call, a counter left above 0 on
+ * a run with nothing pending shows up as an offered batch (`nextBatch`, its
+ * `pending`, `projectBatches`) in which no step is found: the hand-off to it
+ * has `target: null`. With facets a batch is offered and counted only when
+ * `pendingStepCondition` finds a step of it inside them, so a stale-high
+ * counter is not offered. A counter left at 0 hides the run's steps either
+ * way. Neither is repaired here: stored = computed is what the rollup
+ * verifier checks, and `verify-review-rollup --repair-counters` restores
+ * (spec 2026-10-27 §3.3).
  */
 export async function findNext(
   db: DB | Tx,
@@ -321,7 +375,7 @@ export async function findNext(
     }));
   if (!start) {
     const [row] = await db.execute<{ n: number }>(
-      sql`select ${pendingBatches(projectId, facets)} as n`,
+      sql`select ${pendingBatchCount(projectId, { facets })} as n`,
     );
     const projectBatches = Number(row?.n ?? 0);
     const remaining = { run: 0, batch: 0, batchUnfiltered: 0, projectBatches };

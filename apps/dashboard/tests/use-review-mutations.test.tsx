@@ -225,6 +225,7 @@ function seed(
     qc.setQueryData(keyOf(["builds", "getById"], { buildId: BUILD }), {
       id: BUILD,
       pendingCheckpoints: 5,
+      approvableCheckpoints: 5,
     });
   }
 }
@@ -292,9 +293,10 @@ const listRows = () =>
     keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
   )?.items;
 const buildCache = () =>
-  qc.getQueryData<{ pendingCheckpoints: number }>(
-    keyOf(["builds", "getById"], { buildId: BUILD }),
-  );
+  qc.getQueryData<{
+    pendingCheckpoints: number;
+    approvableCheckpoints: number;
+  }>(keyOf(["builds", "getById"], { buildId: BUILD }));
 const itemState = (id: string) => itemsCache()?.find((i) => i.id === id)?.state;
 
 function snapshotCaches() {
@@ -454,6 +456,8 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(listRows()?.find((r) => r.id === RUN)?.status).toBe("new");
     expect(listRows()?.find((r) => r.id === RUN_2)?.status).toBe("failed");
     expect(buildCache()?.pendingCheckpoints).toBe(4);
+    // The approve button's count moves with it.
+    expect(buildCache()?.approvableCheckpoints).toBe(4);
     expect(utils.runs.listCheckpoints.cancel).toHaveBeenCalledWith({
       runId: RUN,
     });

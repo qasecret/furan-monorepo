@@ -4,6 +4,7 @@ import {
   and,
   checkpointDecisions,
   eq,
+  inArray,
   screenshots,
   testRuns,
   type DB,
@@ -12,19 +13,22 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   facetCondition,
-  pendingCountsByBuild,
-  pendingCountsByRun,
   pendingStepCondition,
   type StepFacets,
 } from "../src/lib/review/pending.js";
-import { selectPendingTargets } from "../src/lib/review/targets.js";
+import {
+  selectGroupTargets,
+  selectPendingTargets,
+} from "../src/lib/review/targets.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import { pendingCountsByBuild, pendingCountsByRun } from "./pending-oracle.js";
 import {
   addReviewBuild,
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
+  syncRunCounters,
   type ReviewRunSpec,
   type ReviewSeed,
 } from "./review-fixtures.js";
@@ -170,6 +174,103 @@ d("the SQL definition of a pending review step", () => {
         key(c.runId, c.shots.c!.id),
       ].sort(),
     );
+  });
+
+  test("selectGroupTargets selects exactly selectPendingTargets' group", async () => {
+    // The legality cases above, every step on one signature, plus a pending
+    // step on another signature and one whose diff failed.
+    const s = await seed({
+      checkpoints: [
+        { name: "a-new", verdict: "new" },
+        { name: "a-unresolved", verdict: "unresolved" },
+        { name: "a-passed", verdict: "passed" },
+        { name: "a-other-signature", verdict: "unresolved" },
+      ],
+    });
+    const b = await addReviewRun(h, s, {
+      lifecycle: "passed",
+      checkpoints: [{ name: "b", verdict: "unresolved" }],
+    });
+    await decide(s, b.runId, b.shots.b!.id);
+    const c = await addReviewRun(h, s, {
+      checkpoints: [{ name: "c", verdict: "unresolved" }],
+    });
+    await decide(s, c.runId, c.shots.c!.id, { reverted: true });
+    const b2 = await addReviewRun(h, s, {
+      lifecycle: "failed",
+      checkpoints: [{ name: "b2", verdict: "unresolved" }],
+    });
+    await decide(s, b2.runId, b2.shots.b2!.id, { decision: "rejected" });
+    const notReviewable = [
+      await addReviewRun(h, s, {
+        lifecycle: "running",
+        checkpoints: [{ name: "d", verdict: "unresolved" }],
+      }),
+      await addReviewRun(h, s, {
+        lifecycle: "aborted",
+        checkpoints: [{ name: "e", verdict: "unresolved" }],
+      }),
+      await addReviewRun(h, s, {
+        lifecycle: "empty",
+        checkpoints: [{ name: "f", verdict: "unresolved" }],
+      }),
+      await addReviewRun(h, s, {
+        override: "failed",
+        checkpoints: [{ name: "g", verdict: "unresolved" }],
+      }),
+      await addReviewRun(h, s, {
+        lifecycle: "failed",
+        checkpoints: [
+          { name: "h-unresolved", verdict: "unresolved" },
+          { name: "h-undiffed", verdict: null },
+        ],
+      }),
+    ];
+    const failed = await addReviewRun(h, s, {
+      checkpoints: [{ name: "i-failed", verdict: "unresolved" }],
+    });
+    await h.db
+      .update(screenshots)
+      .set({ diffFailedAt: new Date(), diffError: "timeout" })
+      .where(eq(screenshots.id, failed.shots["i-failed"]!.id));
+    // The decisions and the failure went in by SQL: recompute the counters.
+    await syncRunCounters(h.db, [b.runId, c.runId, b2.runId, failed.runId]);
+
+    const sig = `sig-${s.tag}`;
+    const signed = [s, b, c, b2, ...notReviewable, failed].flatMap((r) =>
+      r.shotsInOrder
+        .filter((x) => x.name !== "a-other-signature")
+        .map((x) => x.id),
+    );
+    await h.db
+      .update(screenshots)
+      .set({ diffSignature: sig })
+      .where(inArray(screenshots.id, signed));
+    await h.db
+      .update(screenshots)
+      .set({ diffSignature: `other-${s.tag}` })
+      .where(eq(screenshots.id, s.shots["a-other-signature"]!.id));
+
+    const scope = {
+      projectId: s.projectId,
+      buildId: s.buildId,
+      diffSignature: sig,
+    };
+    const { targets: viaTargets } = await selectPendingTargets(
+      h.db,
+      scope,
+      10_000,
+    );
+    const viaSql = await selectGroupTargets(h.db, { ...scope, limit: 201 });
+    const keys = (ts: Array<{ runId: string; screenshotId: string }>) =>
+      ts.map((t) => key(t.runId, t.screenshotId));
+    expect(keys(viaSql.targets)).toEqual(keys(viaTargets));
+    expect(viaSql.total).toBe(viaTargets.length);
+    expect(keys(viaSql.targets)).toEqual([
+      key(s.runId, s.shots["a-new"]!.id),
+      key(s.runId, s.shots["a-unresolved"]!.id),
+      key(c.runId, c.shots.c!.id),
+    ]);
   });
 
   test("facets narrow per step", async () => {

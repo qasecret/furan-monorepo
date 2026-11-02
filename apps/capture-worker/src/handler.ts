@@ -4,6 +4,7 @@ import {
   isNull,
   recomputeRunStatus,
   screenshots,
+  sql,
   testRuns,
   withProjectScope,
   type DB,
@@ -202,7 +203,12 @@ async function handleCaptureJobInner(
         await tx
           .select({ id: testRuns.id })
           .from(testRuns)
-          .where(eq(testRuns.id, data.runId))
+          .where(
+            and(
+              eq(testRuns.id, data.runId),
+              eq(testRuns.projectId, data.projectId),
+            ),
+          )
           .for("no key update");
         if (thumbnailKey !== null) {
           await tx
@@ -236,9 +242,22 @@ async function handleCaptureJobInner(
           .returning({ id: screenshots.id });
         // The new step has no verdict yet: the run is `running` and not
         // reviewable until its diff lands, so its counters are 0 (spec
-        // 2026-10-27 §3.2), as an SDK upload leaves them. A duplicate
-        // (nothing inserted) changes nothing.
-        if (inserted.length > 0) await recomputeRunStatus(tx, data.runId);
+        // 2026-10-27 §3.2), as an SDK upload leaves them. It counts toward
+        // the run's step count, as an upload's does: `runs.list` and
+        // `builds.getById` read `checkpoint_count`. A duplicate (nothing
+        // inserted) changes nothing.
+        if (inserted.length > 0) {
+          await tx
+            .update(testRuns)
+            .set({ checkpointCount: sql`${testRuns.checkpointCount} + 1` })
+            .where(
+              and(
+                eq(testRuns.id, data.runId),
+                eq(testRuns.projectId, data.projectId),
+              ),
+            );
+          await recomputeRunStatus(tx, data.runId);
+        }
       });
 
       imageKeys.push(imageKey);

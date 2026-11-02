@@ -24,21 +24,16 @@ import type { AuthedUser } from "../../plugins/auth.js";
 import { isAtLeastAdmin } from "../roles.js";
 
 import { assessRevert } from "./revert.js";
-import {
-  loadActiveDecisionDetails,
-  selectPendingTargets,
-  type ActiveDecision,
-} from "./targets.js";
+import { loadActiveDecisionDetails, type ActiveDecision } from "./targets.js";
 
 /**
- * The review read model: what `runs.listCheckpoints`, `runs.getById` and
- * `builds.getById` report about each checkpoint's review. It is a projection
- * of the rows the decision core works on and reuses the core's loaders and
- * rules (`targets.ts`) for them: a checkpoint's state is
- * `checkpointReviewState(verdict, active decision)`, the active decision and
- * the actor's name are read the way the core reads them, and "pending" is
- * whatever `selectPendingTargets` selects. Nothing here re-derives a state
- * from the run's status.
+ * The review read model: what `runs.listCheckpoints` and `runs.getById`
+ * report about each checkpoint's review. It is a projection of the rows the
+ * decision core works on and reuses the core's loaders and rules
+ * (`targets.ts`) for them: a checkpoint's state is
+ * `checkpointReviewState(verdict, active decision)`, and the active decision
+ * and the actor's name are read the way the core reads them. Nothing here
+ * re-derives a state from the run's status.
  */
 
 /**
@@ -300,15 +295,3 @@ export const NO_REVIEW: CheckpointReviewView = {
   decision: null,
   newerCapture: null,
 };
-
-/**
- * How many checkpoints of a build a reviewer can still approve: the count
- * "approve pending" would act on, taken from the same selection.
- */
-export async function countPendingCheckpoints(
-  db: DB | Tx,
-  scope: { projectId: string; buildId: string },
-): Promise<number> {
-  const { preview } = await selectPendingTargets(db, scope, 0);
-  return preview.pendingCheckpoints;
-}

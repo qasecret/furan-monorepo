@@ -192,7 +192,13 @@ export function pendingDelta(
   return pendingIn(after) - pendingIn(before);
 }
 
-/** `builds.getById` with its pending count moved by `delta` (never below 0). */
+/**
+ * `builds.getById` with its pending and approvable counts moved by `delta`
+ * (never below 0). A decision or its undo moves both: a step whose diff failed
+ * cannot be decided. (Undoing a decision on a step whose re-diff failed since
+ * makes it pending but not approvable; the refetch every settled call makes
+ * corrects that guess.)
+ */
 export function withPendingDelta(
   build: BuildDetail,
   delta: number,
@@ -200,6 +206,7 @@ export function withPendingDelta(
   return {
     ...build,
     pendingCheckpoints: Math.max(0, build.pendingCheckpoints + delta),
+    approvableCheckpoints: Math.max(0, build.approvableCheckpoints + delta),
   };
 }
 

@@ -1,7 +1,7 @@
 import { and, eq, screenshots, testRuns, type DB, type Tx } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
-import type { SelectionScope } from "./targets.js";
+import type { GroupScope } from "./targets.js";
 
 /**
  * A checkpoint's "group": the checkpoints of its build that share its diff
@@ -64,13 +64,14 @@ export async function loadGroupSeed(
  * diff signature, pinned to `projectId`, the project the caller resolved for
  * its membership gate (R18). Null when the seed has no signature (VLM /
  * auto-approved / no meaningful diff): no group can be formed. Every group
- * read and action selects its members from this scope with
- * `selectPendingTargets`, so "the group" and "pending" each have one definition.
+ * action selects its members from this scope with `selectPendingTargets`, and
+ * the group read with `selectGroupTargets`, its SQL equal, so "the group" and
+ * "pending" each have one definition.
  */
 export function groupScope(
   seed: Awaited<ReturnType<typeof loadGroupSeed>>,
   projectId: string,
-): SelectionScope | null {
+): GroupScope | null {
   if (seed.diffSignature === null) return null;
   return {
     projectId,
