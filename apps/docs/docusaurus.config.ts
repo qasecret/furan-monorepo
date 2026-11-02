@@ -5,7 +5,7 @@ import type { Config } from "@docusaurus/types";
 import { themes as prismThemes } from "prism-react-renderer";
 
 /**
- * The Furan documentation portal (ADR-080). One source, two builds:
+ * The Furan documentation portal (ADR-081). One source, two builds:
  *
  *  - bundled: the dashboard image serves it at `/docs` (the defaults below);
  *  - public: GitHub Pages, built with DOCS_BASE_URL=/furan-monorepo/ and

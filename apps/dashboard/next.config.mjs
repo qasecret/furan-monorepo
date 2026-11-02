@@ -21,7 +21,7 @@ const sdkVersion = readFileSync(
   "utf8",
 ).trim();
 
-// The docs portal (ADR-080): the dashboard image's docs stage copies the built
+// The docs portal (ADR-081): the dashboard image's docs stage copies the built
 // portal into public/docs before `next build`, with the hashes of its inline
 // scripts. Without it (next dev, tests) there is no /docs and no /docs policy.
 const docsScriptHashes = readDocsScriptHashes(

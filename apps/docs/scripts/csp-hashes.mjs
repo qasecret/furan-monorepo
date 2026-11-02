@@ -1,4 +1,4 @@
-// Post-build step for the docs portal (spec §5.2, ADR-080).
+// Post-build step for the docs portal (spec §5.2, ADR-081).
 //
 // The dashboard serves the built portal at /docs under a static
 // Content-Security-Policy with no 'unsafe-inline' for scripts, so every inline

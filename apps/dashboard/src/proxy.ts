@@ -39,7 +39,7 @@ export const config = {
       // Documents only: skip build assets, the image optimizer, route
       // handlers (JSON), root-level static files (icon.svg, robots.txt), and
       // the docs portal, whose static pages carry their own hash-based CSP
-      // from next.config.mjs (ADR-080).
+      // from next.config.mjs (ADR-081).
       source:
         "/((?!_next/static|_next/image|api/|docs/|docs$|[^/]+\\.[a-z0-9]+$).*)",
       // Router prefetches fetch RSC payloads, not documents — no CSP needed.

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
- * An unknown /docs path (ADR-080). next.config.mjs rewrites /docs/x to the
+ * An unknown /docs path (ADR-081). next.config.mjs rewrites /docs/x to the
  * portal's public/docs/x.html (afterFiles); when no such file exists the
  * rewritten path lands here, and the reader gets the portal's own 404 page —
  * inside the docs, with its search and sidebar — not the dashboard's, whose

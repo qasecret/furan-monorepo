@@ -62,7 +62,7 @@ packages/sdk-kotlin/**/.gradle/
 
 # Docs: root markdown never enters a build context. docs/ is re-included for
 # one consumer only — apps/dashboard/Dockerfile's docs stage builds it into the
-# /docs portal (ADR-080); no other Dockerfile copies docs/.
+# /docs portal (ADR-081); no other Dockerfile copies docs/.
 docs/
 !docs
 *.md

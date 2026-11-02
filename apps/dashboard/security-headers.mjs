@@ -28,9 +28,9 @@ export const HSTS_HEADER = {
   value: "max-age=31536000",
 };
 
-// ── The docs portal at /docs (spec 2026-11-01-docs-portal §5, ADR-080) ──────
+// ── The docs portal at /docs (spec 2026-11-01-docs-portal §5, ADR-081) ──────
 // The dashboard image carries the built portal in public/docs. Its pages are
-// static HTML with a few inline scripts, so they skip the nonce middleware and
+// static HTML with a few inline scripts, so they skip the nonce proxy and
 // get this static policy instead: the same directives as src/lib/csp.ts, with
 // script-src allowing exactly the hashes the docs build wrote.
 

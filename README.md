@@ -67,7 +67,7 @@ Everything else (installing for production, sending screenshots, approving
 baselines, CI, operations) lives in the **documentation portal**: published at
 <https://qasecret.github.io/furan-monorepo/> with each release, served at
 `/docs` on your own install (for example `http://localhost:8080/docs`; releases
-after v1.1.32) so it matches the version you run, and written in [`docs/`](docs/README.md) here.
+after v1.1.33) so it matches the version you run, and written in [`docs/`](docs/README.md) here.
 
 - [Getting started](docs/getting-started/install.md): from the one-file install to your first reviewed diff, in seven short pages.
 - [Production install (Docker Compose)](docs/install/compose.md), and the [production deploy runbook](docs/runbooks/production-deploy.md) for upgrades and image ↔ migration lockstep.

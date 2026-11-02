@@ -43,7 +43,7 @@ RUN pnpm install --frozen-lockfile --filter @furan/dashboard... --ignore-scripts
 #####################################################################
 # The portal (apps/docs, Docusaurus) is built from the repo's docs/ folder in
 # its own stage, so its toolchain never reaches the runtime image: only the
-# static output does, copied into public/docs below (ADR-080). It installs
+# static output does, copied into public/docs below (ADR-081). It installs
 # only @furan/docs and its one workspace dependency.
 FROM node:22-bookworm-slim AS docs
 WORKDIR /app
