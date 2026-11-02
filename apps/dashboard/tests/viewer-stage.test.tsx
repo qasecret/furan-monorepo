@@ -1685,7 +1685,10 @@ describe("what the stage can't show (spec §3.4)", () => {
     expect(page().queryByText("Baseline")).toBeNull();
     expect(
       within(paneOf("baseline-canvas-host")).getByText(
-        "No baseline yet. Approve this step to make it the baseline.",
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent ===
+            "No baseline yet. Save as baseline to compare later runs with this screenshot.",
       ),
     ).toBeDefined();
   });

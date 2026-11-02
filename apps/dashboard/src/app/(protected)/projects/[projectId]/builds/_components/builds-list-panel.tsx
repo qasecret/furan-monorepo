@@ -2,7 +2,6 @@
 
 import { keepPreviousData } from "@tanstack/react-query";
 import { Filter, RefreshCw } from "lucide-react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
@@ -10,13 +9,12 @@ import { BuildListItem } from "./build-list-item";
 import type { BuildRowData } from "./build-types";
 import { PropertiesFilter } from "./properties-filter";
 
+import { ConnectSdkCard } from "@/components/onboarding/connect-sdk-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { cn } from "@/lib/cn";
-import { browserEnv } from "@/lib/env";
 import { serializeReviewContext, useReviewContext } from "@/lib/review-url";
-import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -167,24 +165,7 @@ export function BuildsListPanel({ projectId }: Props) {
           <div className="p-3">
             <EmptyState
               title="No builds yet"
-              description={
-                <>
-                  Connect the SDK to start sending runs.{" "}
-                  <code className="font-mono text-xs">
-                    io.github.qasecret:furan-selenium:{FURAN_SDK_VERSION}
-                  </code>{" "}
-                  · API: {browserEnv.NEXT_PUBLIC_API_URL}
-                </>
-              }
-              action={
-                <Link
-                  href="/account/tokens"
-                  className="text-brand-text hover:underline"
-                  data-testid="empty-builds-cta-token-link"
-                >
-                  Create a personal access token →
-                </Link>
-              }
+              action={<ConnectSdkCard projectId={projectId} />}
             />
           </div>
         ) : (

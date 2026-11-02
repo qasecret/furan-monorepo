@@ -46,6 +46,7 @@ vi.mock("@/lib/trpc", () => ({
 }));
 
 import { BuildsListPanel } from "@/app/(protected)/projects/[projectId]/builds/_components/builds-list-panel";
+import { CommandRoleProvider } from "@/lib/commands/registry";
 
 beforeEach(() => {
   urlState.search = "";
@@ -124,11 +125,20 @@ describe("BuildsListPanel", () => {
       isLoading: false,
       error: null,
     });
-    render(<BuildsListPanel projectId="p1" />);
+    render(
+      <CommandRoleProvider role="editor">
+        <BuildsListPanel projectId="p1" />
+      </CommandRoleProvider>,
+    );
     expect(screen.getByText(/no builds yet/i)).toBeDefined();
+    expect(screen.getByTestId("connect-sdk-card")).toBeDefined();
     expect(
-      screen.getByTestId("empty-builds-cta-token-link").getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Create an API token →" })
+        .getAttribute("href"),
     ).toBe("/account/tokens");
+    expect(screen.queryByText(/personal access token/i)).toBeNull();
+    expect(screen.queryByText(/furan-selenium:/)).toBeNull();
   });
 
   test("load-more appends the next page and dedupes overlapping ids", () => {

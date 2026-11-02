@@ -30,7 +30,7 @@ export function ApiKeyCard({ token, onDeleted }: Props) {
     try {
       await navigator.clipboard.writeText(maskedKey);
       setCopied(true);
-      toast.success("Key ID copied");
+      toast.success("Token ID copied");
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error("Copy failed");
@@ -77,7 +77,7 @@ export function ApiKeyCard({ token, onDeleted }: Props) {
         <button
           onClick={() => void handleCopy()}
           className="rounded-md p-2 text-fg-muted transition-colors hover:bg-edge hover:text-fg focus-ring"
-          title="Copy key ID"
+          title="Copy token ID"
         >
           <Copy className={`h-4 w-4 ${copied ? "text-emerald-600" : ""}`} />
         </button>

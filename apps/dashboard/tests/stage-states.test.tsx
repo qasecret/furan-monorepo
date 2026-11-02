@@ -641,10 +641,6 @@ describe("StageStates: the copy (spec §8)", () => {
 
   test.each<[StageState, string]>([
     [
-      { kind: "no-baseline" },
-      "No baseline yet. Approve this step to make it the baseline.",
-    ],
-    [
       {
         kind: "diff-size-mismatch",
         baseline: { w: 100, h: 200 },
@@ -669,6 +665,22 @@ describe("StageStates: the copy (spec §8)", () => {
   ])("%o reads its sentence", (state, copy) => {
     render(<StageStates states={[state]} onRetry={() => {}} />);
     expect(screen.getByText(copy)).toBeDefined();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  test("no baseline names the Save as baseline button", () => {
+    render(
+      <StageStates states={[{ kind: "no-baseline" }]} onRetry={() => {}} />,
+    );
+    const message = screen.getByText(
+      (_, el) =>
+        el?.tagName === "P" &&
+        el.textContent ===
+          "No baseline yet. Save as baseline to compare later runs with this screenshot.",
+    );
+    expect(within(message).getByText("Save as baseline").tagName).toBe(
+      "STRONG",
+    );
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -715,7 +727,10 @@ describe("StageStates: the copy (spec §8)", () => {
     expect(screen.getByRole("status")).toBe(region);
     expect(
       within(region).getByText(
-        "No baseline yet. Approve this step to make it the baseline.",
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent ===
+            "No baseline yet. Save as baseline to compare later runs with this screenshot.",
       ),
     ).toBeDefined();
   });

@@ -21,7 +21,7 @@ describe("AdminTabs", () => {
       screen.getByRole("link", { name: /Projects/ }).getAttribute("href"),
     ).toBe("/admin/projects");
     expect(
-      screen.getByRole("link", { name: /API Keys/ }).getAttribute("href"),
+      screen.getByRole("link", { name: /API Tokens/ }).getAttribute("href"),
     ).toBe("/admin/api-keys");
     expect(
       screen.getByRole("link", { name: /Auto Rules/ }).getAttribute("href"),
@@ -34,7 +34,7 @@ describe("AdminTabs", () => {
     ).toBe("/admin/audit-log");
   });
 
-  test("orders tabs: Members, Projects, API Keys, Auto Rules, Installations, Audit Log", () => {
+  test("orders tabs: Members, Projects, API Tokens, Auto Rules, Installations, Audit Log", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     const labels = screen
@@ -43,7 +43,7 @@ describe("AdminTabs", () => {
     expect(labels).toEqual([
       "Members",
       "Projects",
-      "API Keys",
+      "API Tokens",
       "Auto Rules",
       "Installations",
       "Audit Log",

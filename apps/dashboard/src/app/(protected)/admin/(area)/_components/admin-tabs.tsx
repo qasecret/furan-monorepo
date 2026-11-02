@@ -23,7 +23,7 @@ const TABS = [
     icon: FolderOpen,
   },
   {
-    label: "API Keys",
+    label: "API Tokens",
     href: "/admin/api-keys",
     icon: KeyRound,
   },

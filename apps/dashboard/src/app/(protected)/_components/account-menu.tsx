@@ -1,11 +1,12 @@
 "use client";
 
-import { LogOut, Settings } from "lucide-react";
+import { KeyRound, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { useCurrentProject } from "./current-project-provider";
 import { logoutAction } from "./logout-action";
 
+import { tokenPageFor } from "@/components/onboarding/connect-sdk-card";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -24,6 +25,7 @@ interface Props {
 
 export function AccountMenu({ email, initial, role }: Props) {
   const { currentProjectId } = useCurrentProject();
+  const tokenPage = tokenPageFor(role);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -51,17 +53,23 @@ export function AccountMenu({ email, initial, role }: Props) {
           </div>
         </div>
         <DropdownMenuSeparator />
-        {currentProjectId && (
-          <>
-            <DropdownMenuItem asChild>
-              <Link href={`/projects/${currentProjectId}/settings`}>
-                <Settings className="mr-2 h-3.5 w-3.5 text-fg-muted" />
-                Settings
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
+        {tokenPage && (
+          <DropdownMenuItem asChild>
+            <Link href={tokenPage}>
+              <KeyRound className="mr-2 h-3.5 w-3.5 text-fg-muted" />
+              API tokens
+            </Link>
+          </DropdownMenuItem>
         )}
+        {currentProjectId && (
+          <DropdownMenuItem asChild>
+            <Link href={`/projects/${currentProjectId}/settings`}>
+              <Settings className="mr-2 h-3.5 w-3.5 text-fg-muted" />
+              Settings
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {(tokenPage || currentProjectId) && <DropdownMenuSeparator />}
         <form action={logoutAction}>
           <DropdownMenuItem
             asChild

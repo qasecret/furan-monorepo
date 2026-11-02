@@ -3,6 +3,7 @@
 import { HelpCircle } from "lucide-react";
 import { useRef } from "react";
 
+import { DocsLink } from "@/components/docs-link";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { useTourOptional } from "@/components/tour/tour-context";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,8 @@ import {
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 
 /**
- * The top bar's Help menu (spec §5.3): a `?` button over three things.
+ * The top bar's Help menu (spec §5.3): a `?` button. Getting started and
+ * Documentation open the docs portal in a new tab (first-run spec §4.7).
  * Keyboard shortcuts opens the `?` sheet; Replay tour relaunches the current
  * page's tour and is there only when the page has one (it follows the page:
  * `useTourSteps` clears a page's tour as the page goes); Single-key shortcuts
@@ -55,6 +57,15 @@ export function HelpMenu() {
           e.preventDefault();
         }}
       >
+        <DropdownMenuItem asChild>
+          <DocsLink slug="getting-started/install" className="flex w-full">
+            Getting started
+          </DocsLink>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <DocsLink className="flex w-full">Documentation</DocsLink>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           // The menu item goes with the menu, and focus with it: the sheet
           // gives focus back to this button instead.

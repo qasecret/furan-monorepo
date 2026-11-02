@@ -29,6 +29,21 @@ describe("EmptyProjectsCta", () => {
     expect(screen.queryByTestId("empty-projects-cta-curl")).toBeNull();
   });
 
+  test("admin is told what comes next, with the docs", () => {
+    render(<EmptyProjectsCta role="admin" />);
+    expect(
+      screen.getByText(
+        "Create your first project. Next you'll create an API token and connect the SDK.",
+      ),
+    ).toBeDefined();
+    expect(
+      screen
+        .getByRole("link", { name: "Creating a project (opens in a new tab)" })
+        .getAttribute("href"),
+    ).toBe("/docs/getting-started/create-project");
+    expect(screen.queryByText(/personal access token/i)).toBeNull();
+  });
+
   test("editor sees 'ask an admin' prose, no curl snippet", () => {
     render(<EmptyProjectsCta role="editor" />);
     expect(

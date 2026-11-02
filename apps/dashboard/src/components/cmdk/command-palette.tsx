@@ -37,6 +37,7 @@ import {
   type ResolvedCommand,
 } from "@/lib/commands/registry";
 import { runCommand } from "@/lib/commands/run-command";
+import { docsHref } from "@/lib/docs-href";
 import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
 // Style the cmdk group's heading slot only — putting these classes
@@ -102,14 +103,24 @@ const ADMIN_PAGES: Destination[] = [
     label: "Installations",
     href: "/admin/installations",
   },
-  { id: "admin.apiKeys", label: "API keys", href: "/admin/api-keys" },
   { id: "admin.autoRules", label: "Auto rules", href: "/admin/auto-rules" },
   { id: "admin.auditLog", label: "Audit log", href: "/admin/audit-log" },
 ];
 
-const ACCOUNT_PAGES: Destination[] = [
-  { id: "account.tokens", label: "API tokens", href: "/account/tokens" },
-];
+/**
+ * The Account group: API tokens, one entry for every role. Admins (and
+ * owners) create theirs on Admin → API Tokens, where `/account/tokens` would
+ * only redirect them.
+ */
+function accountPages(admin: boolean): Destination[] {
+  return [
+    {
+      id: "account.tokens",
+      label: "API tokens",
+      href: admin ? "/admin/api-keys" : "/account/tokens",
+    },
+  ];
+}
 
 /** The current project's settings: one id, wherever that project is. */
 function settingsOf(projectId: string): Destination {
@@ -363,8 +374,9 @@ function PaletteBody({
   const goTo = goToPages(admin, currentProjectId);
   // ADR-052: no project switching for non-admins.
   const jumps = admin ? projects.map(projectJump) : [];
+  const account = accountPages(admin);
   const offered = new Map(
-    [...goTo, ...jumps, ...ACCOUNT_PAGES].map((page) => [page.id, page]),
+    [...goTo, ...jumps, ...account].map((page) => [page.id, page]),
   );
   const recent = shownRecent(stored, offered, admin);
 
@@ -376,6 +388,15 @@ function PaletteBody({
    * 2.4.3, R36). Pushing it would only fetch the same page again, and the
    * router's own focus move after a navigation would race that restore.
    */
+  /**
+   * The docs portal: a separate site, so a new tab rather than a navigation
+   * here, and not kept in Recent.
+   */
+  const openDocs = () => {
+    setOpen(false);
+    window.open(docsHref(), "_blank", "noopener");
+  };
+
   const go = (page: Destination) => {
     const here = isCurrentPage(page.href);
     if (!here) onNavigate();
@@ -579,6 +600,7 @@ function PaletteBody({
 
         <Command.Group heading="Go to" className={CMD_GROUP_CLASS}>
           {goTo.map((p) => pageItem("goto", p))}
+          <Item value="goto:docs" label="Documentation" onSelect={openDocs} />
         </Command.Group>
 
         {recent.length > 0 && (
@@ -600,7 +622,7 @@ function PaletteBody({
         )}
 
         <Command.Group heading="Account" className={CMD_GROUP_CLASS}>
-          {ACCOUNT_PAGES.map((p) => pageItem("account", p))}
+          {account.map((p) => pageItem("account", p))}
         </Command.Group>
       </Command.List>
       <ResultCount pending={found.pending} failures={failures} />

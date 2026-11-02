@@ -11,6 +11,7 @@ import { BATCH_PAGE_COMMANDS, type BatchPageCtx } from "./batch-commands";
 import { BatchHeader } from "./batch-header";
 import { ContextualToolbar, type ResultView } from "./contextual-toolbar";
 import { FacetSelects } from "./facet-selects";
+import { FirstBatchHint } from "./first-batch-hint";
 import { BatchResults, RESULT_GRID } from "./run-results";
 
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,7 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
   return (
     <PageContainer fullBleed>
       {build && <BatchHeader build={build} />}
+      {build && <FirstBatchHint build={build} />}
       <ContextualToolbar
         chip={ctx.status}
         onChipChange={(status) => setContext({ status })}

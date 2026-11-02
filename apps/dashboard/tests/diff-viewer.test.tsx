@@ -1566,7 +1566,10 @@ describe("DiffViewer", () => {
       expect(r.getByText("No baseline")).toBeDefined();
       expect(
         r.getByText(
-          "No baseline yet. Approve this step to make it the baseline.",
+          (_, el) =>
+            el?.tagName === "P" &&
+            el.textContent ===
+              "No baseline yet. Save as baseline to compare later runs with this screenshot.",
         ),
       ).toBeDefined();
     });

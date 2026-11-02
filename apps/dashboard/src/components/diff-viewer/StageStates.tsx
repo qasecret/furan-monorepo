@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef } from "react";
+import { useId, useRef, type ReactNode } from "react";
 
 import type { ViewerMode } from "./comparison-modes";
 import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
@@ -210,8 +210,14 @@ const FAILED: Record<ImageRole, string> = {
 const RETRY = "Retry";
 const DIFF_FAILED = "This step's diff failed.";
 const RETRY_DIFF = "Retry diff";
-const NO_BASELINE =
-  "No baseline yet. Approve this step to make it the baseline.";
+// Names the viewer's button for a New step (#4a ruling R7).
+const NO_BASELINE = (
+  <>
+    No baseline yet.{" "}
+    <strong className="font-medium text-fg">Save as baseline</strong> to compare
+    later runs with this screenshot.
+  </>
+);
 const NO_CHANGES =
   "No pixel changes between the baseline and the current screenshot.";
 const LEGACY_MISSING = "No diff image was kept for this step.";
@@ -231,7 +237,7 @@ const CARD =
   "flex max-w-md items-center gap-3 rounded-lg border border-edge bg-overlay px-3 py-2 text-left text-xs text-fg-secondary shadow-overlay";
 
 /** A sentence and nothing to press: the pointer goes through to the canvas. */
-function Message({ children }: { children: string }) {
+function Message({ children }: { children: ReactNode }) {
   return <p className={cn(CARD, "pointer-events-none")}>{children}</p>;
 }
 

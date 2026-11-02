@@ -246,7 +246,11 @@ describe("TopBar", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
-    ).toEqual(["Keyboard shortcuts"]);
+    ).toEqual([
+      "Getting started (opens in a new tab)",
+      "Documentation (opens in a new tab)",
+      "Keyboard shortcuts",
+    ]);
 
     await user.click(
       within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" }),
@@ -257,6 +261,21 @@ describe("TopBar", () => {
     ).toBeTruthy();
     // The menu has closed behind it.
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  test("Help menu links Getting started and the docs, in a new tab", async () => {
+    const user = userEvent.setup();
+    render(<Chrome />);
+    const menu = await openHelp(user);
+    const start = within(menu).getByRole("menuitem", {
+      name: "Getting started (opens in a new tab)",
+    });
+    expect(start.getAttribute("href")).toBe("/docs/getting-started/install");
+    expect(start.getAttribute("target")).toBe("_blank");
+    const docs = within(menu).getByRole("menuitem", {
+      name: "Documentation (opens in a new tab)",
+    });
+    expect(docs.getAttribute("href")).toBe("/docs");
   });
 
   test("closing the sheet opened from the Help menu returns focus to the Help button", async () => {
