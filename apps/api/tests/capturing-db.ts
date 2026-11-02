@@ -75,7 +75,12 @@ export function capturing(db: DB, into: CapturedStatement[]): DB {
   });
 }
 
-/** The request scope's own `set_config` statement (`withUserScope`). */
+/**
+ * The request scope's own `set_config` statement (`withUserScope`, the one
+ * that pins `app.user_id`). The project-member gate's statements also call
+ * `set_config` (on `app.user_role`), but they are the request's own cost, so
+ * they count.
+ */
 export function isScopeStatement(q: CapturedStatement): boolean {
   if (typeof q === "string") return false;
   return q.queryChunks.some(
@@ -84,7 +89,9 @@ export function isScopeStatement(q: CapturedStatement): boolean {
       c !== null &&
       "value" in c &&
       Array.isArray(c.value) &&
-      c.value.some((v) => typeof v === "string" && v.includes("set_config")),
+      c.value.some(
+        (v) => typeof v === "string" && v.includes("set_config('app.user_id'"),
+      ),
   );
 }
 

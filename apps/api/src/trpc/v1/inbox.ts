@@ -28,7 +28,7 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
-import { trpcActionCtx } from "../../lib/review/actions.js";
+import { runProjectQuery, trpcActionCtx } from "../../lib/review/actions.js";
 import { GROUP_APPROVE_CAP } from "../../lib/review/groups.js";
 import {
   approveRunPending,
@@ -406,14 +406,7 @@ export const inboxRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: async ({ input, ctx }) => {
-            const rows = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return rows[0]?.projectId ?? null;
-          },
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -534,14 +527,7 @@ export const inboxRouter = t.router({
     .use(
       projectMember<{ runId: string; reason?: string | null }>("write", {
         from: {
-          resolver: async ({ input, ctx }) => {
-            const rows = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return rows[0]?.projectId ?? null;
-          },
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )

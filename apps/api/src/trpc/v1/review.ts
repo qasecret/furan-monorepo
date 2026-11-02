@@ -13,16 +13,16 @@ import { boundedArray, type ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
 import {
+  actionLookup,
   announceRuns,
   auditBuildAction,
+  buildLookup,
   decideGroup,
   decideSelection,
   requireActionProject,
   requireBuildProject,
   requireRunProject,
-  resolveActionProject,
-  resolveBuildProject,
-  resolveRunProject,
+  runLookup,
   trpcActionCtx,
   type ReviewResult,
   type Selection,
@@ -62,8 +62,11 @@ export type RevertOutput = Omit<RevertResult, "rediffSteps">;
  *
  * Every procedure but `next` resolves its project from the run, build or action
  * (resolve-then-gate, like `runs.getById`): admins bypass the membership check, guests are refused,
- * anyone else must be a member. An admin skips the gate's resolver, so each
- * handler resolves the project again and answers NOT_FOUND for an unknown id.
+ * anyone else must be a member. A member's handler acts in the project the
+ * gate resolved for that same resource (`ctx.gated`, behind a `lookup`) and
+ * reads nothing to learn it; an
+ * admin skips the gate, so the handler resolves the project itself, with the
+ * gate's own lookup, and answers NOT_FOUND for an unknown id.
  * `next` is the read of the queue: the caller names the project, and the
  * handler checks that the ids it names belong to it.
  */
@@ -247,13 +250,17 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireRunProject(actx.tx, input.runId);
+      const projectId = await requireRunProject(
+        actx.tx,
+        input.runId,
+        ctx.gated,
+      );
       if (
         input.ignoreAreas !== undefined &&
         input.checkpointIds === undefined
@@ -301,13 +308,17 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireRunProject(actx.tx, input.runId);
+      const projectId = await requireRunProject(
+        actx.tx,
+        input.runId,
+        ctx.gated,
+      );
       const scope: SelectionScope = { projectId, runId: input.runId };
       let selection: Selection;
       if (input.checkpointIds) {
@@ -355,12 +366,12 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "approved"),
+      decideGroup(trpcActionCtx(ctx), input, "approved", ctx.gated),
     ),
 
   /** Rejects the pending members of the checkpoint's group (`GROUP_APPROVE_CAP`). */
@@ -370,12 +381,12 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProject(ctx.db, input.runId),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
     .mutation(({ ctx, input }) =>
-      decideGroup(trpcActionCtx(ctx), input, "rejected"),
+      decideGroup(trpcActionCtx(ctx), input, "rejected", ctx.gated),
     ),
 
   /** What `approveBuild` would approve now. Read-only, takes no locks. */
@@ -385,14 +396,17 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
     .query(async ({ ctx, input }): Promise<ApproveBuildPreview> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireBuildProject(actx.tx, input.buildId);
+      const projectId = await requireBuildProject(
+        actx.tx,
+        input.buildId,
+        ctx.gated,
+      );
       const { preview } = await selectPendingTargets(
         actx.tx,
         { projectId, buildId: input.buildId },
@@ -416,14 +430,17 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ buildId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireBuildProject(actx.tx, input.buildId);
+      const projectId = await requireBuildProject(
+        actx.tx,
+        input.buildId,
+        ctx.gated,
+      );
       const tx = actx.tx;
       const base = {
         projectId,
@@ -505,14 +522,17 @@ export const reviewRouter = t.router({
     .use(
       projectMember<{ actionId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveActionProject(ctx.db, input.actionId),
+          lookup: ({ input }) => actionLookup(input.actionId),
         },
       }),
     )
     .mutation(async ({ ctx, input }): Promise<RevertOutput> => {
       const actx = trpcActionCtx(ctx);
-      const projectId = await requireActionProject(actx.tx, input.actionId);
+      const projectId = await requireActionProject(
+        actx.tx,
+        input.actionId,
+        ctx.gated,
+      );
       const { rediffSteps, ...result } = await revertAction(
         actx.tx,
         { actor: actx.actor, actionId: input.actionId, projectId },

@@ -38,8 +38,12 @@ import {
 } from "../../lib/keyset-cursor.js";
 import {
   announceRuns,
+  buildLookup,
+  gatedProjectOf,
   requireBuildProject,
-  resolveBuildProject,
+  resolveRunProject,
+  runLookup,
+  runProjectQuery,
   trpcActionCtx,
 } from "../../lib/review/actions.js";
 import { queueStepDiffs, runStepIds } from "../../lib/review/enqueue.js";
@@ -65,7 +69,10 @@ import { lockRuns, selectGroupTargets } from "../../lib/review/targets.js";
 import { runByDisplayName } from "../../lib/run-by-name.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
-import { projectMember } from "../middlewares/project-member.js";
+import {
+  projectMember,
+  type GatedContext,
+} from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
 
 const runIdInput = z.object({ runId: z.string().uuid() });
@@ -235,27 +242,19 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "failed",
 ]);
 
-async function resolveRunProjectId(
-  input: RunIdInput,
-  ctx: Context,
-): Promise<string | null> {
-  const rows = await ctx.db
-    .select({ projectId: testRuns.projectId })
-    .from(testRuns)
-    .where(eq(testRuns.id, input.runId))
-    .limit(1);
-  return rows[0]?.projectId ?? null;
-}
-
 /**
- * The run's project, as the membership gate resolved it; NOT_FOUND when there
- * is no such run (an admin skips the gate's resolver).
+ * The run's project, behind a gate on `runLookup(input.runId)`: the one the
+ * gate resolved for this run (`ctx.gated`), with nothing read; otherwise (an
+ * admin, who skips the gate, or a gate on another resource) the same lookup
+ * run here. NOT_FOUND when there is no such run.
  */
 async function requireRunProjectId(
   input: RunIdInput,
-  ctx: Context,
+  ctx: Context & GatedContext,
 ): Promise<string> {
-  const projectId = await resolveRunProjectId(input, ctx);
+  const projectId =
+    gatedProjectOf(ctx.gated, "run", input.runId) ??
+    (await resolveRunProject(ctx.db, input.runId));
   if (!projectId) throw new TRPCError({ code: "NOT_FOUND" });
   return projectId;
 }
@@ -653,14 +652,18 @@ export const runsRouter = t.router({
     .use(
       projectMember<FacetsInput>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
+          lookup: ({ input }) => buildLookup(input.buildId),
         },
       }),
     )
     .query(async ({ input, ctx }) => {
-      // An admin skips the gate's resolver: resolve the project again here.
-      const projectId = await requireBuildProject(ctx.db, input.buildId);
+      // The gate's project; an admin skips the gate, so the build's lookup
+      // runs here instead.
+      const projectId = await requireBuildProject(
+        ctx.db,
+        input.buildId,
+        ctx.gated,
+      );
       return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
 
@@ -677,7 +680,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("read", {
         from: {
-          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -738,8 +741,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<StepInput>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -758,8 +760,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -804,8 +805,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -862,8 +862,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -942,8 +941,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1033,8 +1031,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1087,8 +1084,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<RunIdInput>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1154,8 +1150,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
@@ -1220,14 +1215,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string }>("read", {
         from: {
-          resolver: async ({ ctx, input }) => {
-            const row = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return row[0]?.projectId ?? "";
-          },
+          query: ({ input }) => runProjectQuery(input.runId),
         },
       }),
     )
@@ -1292,8 +1280,7 @@ export const runsRouter = t.router({
     .use(
       projectMember<{ runId: string; checkpointId: string }>("read", {
         from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
+          lookup: ({ input }) => runLookup(input.runId),
         },
       }),
     )
