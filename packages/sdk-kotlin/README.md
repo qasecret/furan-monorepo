@@ -5,11 +5,11 @@ Visual-regression testing client for [Furan](https://github.com/qasecret/furan-m
 ```kotlin
 // build.gradle.kts — pick the adapter for your driver
 dependencies {
-    testImplementation("io.github.qasecret:furan-selenium:4.3.0") // x-release-please-version
-    testImplementation("io.github.qasecret:furan-playwright:4.3.0") // x-release-please-version
-    testImplementation("io.github.qasecret:furan-appium:4.3.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-selenium:5.0.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-playwright:5.0.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-appium:5.0.0") // x-release-please-version
     // Optional — the @FuranTest annotation:
-    testImplementation("io.github.qasecret:furan-junit5:4.3.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-junit5:5.0.0") // x-release-please-version
 }
 ```
 

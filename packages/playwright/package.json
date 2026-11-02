@@ -1,6 +1,6 @@
 {
   "name": "@furan/playwright",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Playwright Test fixture for Furan: await furan.check(\"cart\") uploads a screenshot and fails the test when it needs review.",
   "license": "Apache-2.0",
   "type": "module",

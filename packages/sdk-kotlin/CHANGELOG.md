@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.3.0...sdk/v5.0.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** furan-appium now depends on io.appium:java-client 11.0.0 (was 9.5.0) and furan-selenium on Selenium 4.52.0 (was 4.34.0). In java-client 11, AppiumDriver no longer extends Selenium's RemoteWebDriver and selenium-remote-driver is no longer on the classpath, so code that used DesiredCapabilities or RemoteWebDriver APIs through furan-appium must switch to MutableCapabilities or java-client's options classes, or declare Selenium 4.50+ itself. Maven users should import
+
+### Features
+
+* **sdk:** move furan-appium to java-client 11 and Selenium 4.52 ([#520](https://github.com/qasecret/furan-monorepo/issues/520)) ([3969e8e](https://github.com/qasecret/furan-monorepo/commit/3969e8edbdcf4456f89cbf2c45df0743350011e5))
+
 ## [4.3.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.2.0...sdk/v4.3.0) (2026-11-02)
 
 
