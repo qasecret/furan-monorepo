@@ -47,13 +47,23 @@ Maven:
 
 <SdkDependency artifact="furan-playwright" format="maven" />
 
-**Appium (native mobile)** (plus `io.appium:java-client`, e.g. `9.5.0`):
+**Appium (native mobile)** (plus `io.appium:java-client`, e.g. `11.0.0`):
 
 <SdkDependency artifact="furan-appium" />
 
-java-client 9.5.0 runs on Selenium 4.34.x, the version `furan-selenium` and
-`furan-appium` bring in. If a project that uses `furan-appium` also declares a
-newer Selenium, `AndroidDriver` / `IOSDriver` fail to load
+java-client 11 needs Selenium 4.50 or later and brings only `selenium-api`.
+With Gradle, `furan-appium` lines up every Selenium module in the project
+(including the `selenium-java` that `furan-selenium` brings) on one version
+through the Selenium BOM. With Maven, import `org.seleniumhq.selenium:selenium-bom`
+in your `<dependencyManagement>`: java-client's version range can otherwise pick
+a newer `selenium-api` than the rest of Selenium. java-client 11 no longer pulls
+in `selenium-remote-driver`, so build capabilities with `MutableCapabilities` or
+java-client's `UiAutomator2Options` / `XCUITestOptions` instead of
+`DesiredCapabilities`.
+
+Older SDK releases build `furan-appium` on java-client 9.5.0 (your dependency
+tree shows which one you have). With those, keep java-client on 9.5.0 and
+Selenium on 4.34.x, or `AndroidDriver` / `IOSDriver` fail to load
 (`NoClassDefFoundError: org/openqa/selenium/html5/LocationContext`).
 
 ## Quick start
