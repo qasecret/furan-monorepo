@@ -11,7 +11,7 @@ slf4j = "2.0.20"
 # when furan-appium moves to java-client 10+ (see .github/dependabot.yml).
 selenium = "4.34.0"
 playwright = "1.64.0"
-appium-java-client = "9.5.0"
+appium-java-client = "11.0.0"
 mockito-kotlin = "6.4.0"
 snakeyaml = "2.7"
 vanniktech-publish = "0.37.0"
