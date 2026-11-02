@@ -14,11 +14,32 @@ java {
 dependencies {
     api(project(":core"))
     api(libs.appium.java.client)
+    // java-client 11 brings only selenium-api. The BOM lines up the consumer's
+    // other Selenium modules (furan-selenium's selenium-java, or their own) with
+    // it, so a project using this adapter never mixes Selenium versions.
+    api(platform(libs.selenium.bom))
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockito.kotlin)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    constraints {
+        // Build-only guard (test configurations are not published): when
+        // java-client's selenium-api range no longer admits the catalog's
+        // `selenium`, resolution fails here instead of shipping a mixed Selenium
+        // that compiles but breaks at runtime. Raise both together. Not
+        // `strictly`: a direct strict version would override java-client's
+        // range and pass silently.
+        val selenium = libs.versions.selenium.get()
+        testImplementation("org.seleniumhq.selenium:selenium-api") {
+            version {
+                require(selenium)
+                reject("($selenium,)")
+            }
+            because("furan-appium and furan-selenium must resolve one Selenium version")
+        }
+    }
 }
 
 tasks.test {

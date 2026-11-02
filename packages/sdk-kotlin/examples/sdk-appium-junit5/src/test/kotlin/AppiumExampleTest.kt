@@ -4,7 +4,7 @@ import io.furan.sdk.appium.FuranAppium
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
-import org.openqa.selenium.remote.DesiredCapabilities
+import org.openqa.selenium.MutableCapabilities
 import java.net.URI
 
 /**
@@ -30,7 +30,10 @@ class AppiumExampleTest {
     @Test
     fun `appium native snapshot round-trip`() {
         val serverUrl = System.getenv("APPIUM_SERVER_URL") ?: "http://localhost:4723"
-        val caps = DesiredCapabilities().apply {
+        // MutableCapabilities is in selenium-api, the only Selenium module
+        // java-client 11 brings (DesiredCapabilities is in selenium-remote-driver).
+        // java-client's UiAutomator2Options / XCUITestOptions work too.
+        val caps = MutableCapabilities().apply {
             setCapability("platformName", System.getenv("APPIUM_PLATFORM") ?: "Android")
             setCapability("appium:automationName", System.getenv("APPIUM_AUTOMATION") ?: "UiAutomator2")
             setCapability("appium:deviceName", System.getenv("APPIUM_DEVICE") ?: "Android Emulator")
@@ -38,10 +41,9 @@ class AppiumExampleTest {
             System.getenv("APPIUM_APP_PACKAGE")?.let { setCapability("appium:appPackage", it) }
             System.getenv("APPIUM_APP_ACTIVITY")?.let { setCapability("appium:appActivity", it) }
         }
-        // AppiumDriver (the base type FuranAppium accepts) keeps the example
-        // independent of the Selenium version that java-client resolves; the
-        // AndroidDriver / IOSDriver subclasses work too when you need their
-        // platform-specific methods.
+        // AppiumDriver is the base type FuranAppium accepts; the AndroidDriver /
+        // IOSDriver subclasses work too when you need their platform-specific
+        // methods.
         val driver = AppiumDriver(URI(serverUrl).toURL(), caps)
         try {
             val result = FuranAppium.use(FuranConfig.fromEnv(), driver, "appium smoke") { furan ->

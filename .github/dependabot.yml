@@ -28,17 +28,21 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Selenium and java-client (furan-appium) land in one PR, majors included:
+      # java-client pins selenium-api to a strict range, so bumping one without
+      # the other gives a mixed Selenium. Listed first so these two never fall
+      # into gradle-minor-patch; appium/build.gradle.kts fails the build if
+      # they drift apart.
+      selenium-appium:
+        applies-to: version-updates
+        patterns:
+          - "org.seleniumhq.selenium:*"
+          - "io.appium:java-client"
       gradle-minor-patch:
         applies-to: version-updates
         update-types:
           - "minor"
           - "patch"
-    ignore:
-      # Selenium 4.35+ breaks java-client 9.5.0 (furan-appium) in projects that
-      # also use furan-selenium; see the selenium entry in libs.versions.toml.
-      # Drop this once furan-appium is on java-client 10+.
-      - dependency-name: "org.seleniumhq.selenium:selenium-java"
-        versions: [">= 4.35.0"]
     commit-message:
       prefix: "chore(deps)"
 
