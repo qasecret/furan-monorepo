@@ -78,25 +78,31 @@ RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules \
   && pnpm rebuild sharp
 
 #####################################################################
-# Stage 3: runtime — Playwright base (jammy)                         #
+# Stage 3: runtime — Playwright base (noble)                         #
 #####################################################################
-# Pin to a Playwright image matching the npm `playwright` version range
-# in apps/capture-worker/package.json (^1.60). Noble (Ubuntu 24.04) base
-# carries newer OS package versions than jammy (Ubuntu 22.04), which
-# eliminates the dirmngr/git/gnupg/libtiff5 HIGH CVEs Trivy flagged on
-# the prior v1.50.0-jammy base. Bumping the Playwright npm dep in lockstep
-# refreshes the bundled glob/minimatch/tar transitive deps too.
-FROM mcr.microsoft.com/playwright:v1.60.0-noble AS runtime
+# The tag must be the EXACT `playwright` version pnpm-lock.yaml resolves
+# for apps/capture-worker, not just one inside its package.json range.
+# The image ships only its own release's browsers under /ms-playwright,
+# the build skips Playwright's browser download, and each release looks
+# for its own revision (chromium_headless_shell-<rev>), so a mismatch
+# fails chromium.launch() with "Executable doesn't exist". CI's
+# playwright-image-consistency job (scripts/check-playwright-image-tag.mjs)
+# fails when they differ: bump this line with every `playwright` bump.
+# Noble (Ubuntu 24.04) carries newer OS packages than jammy, which cleared
+# the dirmngr/git/gnupg/libtiff5 HIGH CVEs Trivy flagged on v1.50.0-jammy.
+FROM mcr.microsoft.com/playwright:v1.63.0-noble AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Patch base-image CVEs the Trivy release gate blocks (all fixed upstream):
-#   - libssl3t64: openssl PKCS7_verify() Heap-UAF (CVE-2026-45447) — apt
-#     pulls noble's patched point release.
+#   - libssl3t64 (apt upgrades openssl with it): CVE-2026-84782 on
+#     v1.63.0-noble (earlier the PKCS7_verify() Heap-UAF, CVE-2026-45447) —
+#     apt pulls noble's patched point release, 3.0.13-0ubuntu3.16.
 #   - libbrotli1: CVE-2026-111497 — noble-security's 1.1.0-2ubuntu0.1.
-#   - the Playwright base's bundled GLOBAL npm ships a vulnerable sigstore
-#     (CVE-2026-48815, npm's provenance dep). The runtime entrypoint is
+#   - the Playwright base's bundled GLOBAL npm ships vulnerable deps (undici,
+#     tar, brace-expansion, ip-address on v1.63.0-noble; sigstore
+#     CVE-2026-48815 on v1.60.0-noble). The runtime entrypoint is
 #     `node apps/capture-worker/dist/server.js` — npm/npx are never invoked
 #     — so remove the global npm/corepack tooling rather than ship a dormant
 #     HIGH CVE. `npm root -g` locates it regardless of the base's node layout.

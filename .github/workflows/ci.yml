@@ -21,6 +21,16 @@ jobs:
       - uses: actions/checkout@v7
       - run: node scripts/check-compose-image-tags.mjs
 
+  # Same shape: the capture-worker's Playwright base image must be the release
+  # matching its locked npm `playwright`, or chromium is missing in the image
+  # (each Playwright release looks for its own browser revision). The test job
+  # below installs its own browser, so it can't catch this.
+  playwright-image-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: node scripts/check-playwright-image-tag.mjs
+
   # Kotlin SDK unit tests. packages/sdk-kotlin is a Gradle build outside the
   # pnpm/turbo graph, so the turbo steps below never touch it, and sdk-e2e.yml
   # only compiles the examples + runs one live smoke test. Same toolchain as
