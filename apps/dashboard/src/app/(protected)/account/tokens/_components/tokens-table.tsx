@@ -46,8 +46,7 @@ function EmptyTokens({ create }: { create: React.ReactNode }) {
         </div>
         <h3 className="text-base font-medium text-fg">No tokens yet</h3>
         <p className="mx-auto mt-1 max-w-xs text-sm text-fg-muted">
-          Create a personal access token to authenticate the Furan SDK or CI
-          uploads.
+          Create an API token to authenticate the Furan SDK or CI uploads.
         </p>
         <div className="mt-4">{create}</div>
       </div>
@@ -81,9 +80,7 @@ export function TokensTable({
       <header className="border-b border-edge px-6 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-fg">
-              Personal access tokens
-            </h1>
+            <h1 className="text-2xl font-semibold text-fg">API tokens</h1>
             <p className="mt-1 text-sm text-fg-muted">
               Authenticate the Furan SDK or CI uploads. A token works on one
               project or on all your projects until it expires, and it

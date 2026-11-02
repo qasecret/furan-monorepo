@@ -16,6 +16,7 @@ import {
   type ProjectOption,
   type TokenPolicy,
 } from "./token-grant";
+import { TokenNextStep } from "./token-next-step";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -77,7 +78,7 @@ interface CreateTokenDialogProps {
 }
 
 /**
- * Two-phase dialog for creating a personal access token.
+ * Two-phase dialog for creating an API token.
  *
  * Phase 1: user types a label and picks what the token may do (ADR-064 step
  *   B): its scope (`sdk` by default), a project (the first one preselected;
@@ -208,7 +209,7 @@ export function CreateTokenDialog({
         {rawToken === null ? (
           <>
             <DialogHeader>
-              <DialogTitle>Create personal access token</DialogTitle>
+              <DialogTitle>Create API token</DialogTitle>
               <DialogDescription>
                 Give the token only what this CI job needs. You can&apos;t
                 change it later; create a new one instead.
@@ -362,7 +363,7 @@ export function CreateTokenDialog({
               )}
               <div className="flex items-stretch gap-2">
                 <code
-                  aria-label="Personal access token"
+                  aria-label="API token"
                   className="flex-1 rounded-md border border-edge bg-sunken text-fg px-3 py-2 font-mono text-xs break-all"
                   data-testid="raw-token-display"
                 >
@@ -386,6 +387,7 @@ export function CreateTokenDialog({
                   )}
                 </Button>
               </div>
+              <TokenNextStep />
               <label className="flex items-start gap-2 text-sm">
                 <input
                   type="checkbox"

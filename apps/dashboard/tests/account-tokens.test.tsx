@@ -151,6 +151,16 @@ describe("TokensTable", () => {
     setupFetch();
     render(<TokensTable initialTokens={[]} />);
     expect(screen.getByText(/no tokens yet/i)).toBeDefined();
+    expect(
+      screen.getByText(/Create an API token to authenticate/),
+    ).toBeDefined();
+  });
+
+  test("calls them API tokens", () => {
+    setupFetch();
+    const { container } = render(<TokensTable initialTokens={[]} />);
+    expect(screen.getByText("API tokens")).toBeDefined();
+    expect(container.textContent).not.toMatch(/personal access token/i);
   });
 
   // ADR-064 step A: a token is NOT the account — it can't manage tokens or
@@ -166,12 +176,26 @@ describe("TokensTable", () => {
 });
 
 describe("ApiKeysPanel (admin)", () => {
-  test("states that keys can't manage keys or use admin features", () => {
+  test("states that tokens can't manage tokens or use admin features", () => {
     setupFetch();
     const { container } = render(<ApiKeysPanel initialTokens={[]} />);
     expect(container.textContent).toMatch(
-      /can't manage keys or use admin features/i,
+      /can't manage tokens or use admin features/i,
     );
+  });
+
+  test("calls them API tokens, created with Create token", () => {
+    setupFetch();
+    const { container } = render(<ApiKeysPanel initialTokens={[]} />);
+    expect(screen.getByText("API Tokens")).toBeDefined();
+    expect(screen.getByText("No API tokens yet")).toBeDefined();
+    expect(screen.getByTestId("create-token-button").textContent?.trim()).toBe(
+      "Create token",
+    );
+    expect(container.textContent).toContain(
+      "Create a token and add it to your CI as FURAN_API_TOKEN",
+    );
+    expect(container.textContent).not.toMatch(/\bkeys?\b/i);
   });
 });
 
@@ -196,12 +220,15 @@ describe("CreateTokenDialog", () => {
     fireEvent.click(screen.getByTestId("create-token-button"));
 
     const labelInput = await screen.findByTestId("label-input");
+    expect(screen.getByText("Create API token")).toBeDefined();
     fireEvent.input(labelInput, { target: { value: "CI — main" } });
     fireEvent.click(screen.getByTestId("submit-create-token"));
 
-    // Phase 2: raw token revealed
+    // Phase 2: raw token revealed, and what to do with it next
     const display = await screen.findByTestId("raw-token-display");
     expect(display.textContent).toBe(RAW_TOKEN);
+    expect(display.getAttribute("aria-label")).toBe("API token");
+    expect(screen.getByTestId("token-next-step")).toBeDefined();
 
     const post = calls.find(
       (c) => c.url.endsWith("/account/tokens") && c.init?.method === "POST",

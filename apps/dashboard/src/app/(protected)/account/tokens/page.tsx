@@ -6,7 +6,7 @@ import { loadTokenPage } from "./_lib/load-token-page";
 
 import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
 
-export const metadata: Metadata = { title: "Tokens" };
+export const metadata: Metadata = { title: "API tokens" };
 export const dynamic = "force-dynamic";
 
 export default async function TokensPage() {

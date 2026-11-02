@@ -4,7 +4,7 @@ import { ApiKeysPanel } from "./_components/api-keys-panel";
 
 import { loadTokenPage } from "@/app/(protected)/account/tokens/_lib/load-token-page";
 
-export const metadata: Metadata = { title: "API Keys" };
+export const metadata: Metadata = { title: "API Tokens" };
 export const dynamic = "force-dynamic";
 
 export default async function ApiKeysPage() {
