@@ -1,0 +1,15 @@
+// The public docs portal that follows main, as a static-assets-only Cloudflare
+// Worker (docs/maintainers/docs-hosting.md). `name` must match the Worker that
+// Workers Builds deploys. Deploy with `pnpm --filter @furan/docs run wrangler
+// deploy` after a build with DOCS_BASE_URL=/.
+{
+  "name": "furan-monorepo",
+  "compatibility_date": "2026-10-15",
+  "assets": {
+    "directory": "./build",
+    // Serves x.html at /x and redirects /x.html and /x/ there, which is what
+    // trailingSlash: false in docusaurus.config.ts expects.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+  },
+}

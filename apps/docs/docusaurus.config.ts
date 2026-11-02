@@ -10,8 +10,9 @@ import { themes as prismThemes } from "prism-react-renderer";
  *  - bundled: the dashboard image serves it at `/docs` (the defaults below);
  *  - releases: GitHub Pages, built with DOCS_BASE_URL=/furan-monorepo/ and
  *    DOCS_SITE_URL=https://qasecret.github.io by .github/workflows/docs.yml;
- *  - main: Cloudflare Pages at https://furan-docs.pages.dev, built by
- *    Cloudflare with DOCS_BASE_URL=/ (docs/maintainers/docs-hosting.md).
+ *  - main: a Cloudflare Worker serving the build as static assets
+ *    (wrangler.jsonc), built by Workers Builds with DOCS_BASE_URL=/
+ *    (docs/maintainers/docs-hosting.md).
  *
  * Content is the repo's `docs/` folder, read in place; `docs/maintainers/`
  * stays on GitHub only. `trailingSlash: false` makes pages `x.html`, which
