@@ -195,7 +195,7 @@ Furan is not there yet if you need SSO, SCIM, SAML, or multi-organization tenanc
 
 ## 📚 Documentation
 
-The documentation lives in [`docs/`](docs/README.md). Releases after v1.1.33 also serve it from every install at `/docs` (for example `http://localhost:8080/docs`), matching the version you run.
+The documentation lives in [`docs/`](docs/README.md). From v1.1.34, every install also serves it at `/docs` (for example `http://localhost:8080/docs`), matching the version you run.
 
 | I want to…                        | Read                                                                                                                                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -207,7 +207,7 @@ The documentation lives in [`docs/`](docs/README.md). Releases after v1.1.33 als
 
 ## 🧭 Roadmap
 
-**Current release: v1.1.33** (2026-11-01). The [changelog](CHANGELOG.md) covers what's new and how to upgrade.
+**Current release: v1.1.34** (2026-11-03). The [changelog](CHANGELOG.md) covers what's new and how to upgrade.
 
 Planned, prioritized by user demand:
 

@@ -9,6 +9,75 @@ Earlier app releases are listed under
 
 All images are cosign-signed, Trivy-scanned, and multi-arch (amd64 / arm64).
 
+## v1.1.34 — 2026-11-03
+
+Scoped CI tokens, pull request feedback from CI runs, faster review on large
+projects, and the documentation built into every install. It applies four
+database migrations, so read [Upgrading](#upgrading) before you pull.
+
+### Security
+
+- API tokens are scoped, bound to a project and expire. A new token is
+  **SDK & CI** (uploads and reads; it can save a new test's first baseline but
+  never approves a change) or **Read-only**, works on one project or all of
+  yours, and expires after 90 days by default (7 days to 1 year;
+  `FURAN_PAT_MAX_LIFETIME_DAYS` sets the cap, `0` allows tokens that never
+  expire). The token list shows each token's access, project, expiry, and when
+  and from which address it was last used.
+- A guest can no longer fetch a project's captures, diff images or element
+  maps through the storage proxy (`/api/v1/storage/:key`), the one project
+  read that was still open to guests. The proxy answers 404.
+
+### New
+
+- **Pull request feedback.** When a run made from CI completes, the GitHub App
+  posts a sticky comment on the pull request and a `furan/baselines` commit
+  status. The Kotlin SDK (4.3.0 and later) sends the repository, pull request
+  and commit (`FURAN_REPO`, `FURAN_PR_NUMBER`, `FURAN_COMMIT_SHA`, or GitHub
+  Actions' own variables).
+- **Faster review on large projects.** Each run stores how many of its steps
+  still need review, so the review queue, pending counts and "Needs review"
+  filters no longer scan the whole project. New indexes serve the batch and run
+  lists, the diff viewer reads one step at a time and prefetches its
+  neighbours, and the storage proxy's access check is indexed.
+- **Documentation at `/docs`.** Every install serves the documentation portal
+  for its own version, with a Getting started journey and offline search. The
+  empty Builds and Batches pages show how to connect the SDK, API tokens are in
+  the account menu, and Getting started and Documentation are in Help and ⌘K.
+
+### Fixes
+
+- Regions sent with a multipart screenshot upload (the Kotlin SDK sends them
+  on every upload) are stored. The route dropped them, so SDK ignore regions
+  were never applied or promoted on approve. Invalid regions are refused with
+  400 `invalid_regions`.
+- The default image comparison engine moves to odiff 4.5.0, which changes diff
+  percentages. Ignore regions hide only their own rectangle (before, they also
+  hid every pixel in the same rows across the page), edge pixels of solid
+  shapes count as changed (text antialiasing is still ignored), and "Allow diff
+  dimensions" compares only the area both images share, whether the page grew
+  or shrank. Screenshots close to their diff threshold may now fail; baselines
+  and past results are unchanged.
+- The capture worker runs on the Playwright image that matches its locked
+  Playwright version. The images since v1.1.31 shipped a Chromium the worker
+  could not launch; no capture job used it yet.
+
+### Under the hood
+
+- The dashboard moves to Next.js 16.
+
+### Upgrading
+
+- From v1.1.33: applies four migrations (0043–0046). **Back up first**, and
+  follow [`server-reads-upgrade.md`](docs/runbooks/server-reads-upgrade.md):
+  stop api, capture-worker and diff-worker while `migrate` runs, then verify
+  the review counters.
+- Existing API tokens become **Legacy** tokens. They keep working as before
+  but expire 90 days after the upgrade; the dashboard shows the date. Replace
+  them with scoped tokens before then.
+- From v1.1.32 or earlier: also read the upgrade notes of the releases in
+  between.
+
 ## v1.1.33 — 2026-11-01
 
 Use this release rather than v1.1.32: the release scan stopped v1.1.32's api,

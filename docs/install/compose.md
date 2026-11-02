@@ -65,7 +65,7 @@ docker compose --env-file .env -f infra/docker/compose.yml up -d
 
 This pulls and starts eight long-running services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
 
-> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.33`) or use `--mode from-head`.
+> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](https://github.com/qasecret/furan-monorepo/blob/main/deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.34`) or use `--mode from-head`.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 
@@ -127,11 +127,11 @@ The CLI prompts for the new password and prints nothing on success.
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
 
 ```bash
-docker pull qasecret/furan-api:v1.1.33
-docker pull qasecret/furan-dashboard:v1.1.33
-docker pull qasecret/furan-capture-worker:v1.1.33
-docker pull qasecret/furan-diff-worker:v1.1.33
-docker pull qasecret/furan-integrations:v1.1.33
+docker pull qasecret/furan-api:v1.1.34
+docker pull qasecret/furan-dashboard:v1.1.34
+docker pull qasecret/furan-capture-worker:v1.1.34
+docker pull qasecret/furan-diff-worker:v1.1.34
+docker pull qasecret/furan-integrations:v1.1.34
 ```
 
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.33`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.33`), and ships with an SBOM artifact.
+GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.34`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.34`), and ships with an SBOM artifact.
