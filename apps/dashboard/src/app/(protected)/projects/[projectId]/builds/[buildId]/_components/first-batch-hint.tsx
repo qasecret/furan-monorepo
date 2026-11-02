@@ -1,7 +1,7 @@
 "use client";
 
 import { Info } from "lucide-react";
-import { useRef } from "react";
+import { useState } from "react";
 
 import type { BatchHeaderData } from "./batch-header";
 
@@ -9,7 +9,7 @@ import { DocsLink } from "@/components/docs-link";
 
 type Counts = Pick<
   BatchHeaderData,
-  "id" | "runCount" | "newCount" | "passedCount"
+  "id" | "runCount" | "newCount" | "passedCount" | "runningCount"
 >;
 
 /**
@@ -20,17 +20,28 @@ type Counts = Pick<
  * test is New", not "first batch" (build numbers come from the SDK). Not
  * `aggregateStatus`: New counts as passed there, so an all-New batch already
  * reads Passed before anything is approved.
+ *
+ * Whether the batch was all New is fixed once its runs have settled (a
+ * running run counts as neither New nor passed), and again when more runs
+ * arrive; approving changes neither, and another batch starts over.
  */
 export function FirstBatchHint({ build }: { build: Counts }) {
-  // Fixed the first time this build id is seen, so another batch starts over.
-  const seen = useRef<{ id: string; wasAllNew: boolean } | null>(null);
-  if (seen.current?.id !== build.id) {
-    seen.current = {
-      id: build.id,
+  const settled = build.runningCount === 0;
+  const key = `${build.id}:${build.runCount}`;
+  const [seen, setSeen] = useState<{ key: string; wasAllNew: boolean } | null>(
+    null,
+  );
+  let current = seen;
+  if (settled && seen?.key !== key) {
+    // Adjusting state while rendering: React re-renders at once, before paint.
+    current = {
+      key,
       wasAllNew: build.runCount > 0 && build.newCount === build.runCount,
     };
+    setSeen(current);
   }
-  const { wasAllNew } = seen.current;
+  if (!settled || current?.key !== key) return null;
+  const { wasAllNew } = current;
   const before = wasAllNew && build.newCount > 0;
   const after =
     wasAllNew && build.newCount === 0 && build.passedCount === build.runCount;

@@ -17,13 +17,15 @@ type Counts = {
   runCount: number;
   newCount: number;
   passedCount: number;
+  runningCount: number;
 };
 const b = (
   id: string,
   runCount: number,
   newCount: number,
   passedCount: number,
-): Counts => ({ id, runCount, newCount, passedCount });
+  runningCount = 0,
+): Counts => ({ id, runCount, newCount, passedCount, runningCount });
 
 const hint = () => screen.queryByTestId("first-batch-hint");
 
@@ -77,6 +79,23 @@ describe("FirstBatchHint", () => {
   test("moving to another batch starts over", () => {
     const r = render(<FirstBatchHint build={b("b1", 3, 3, 3)} />);
     r.rerender(<FirstBatchHint build={b("b4", 3, 0, 3)} />);
+    expect(hint()).toBeNull();
+  });
+
+  test("a batch opened while its runs are still running gets the hint once they settle", () => {
+    // The likeliest first run: click the new batch on the live Builds list.
+    const r = render(<FirstBatchHint build={b("b6", 2, 0, 0, 2)} />);
+    expect(hint()).toBeNull();
+    r.rerender(<FirstBatchHint build={b("b6", 2, 2, 2)} />);
+    expect(hint()?.textContent).toContain(BEFORE);
+  });
+
+  test("runs that arrive already compared make it a mixed batch: no hint", () => {
+    const r = render(<FirstBatchHint build={b("b7", 1, 1, 1)} />);
+    expect(hint()?.textContent).toContain(BEFORE);
+    r.rerender(<FirstBatchHint build={b("b7", 4, 1, 1, 3)} />);
+    expect(hint()).toBeNull();
+    r.rerender(<FirstBatchHint build={b("b7", 4, 1, 4)} />);
     expect(hint()).toBeNull();
   });
 
