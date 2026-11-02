@@ -55,6 +55,11 @@ const sidebars: SidebarsConfig = {
           id: "runbooks/review-model-upgrade",
           label: "Upgrade notes: per-step review",
         },
+        {
+          type: "doc",
+          id: "runbooks/server-reads-upgrade",
+          label: "Upgrade notes: server reads",
+        },
         { type: "doc", id: "runbooks/rls-enable", label: "Row-level security" },
       ],
     },
@@ -62,7 +67,15 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Send screenshots",
       collapsed: false,
-      items: ["sdk/kotlin", "sdk/rest"],
+      items: [
+        "sdk/kotlin",
+        {
+          type: "doc",
+          id: "integrations/javascript",
+          label: "JavaScript / TypeScript",
+        },
+        "sdk/rest",
+      ],
     },
     {
       type: "category",
@@ -73,6 +86,13 @@ const sidebars: SidebarsConfig = {
           type: "doc",
           id: "integrations/github-actions",
           label: "GitHub Actions",
+        },
+        { type: "doc", id: "integrations/jenkins", label: "Jenkins" },
+        { type: "doc", id: "integrations/gitlab-ci", label: "GitLab CI" },
+        {
+          type: "doc",
+          id: "integrations/github-app",
+          label: "GitHub App",
         },
       ],
     },

@@ -181,7 +181,7 @@ Before you pull, read the runbook of every such release you are crossing:
   `0035`–`0037`, the per-checkpoint review model).
 
 The general order (snapshot, stop the writers, migrate, start) is in
-[`migration-deploy-order.md`](migration-deploy-order.md).
+[`migration-deploy-order.md`](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/migration-deploy-order.md).
 
 ## 4. Verify
 
