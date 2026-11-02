@@ -1,5 +1,5 @@
 {
-  "packages/sdk-kotlin": "4.2.0",
+  "packages/sdk-kotlin": "4.3.0",
   "packages/client": "0.0.0",
   "packages/cli": "0.0.0",
   "packages/playwright": "0.0.0"

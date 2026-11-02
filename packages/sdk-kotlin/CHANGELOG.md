@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.3.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.2.0...sdk/v4.3.0) (2026-11-02)
+
+
+### Features
+
+* **integrations:** post the PR comment and furan/baselines status from CI runs ([#511](https://github.com/qasecret/furan-monorepo/issues/511)) ([eeccf8d](https://github.com/qasecret/furan-monorepo/commit/eeccf8d27ac1c335bf3d84ae59179ad5f5dc9c73))
+* scoped, project-bound, expiring API tokens (ADR-064 step B) ([#497](https://github.com/qasecret/furan-monorepo/issues/497)) ([193f43f](https://github.com/qasecret/furan-monorepo/commit/193f43fc33139fbe1a9caf7da519ae390deb0bc9))
+
 ## [4.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.1.0...sdk/v4.2.0) (2026-07-03)
 
 ### Features
