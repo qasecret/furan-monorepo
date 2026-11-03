@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ALTER COLUMN "diff_threshold" SET DEFAULT 0;

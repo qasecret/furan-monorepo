@@ -69,7 +69,7 @@ export function SensitivityControl({
   runOverride,
   projectThreshold,
 }: Props) {
-  const effective = runOverride ?? projectThreshold ?? 0.001;
+  const effective = runOverride ?? projectThreshold ?? 0;
   const effectivePct = pctOf(effective);
   const isCustom = runOverride != null;
 

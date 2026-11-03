@@ -384,7 +384,7 @@ export async function loadStepContext(
   // Per-run override (set via the in-viewer sensitivity slider) wins over the
   // project default. Null/undefined means "inherit".
   const diffThreshold =
-    run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+    run.diffThresholdOverride ?? project.diffThreshold ?? 0;
 
   // Auto Rules: fetch enabled rules once up front. Their distinct CSS selectors
   // drive per-checkpoint element-map resolution inside `diffStep` (the

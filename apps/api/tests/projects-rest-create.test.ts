@@ -64,6 +64,14 @@ d("POST /projects — error mapping (F7)", () => {
       payload: { name, mainBranchName: "main" },
     });
 
+  // A changed price or heading at 1280×720 is under 0.1% of the pixels, so a
+  // non-zero default let real regressions pass on a new project.
+  test("a new project fails a step on any changed pixel (diffThreshold 0)", async () => {
+    const res = await create(s.adminJwt, "Strict by default");
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ diffThreshold: 0 });
+  });
+
   test("a duplicate project name is reported as 409 project_name_taken", async () => {
     const first = await create(s.adminJwt, "Dup");
     expect(first.statusCode).toBe(201);

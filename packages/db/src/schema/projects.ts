@@ -32,7 +32,10 @@ export const projects = pgTable("projects", {
       '{"threshold":0.1,"ignoreAntialiasing":true,"allowDiffDimensions":false}',
     ),
   retentionDays: integer("retention_days").notNull().default(90),
-  diffThreshold: doublePrecision("diff_threshold").notNull().default(0.001),
+  // 0: any pixel that differs beyond the engine's anti-aliasing tolerance
+  // counts as a change. Before migration 0047 new projects started at 0.001
+  // (0.1%), under which a changed price or heading could pass.
+  diffThreshold: doublePrecision("diff_threshold").notNull().default(0),
   dynamicTextEnabled: boolean("dynamic_text_enabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

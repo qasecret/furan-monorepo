@@ -99,7 +99,7 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   return {
     // The pass/fail decision compares L1 diffPercent against the threshold
     // (units: percent vs fraction, hence the *100). diffThreshold is set on
-    // the project (`projects.diffThreshold`, default 0.001 = 0.1%) and can
+    // the project (`projects.diffThreshold`, default 0 for new projects) and can
     // be overridden per-run via `runs.setDiffThresholdOverride` — the
     // diff-worker collapses both into `config.diffThreshold` before calling
     // here (apps/diff-worker/src/handler.ts ~L555).
