@@ -7,9 +7,12 @@ import { requireRole } from "../hooks/require-role.js";
 import { emitAudit } from "../lib/emit-audit.js";
 import { sendError } from "../lib/errors.js";
 import { hashPassword } from "../lib/password.js";
+import { isOwner } from "../lib/roles.js";
 
 import {
   checkUserUpdateGuards,
+  grantsOwner,
+  mayCreateOwner,
   updateMayRemoveAdmin,
   updateMayRemoveOwner,
 } from "./users-admin-guards.js";
@@ -123,6 +126,17 @@ export async function registerUsersAdminRoutes(
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body");
       }
+      // Only an owner may create an owner (see checkUserUpdateGuards), unless
+      // no active owner exists yet.
+      if (isOwner(parsed.data.role) && !isOwner(req.auth!.role)) {
+        const [row] = await app.db
+          .select({ owners: sql<number>`count(*)` })
+          .from(users)
+          .where(and(eq(users.role, "owner"), eq(users.isActive, true)));
+        if (!mayCreateOwner(req.auth!.role, Number(row?.owners ?? 0))) {
+          return sendError(reply, 403, "owner_protected");
+        }
+      }
       const hashedPassword = await hashPassword(parsed.data.password);
       try {
         const [row] = await app.db
@@ -191,12 +205,16 @@ export async function registerUsersAdminRoutes(
 
       const removesAdmin = updateMayRemoveAdmin(target, update);
       const removesOwner = updateMayRemoveOwner(target, update);
+      // A non-owner granting the owner role: allowed only while no other
+      // active owner exists, re-checked atomically in the UPDATE below.
+      const grantsOwnerAsNonOwner =
+        grantsOwner(target, update) && !isOwner(req.auth.role);
 
       // One round-trip for both tier counts (each already excludes the target).
-      // Only pay for it when a removal is in play; otherwise the invariants
-      // don't consult the counts.
+      // Only pay for it when a removal or an owner grant is in play; otherwise
+      // the invariants don't consult the counts.
       const counts =
-        removesAdmin || removesOwner
+        removesAdmin || removesOwner || grantsOwnerAsNonOwner
           ? await countOtherActiveTiers(app.db, targetId)
           : { owners: 0, admins: 0 };
 
@@ -229,6 +247,11 @@ export async function registerUsersAdminRoutes(
           sql`EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role = 'owner' AND other.is_active = true AND other.id <> ${targetId})`,
         );
       }
+      if (grantsOwnerAsNonOwner) {
+        conds.push(
+          sql`NOT EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role = 'owner' AND other.is_active = true AND other.id <> ${targetId})`,
+        );
+      }
       const result = await app.db
         .update(users)
         .set({ ...update, updatedAt: new Date() })
@@ -250,6 +273,9 @@ export async function registerUsersAdminRoutes(
           return sendError(reply, 404, "not_found");
         }
         const fresh = await countOtherActiveTiers(app.db, targetId);
+        if (grantsOwnerAsNonOwner && fresh.owners > 0) {
+          return sendError(reply, 403, "owner_protected");
+        }
         if (removesOwner && fresh.owners === 0) {
           return sendError(reply, 409, "last_owner");
         }

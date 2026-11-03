@@ -288,4 +288,105 @@ describe("admin user CRUD", () => {
     expect(res.statusCode).toBe(200);
     expect((res.json() as { role: string }).role).toBe("editor");
   });
+
+  async function insertOwner(email: string): Promise<string> {
+    const [owner] = await h.db
+      .insert(users)
+      .values({
+        email,
+        hashedPassword: await hashPassword("x12345678"),
+        firstName: "Ow",
+        lastName: "Ner",
+        role: "owner",
+        isActive: true,
+      })
+      .returning();
+    return owner!.id;
+  }
+
+  // An admin who could grant the owner role could appoint an owner it
+  // controls and have it demote the real owners.
+  test("POST /users - an admin cannot create an owner while an owner exists", async () => {
+    await insertOwner("owner@t.example");
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/users",
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: {
+        email: "puppet@t.example",
+        password: "x12345678",
+        firstName: "Pu",
+        lastName: "Ppet",
+        role: "owner",
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { code: string }).code).toBe("owner_protected");
+  });
+
+  test("POST /users - an admin creates the first owner, and an owner creates more", async () => {
+    const first = await h.app.inject({
+      method: "POST",
+      url: "/users",
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: {
+        email: "first-owner@t.example",
+        password: "x12345678",
+        firstName: "Fi",
+        lastName: "Rst",
+        role: "owner",
+      },
+    });
+    expect(first.statusCode).toBe(201);
+    const ownerJwt = h.app.jwt.sign({
+      sub: (first.json() as { id: string }).id,
+      role: "owner",
+    });
+    const second = await h.app.inject({
+      method: "POST",
+      url: "/users",
+      headers: { authorization: `Bearer ${ownerJwt}` },
+      payload: {
+        email: "second-owner@t.example",
+        password: "x12345678",
+        firstName: "Se",
+        lastName: "Cond",
+        role: "owner",
+      },
+    });
+    expect(second.statusCode).toBe(201);
+  });
+
+  test("PATCH /users/:id - an admin cannot promote anyone to owner while an owner exists", async () => {
+    await insertOwner("owner@t.example");
+    const editorId = await findUserId("editor");
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${editorId}`,
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { role: "owner" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { code: string }).code).toBe("owner_protected");
+  });
+
+  test("PATCH /users/:id - an admin promotes the first owner; an owner promotes more", async () => {
+    const editorId = await findUserId("editor");
+    const first = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${editorId}`,
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { role: "owner" },
+    });
+    expect(first.statusCode).toBe(200);
+    const ownerJwt = h.app.jwt.sign({ sub: editorId, role: "owner" });
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${adminId}`,
+      headers: { authorization: `Bearer ${ownerJwt}` },
+      payload: { role: "owner" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { role: string }).role).toBe("owner");
+  });
 });

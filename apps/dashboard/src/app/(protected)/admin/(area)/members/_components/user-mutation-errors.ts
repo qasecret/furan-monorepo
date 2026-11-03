@@ -7,7 +7,8 @@ export const USER_MUTATION_ERROR: Record<string, string> = {
   cannot_disable_self: "You can't deactivate your own account.",
   last_admin: "At least one active admin must remain.",
   last_owner: "At least one active owner must remain.",
-  owner_protected: "Only an owner can change or deactivate another owner.",
+  owner_protected:
+    "Only an owner can make someone an owner, or change or deactivate an owner.",
 };
 
 /** Read the `{ code }` from a failed API response (empty string if none). */
