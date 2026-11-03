@@ -667,7 +667,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
     defaultValues: {
       name: "",
       mainBranchName: "main",
-      diffThreshold: 0.001,
+      diffThreshold: 0,
       dynamicTextEnabled: false,
       autoApproveFeature: false,
       imageComparison: "odiff",
@@ -700,7 +700,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
       form.reset({
         name: project.name ?? "",
         mainBranchName: project.mainBranchName ?? "main",
-        diffThreshold: project.diffThreshold ?? 0.001,
+        diffThreshold: project.diffThreshold ?? 0,
         dynamicTextEnabled: project.dynamicTextEnabled ?? false,
         autoApproveFeature: project.autoApproveFeature ?? false,
         imageComparison: project.imageComparison ?? "odiff",
@@ -862,7 +862,9 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                         </FormControl>
                         <FormDescription>
                           A run is flagged as changed when its pixel-diff
-                          exceeds this threshold. Default 0.10%.
+                          exceeds this threshold. New projects start at 0%: any
+                          changed pixel counts. Raise it only for pages that
+                          differ slightly on every run.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
