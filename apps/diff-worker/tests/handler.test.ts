@@ -218,12 +218,11 @@ desc("handleDiffJob (integration)", () => {
     // "failed" is reserved for reviewer-rejected runs.
     expect(updatedRun!.status).toBe("unresolved");
     // Image-first (ADR-047): the 100x100 test fixture produces only 2 dirty
-    // tiles (col=1, rows 0-1), which is below the minClusterTiles=3 threshold.
-    // extractL1PixelRegions returns [] for this fixture, so there are no
-    // l1_pixel regions to sign — primary_signature is null because there are
-    // no diff regions, not because of EXCLUDED_SOURCES (l1_pixel is NOT
-    // excluded; only dynamic_text is, per ADR-047).
-    expect(updatedRun!.primarySignature).toBeNull();
+    // tiles (col=1, rows 0-1), below the minClusterTiles=3 noise floor. The
+    // step fails, so the engine still returns its change as one small
+    // `l1_pixel` region, and that region is signed (l1_pixel is NOT excluded;
+    // only dynamic_text is, per ADR-047).
+    expect(updatedRun!.primarySignature).toMatch(/^v1:[0-9a-f]{64}$/);
     expect(updatedRun!.baselineSource).toBe("default_branch");
     expect(updatedRun!.diffPercent).toBeGreaterThan(0);
     expect(updatedRun!.pixelMisMatchCount).toBeGreaterThan(0);
@@ -233,27 +232,21 @@ desc("handleDiffJob (integration)", () => {
     expect(updatedRun!.diffPercent!).toBeGreaterThan(10);
 
     // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
-    // produces 2 dirty tiles (col=1, rows 0-1) — below the minClusterTiles=3
-    // threshold — so extractL1PixelRegions returns [] for these fixtures.
-    // diff_regions stays empty. This fixture is intentionally too small to
-    // produce clusters; the l1_pixel → diff_regions path is covered by the
-    // diff-engine unit tests.
+    // produces 2 dirty tiles (col=1, rows 0-1), below the minClusterTiles=3
+    // noise floor, but the step fails, so its change lands as one small
+    // l1_pixel region, and the step's diff_signature (ADR-042) signs it.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });
-    expect(regions.length).toBe(0);
+    expect(regions.map((r) => r.source)).toEqual(["l1_pixel"]);
 
-    // ADR-042: diff_signature is null when there are no meaningful regions.
-    // The 100x100 fixture produces 0 clusters (below minClusterTiles=3),
-    // so there are no l1_pixel regions to sign — not because of
-    // EXCLUDED_SOURCES (l1_pixel is NOT excluded; only dynamic_text is).
     const candidateShots = await db
       .select()
       .from(screenshots)
       .where(eq(screenshots.runId, candidateRunId));
     expect(candidateShots.length).toBeGreaterThan(0);
     for (const shot of candidateShots) {
-      expect(shot.diffSignature).toBeNull();
+      expect(shot.diffSignature).toMatch(/^v1:[0-9a-f]{64}$/);
     }
 
     // Verify diff overlay is in storage.
@@ -517,15 +510,15 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
 
     // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
     // produces only 2 dirty tiles (col=1, rows 0-1), below minClusterTiles=3,
-    // so extractL1PixelRegions returns [] and no diff_regions rows are
-    // inserted. The diff is still detected (diffPercent > 10) via L1 pixel
-    // percentage; only the per-region clustering is below threshold for this
-    // intentionally small fixture. The l1_pixel → diff_regions path (including
-    // viewport column) is covered by the diff-engine unit tests.
+    // but the 1280x720 step fails, so its change lands as one small l1_pixel
+    // region with the viewport column populated. The 375x812 step is `new`
+    // (no diff), so it has none.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });
-    expect(regions.length).toBe(0);
+    expect(regions.map((r) => [r.viewport, r.source])).toEqual([
+      ["1280x720", "l1_pixel"],
+    ]);
 
     await new Promise((r) => setTimeout(r, 200));
     const published = events.map((e) => JSON.parse(e));

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PNG } from "pngjs";
 import { describe, it, expect } from "vitest";
 
 import { runDiff } from "../src/engine.js";
@@ -205,5 +206,49 @@ describe("runDiff: L1 displacement pre-alignment", () => {
     });
     expect(m.counts.get("low_confidence")).toBe(1);
     expect(result.displacementVector).toBeUndefined();
+  });
+});
+
+describe("runDiff — small changes", () => {
+  const blank = (): Buffer => {
+    const png = new PNG({ width: 400, height: 200 });
+    png.data.fill(255);
+    return PNG.sync.write(png);
+  };
+  const withMark = (): Buffer => {
+    const png = PNG.sync.read(blank());
+    for (let y = 20; y < 32; y++) {
+      for (let x = 300; x < 340; x++) {
+        const i = (y * 400 + x) * 4;
+        png.data[i] = 0;
+        png.data[i + 1] = 0;
+        png.data[i + 2] = 0;
+      }
+    }
+    return PNG.sync.write(png);
+  };
+  const run = (diffThreshold: number) =>
+    runDiff({
+      baseline: { image: blank() },
+      candidate: { image: withMark() },
+      config: {
+        diffThreshold,
+        engine: "pixelmatch",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+
+  it("a failing step with a change too small for a cluster still gets a region", async () => {
+    const result = await run(0);
+    expect(result.passed).toBe(false);
+    const pixel = result.regions.filter((r) => r.source === "l1_pixel");
+    expect(pixel).toHaveLength(1);
+    expect(pixel[0]!.bbox).toEqual({ x: 300, y: 20, width: 40, height: 12 });
+  });
+
+  it("a passing step keeps the noise floor: no region for the small change", async () => {
+    const result = await run(0.5);
+    expect(result.passed).toBe(true);
+    expect(result.regions.filter((r) => r.source === "l1_pixel")).toEqual([]);
   });
 });

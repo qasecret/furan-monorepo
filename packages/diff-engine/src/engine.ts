@@ -90,9 +90,18 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   // come back empty and the decode+scan cost isn't worth paying). Uses
   // `candidateImage` (post-displacement-aligned) so an applied displacement
   // vector doesn't reintroduce the global shift as one giant cluster.
+  // A failing step always gets a region (`smallChangesWhenEmpty`): a change
+  // too small for a cluster (a timestamp, a price) is still what failed it,
+  // so the reviewer sees where, and auto rules have a region to match.
+  const passed = l1.diffPercent <= input.config.diffThreshold * 100;
   const l1PixelRegions =
     l1.pixelMismatchCount > 0
-      ? extractL1PixelRegions(input.baseline.image, candidateImage)
+      ? extractL1PixelRegions(input.baseline.image, candidateImage, {
+          ...(input.config.ignoreAreas
+            ? { ignoreAreas: input.config.ignoreAreas }
+            : {}),
+          smallChangesWhenEmpty: !passed,
+        })
       : [];
   const allRegions = classifyRegions([...l1.regions, ...l1PixelRegions]);
 
@@ -112,7 +121,7 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     // discovered in the v1.0.9 QA pass; auto-approve still handles the
     // strict byte-identical case via `projects.autoApproveFeature`
     // short-circuiting before this engine runs.
-    passed: l1.diffPercent <= input.config.diffThreshold * 100,
+    passed,
     diffPercent: l1.diffPercent,
     pixelMismatchCount: l1.pixelMismatchCount,
     diffImageBytes: l1.diffImageBytes,
