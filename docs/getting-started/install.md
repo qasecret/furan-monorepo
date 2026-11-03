@@ -35,8 +35,8 @@ values before `up`:
 ```bash
 export FURAN_BOOTSTRAP_ADMIN_PASSWORD='<a strong passphrase>'
 export JWT_SECRET="$(openssl rand -hex 32)"
-export POSTGRES_PASSWORD="$(openssl rand -base64 24)"
-export MINIO_ROOT_PASSWORD="$(openssl rand -base64 24)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f furan-compose.yml up -d
 ```
 
@@ -55,7 +55,8 @@ Beyond a trusted network, put HTTPS in front: see
 ## You should see
 
 Every long-running service reports `running`, and the one-shot setup
-containers (`minio-perms`, `minio-init`, `migrate`) report `exited (0)`:
+containers (`minio-perms`, `minio-init`, `migrations-seed`, `migrate`) report
+`exited (0)`:
 
 ```bash
 docker compose -f furan-compose.yml ps

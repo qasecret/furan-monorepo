@@ -4,10 +4,12 @@ Run the Furan Kotlin SDK from a Jenkins Declarative Pipeline: baselines follow
 your branches, parallel stages report into one Furan build, and the stage result
 tells you whether the screenshots matched.
 
-Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](https://github.com/qasecret/furan-monorepo/blob/main/docs/maintainers/development.md))
+Assumes a self-hosted Furan deployment (see [Getting started](../getting-started/install.md) or the [production install](../install/compose.md))
 and a Furan project already created. Unlike the [GitHub Actions recipe](./github-actions.md),
-there is no pull-request comment or commit status for Jenkins: results are
+Jenkins itself gets no pull-request comment or commit status: results are
 reviewed in the Furan dashboard, and the pipeline gate is the stage exit status.
+A repository hosted on GitHub can still get both through the GitHub App; see
+[Report to a GitHub pull request](#report-to-a-github-pull-request).
 
 ## Quick start
 
@@ -146,7 +148,8 @@ into JSON. The agent running this stage needs `curl` and `jq`.
 ### Report to a GitHub pull request
 
 Optional, and only when the repository is on GitHub with the
-[GitHub App](./github-app.md) installed and linked to the Furan project. Three
+[GitHub App](./github-app.md) installed and linked to the Furan project, and
+Kotlin SDK 4.3.0 or later. Three
 more variables let a run find its pull request, so Furan can post the sticky
 comment and the `furan/baselines` commit status:
 
@@ -184,7 +187,7 @@ unset. What gets posted, and how to check it, is in
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.github.qasecret:furan-selenium:4.2.0")
+  testImplementation("io.github.qasecret:furan-selenium:5.0.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -294,29 +297,34 @@ Two things to know:
 `FURAN_SOFT_ASSERT=true` makes `snapshotAndAwait` return the result instead of
 throwing, so you can assert in test code.
 
-> **First run of each test needs a baseline.** With the default
-> `autoApproveFeature=false`, a test's first run has nothing to diff against, so
-> the SDK throws `FuranNoBaselineException` and the stage fails until you approve
-> that run in the dashboard ("Save as baseline"). To make first runs green in CI
-> without manual approval, either flip the project's `autoApproveFeature=true`
-> (auto-seed) or set `FURAN_SOFT_ASSERT=true` and assert in test code.
+> **First run of each test needs a baseline.** A test's first run has nothing
+> to diff against, so `snapshotAndAwait` throws `FuranNoBaselineException` and
+> the stage fails until you approve that run in the dashboard ("Save as
+> baseline"). To make first runs green in CI without manual approval, set
+> `FURAN_SAVE_NEW_TESTS=true` (the SDK saves a new step's first capture as its
+> baseline; it never approves a change), turn on the project setting
+> **Auto-approve feature branches** (Settings → Diff behavior), or set
+> `FURAN_SOFT_ASSERT=true` and assert in test code.
 
 ## 6. Troubleshooting
 
-| Symptom                                          | Likely cause                                                                                                                               |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FURAN_API_URL is required`                      | The `environment { }` block is missing, or the credential ID does not exist or is not visible to this job's folder                         |
-| `401 unauthorized`                               | `furan-api-token` wrong, expired, or revoked at `/account/tokens`                                                                          |
-| `403 not_a_project_member`                       | The token user is not a member of that project, or `furan-project-id` is wrong (a non-admin token cannot be a member of a missing project) |
-| `404 project_not_found`                          | An admin token with a `furan-project-id` that does not exist                                                                               |
-| `Open Furan build` fails with HTTP 400           | `ciBuildId`, `branchName` or `name` over 200 characters, or an empty value; check `BUILD_TAG` and the branch name                          |
-| `400 invalid_body` on the first snapshot         | `FURAN_BUILD_ID` is not a Furan build UUID (a CI number or SHA was exported)                                                               |
-| Parallel stages land in separate builds          | `FURAN_BUILD_ID` was not exported before the `parallel` block, or the stages did not inherit `env.FURAN_BUILD_ID`                          |
-| Every PR compares against `main`                 | `FURAN_PARENT_BRANCH` is empty: not a Multibranch PR build, so `CHANGE_TARGET` is unset                                                    |
-| Baselines written to `main` from a feature build | `FURAN_BRANCH` is unset (defaults to `main`) or resolved to the wrong value                                                                |
-| Chrome fails to start                            | The agent has no Chrome; add `--no-sandbox --disable-dev-shm-usage` for container agents                                                   |
-| `FuranNoBaselineException` on a first run        | Expected: approve the run in the dashboard, set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true`                       |
-| Stage passes although screenshots differ         | The test uses `snapshot()` without `FURAN_FAIL_ON_DIFF=AfterEach`, see above                                                               |
+| Symptom                                          | Likely cause                                                                                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FURAN_API_URL is required`                      | The `environment { }` block is missing, or the credential ID does not exist or is not visible to this job's folder                                           |
+| `401 invalid_token` / `401 token_expired`        | `furan-api-token` wrong, expired, or revoked at `/account/tokens`                                                                                            |
+| `403 not_a_project_member`                       | The token user is not a member of that project, or `furan-project-id` is wrong (a non-admin token cannot be a member of a missing project)                   |
+| `403 token_project_mismatch`                     | The token is bound to another project than `furan-project-id`                                                                                                |
+| `403 insufficient_scope`                         | A read-only token tried to upload: mint an **SDK & CI** token                                                                                                |
+| `Open Furan build` fails with `jq: parse error`  | `FURAN_API_URL` points at the dashboard: on the one-file install the api is under `/api`                                                                     |
+| `404 project_not_found`                          | An admin token with a `furan-project-id` that does not exist                                                                                                 |
+| `Open Furan build` fails with HTTP 400           | `ciBuildId`, `branchName` or `name` over 200 characters, or an empty value; check `BUILD_TAG` and the branch name                                            |
+| `400 invalid_body` on the first snapshot         | `FURAN_BUILD_ID` is not a Furan build UUID (a CI number or SHA was exported)                                                                                 |
+| Parallel stages land in separate builds          | `FURAN_BUILD_ID` was not exported before the `parallel` block, or the stages did not inherit `env.FURAN_BUILD_ID`                                            |
+| Every PR compares against `main`                 | `FURAN_PARENT_BRANCH` is empty: not a Multibranch PR build, so `CHANGE_TARGET` is unset                                                                      |
+| Baselines written to `main` from a feature build | `FURAN_BRANCH` is unset (defaults to `main`) or resolved to the wrong value                                                                                  |
+| Chrome fails to start                            | The agent has no Chrome; add `--no-sandbox --disable-dev-shm-usage` for container agents                                                                     |
+| `FuranNoBaselineException` on a first run        | Expected: approve the run in the dashboard, or set `FURAN_SAVE_NEW_TESTS=true`, the project's **Auto-approve feature branches**, or `FURAN_SOFT_ASSERT=true` |
+| Stage passes although screenshots differ         | The test uses `snapshot()` without `FURAN_FAIL_ON_DIFF=AfterEach`, see above                                                                                 |
 
 ## See also
 

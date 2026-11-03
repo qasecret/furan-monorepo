@@ -25,7 +25,10 @@ The comment and the status are posted by the `integrations` service when a run
 completes. For a run to get that far, four things have to be in place:
 
 1. **The SDK knows the repository, pull request and commit.** It sends them on
-   `POST /runs`, and the API stores them on the run.
+   `POST /runs`, and the API stores them on the run. The Kotlin SDK does this
+   from 4.3.0. The JavaScript packages (`furan upload`, `@furan/playwright`,
+   `@furan/client`, 0.1.x) don't send them yet, so their runs get no comment or
+   status.
 
    | What                | Variable                                                         | On GitHub Actions                                                                                              |
    | ------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -62,7 +65,9 @@ What gets posted:
   severity: `aborted` is `error`; `failed`, `unresolved` and `empty` are
   `failure`; `running` is `pending`; `new` and `passed` are `success`. So a test
   that passes after another one was left `unresolved` does not turn the commit
-  green. A build with more than one test gets `(<n> of <total> tests)` in the
+  green. Note that `new` counts as `success`: a first capture still waiting for
+  its "Save as baseline" leaves the check green, even when `snapshotAndAwait`
+  failed the job for it. A build with more than one test gets `(<n> of <total> tests)` in the
   description.
 - **Push builds.** A run with a commit but no pull request (a build of `main`,
   say) gets the status and no comment.
@@ -335,10 +340,10 @@ Work down the list; each check isolates one layer.
    see `run_completed_skipped_missing_github_fields` instead, its `missing` list
    names the gap:
 
-   | `missing` contains               | Meaning                                                                                                                                                  |
-   | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `repoOwner`, `repoName` or `sha` | The SDK did not send the repository or commit: set `FURAN_REPO` and `FURAN_COMMIT_SHA`, or run on GitHub Actions, and use an SDK version that sends them |
-   | `installationId`                 | No installation is linked to the run's project: link it at `/admin/installations` (step 4)                                                               |
+   | `missing` contains               | Meaning                                                                                                                                                                                                    |
+   | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `repoOwner`, `repoName` or `sha` | The SDK did not send the repository or commit: set `FURAN_REPO` and `FURAN_COMMIT_SHA`, or run on GitHub Actions, and use a Kotlin SDK that sends them (4.3.0 or later; the JavaScript packages don't yet) |
+   | `installationId`                 | No installation is linked to the run's project: link it at `/admin/installations` (step 4)                                                                                                                 |
 
    A run without a pull request number is not skipped: it gets the status and no
    comment. A log line `run_completed_github_update_failed` with a GitHub `404`

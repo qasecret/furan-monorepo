@@ -22,8 +22,8 @@ Open the batch from **Batches** (click its row, or **Start reviewing**). Then
 approve its steps all at once or one by one.
 
 **All at once.** On the Review page, click **Approve pending (N)**. The dialog,
-"Approve pending steps?", says how many steps and tests it covers: "Each
-step's screenshot becomes its baseline." Click **Approve N steps**.
+"Approve N pending steps?", says how many tests it covers: "Each step's
+screenshot becomes its baseline." Click **Approve N steps**.
 
 **One by one.** Open a step. The viewer shows the screenshot alone, with "No
 baseline yet. Save as baseline to compare later runs with this screenshot."

@@ -34,8 +34,10 @@ Open `.env` in your editor and replace **five** placeholder values — three sec
 # JWT_SECRET — minimum 32 chars, the api fails closed if shorter
 openssl rand -hex 32
 
-# POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — any high-entropy value
-openssl rand -base64 24
+# POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — hex, not base64: the Postgres
+# password goes into the api's database URL unescaped, and a base64 '/' makes
+# the api exit at boot with "Invalid URL"
+openssl rand -hex 24
 
 # FURAN_BOOTSTRAP_ADMIN_PASSWORD — your first admin's password
 openssl rand -hex 24
@@ -107,7 +109,7 @@ Add another admin:
 
 ```bash
 docker compose --env-file .env -f infra/docker/compose.yml exec api \
-  node dist/cli/seed-admin.js \
+  /nodejs/bin/node apps/api/dist/cli/seed-admin.js \
   --email another@example.com \
   --password '<pick-a-strong-passphrase>'
 ```
@@ -116,11 +118,13 @@ Reset a password:
 
 ```bash
 docker compose --env-file .env -f infra/docker/compose.yml exec api \
-  node dist/cli/reset-password.js \
+  /nodejs/bin/node apps/api/dist/cli/reset-password.js \
   --email someone@example.com
 ```
 
-The CLI prompts for the new password and prints nothing on success.
+The CLI prompts for the new password (or takes `--password`) and prints
+`Reset password for <email>.` on success. The api image is distroless, so
+`node` is not on its `PATH`: call `/nodejs/bin/node` as above.
 
 ## Direct image pulls
 
