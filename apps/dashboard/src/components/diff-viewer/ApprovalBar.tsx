@@ -223,8 +223,10 @@ export function ApprovalBar({
                 onClick={actions.markAsBug}
                 title="Reject this step and open a note explaining the bug."
               >
-                <Bug className="mr-1.5 h-4 w-4" aria-hidden />
-                Mark as Bug
+                <Bug className="h-4 w-4 xl:mr-1.5" aria-hidden />
+                {/* Icon-only below xl, so a narrow header keeps room for the
+                    step's title and status; the name is still read out. */}
+                <span className="sr-only xl:not-sr-only">Mark as Bug</span>
               </DisabledAwareButton>
 
               <DisabledAwareButton

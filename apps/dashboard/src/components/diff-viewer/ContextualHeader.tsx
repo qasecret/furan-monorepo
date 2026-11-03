@@ -93,7 +93,9 @@ export function ContextualHeader({
       className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-edge bg-canvas px-4"
       data-testid="contextual-header"
     >
-      <div className="flex min-w-0 items-center gap-3">
+      {/* Clipped, never painted under the actions when the header is too
+          narrow for both (the status badge used to overlap the loop). */}
+      <div className="flex min-w-0 items-center gap-3 overflow-hidden">
         {backHref ? (
           <>
             {/* A mode change while it is on its way takes it along (R22). */}
@@ -110,12 +112,13 @@ export function ContextualHeader({
         ) : null}
         <div className="flex min-w-0 items-center gap-2 text-sm">
           {branch ? (
-            <>
+            // From xl up: a narrower header gives its room to the title.
+            <span className="hidden min-w-0 items-center gap-2 xl:flex">
               <span className="truncate font-mono text-fg-muted">{branch}</span>
               <span className="text-edge-strong" aria-hidden>
                 /
               </span>
-            </>
+            </span>
           ) : null}
           <h1
             className="truncate font-medium text-fg"
@@ -163,7 +166,12 @@ export function ContextualHeader({
             </button>
           </div>
         ) : null}
-        {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
+        {statusNode || status ? (
+          // The title truncates first; the status keeps its width.
+          <div className="shrink-0">
+            {statusNode ?? <RunStatusBadge status={status!} />}
+          </div>
+        ) : null}
       </div>
       {rightActions || loop ? (
         <div className="flex shrink-0 items-center gap-2">
@@ -188,8 +196,11 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
   return (
     <div className="flex items-center gap-2" data-testid="header-loop">
       {remaining ? (
+        // Shown from xl up: below it (a 1024 px window with the sidebar open)
+        // the actions leave the title and status no room. Screen readers
+        // always get it.
         <span
-          className="whitespace-nowrap rounded-full border border-edge px-2 py-0.5 text-xs tabular-nums text-fg-secondary"
+          className="sr-only whitespace-nowrap rounded-full border border-edge px-2 py-0.5 text-xs tabular-nums text-fg-secondary xl:not-sr-only"
           data-testid="header-loop-remaining"
         >
           {remaining}
@@ -241,7 +252,9 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
         onClick={onNextPending}
         disabled={!onNextPending}
       >
-        {nextLabel}
+        {/* Icon-only below xl (the button keeps its aria-label), so a
+            narrow header keeps room for the step's title and status. */}
+        <span className="sr-only xl:not-sr-only">{nextLabel}</span>
         {pending ? (
           // Turns only when motion is allowed; still, it reads as busy.
           <Loader2

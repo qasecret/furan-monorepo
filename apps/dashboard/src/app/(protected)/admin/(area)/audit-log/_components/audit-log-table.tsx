@@ -12,10 +12,15 @@ import {
 } from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 
-function summarize(metadata: unknown): string {
+/** One `key: value` per metadata field; a nested object or array (such as
+ * `project.updated`'s `changes`) is shown as JSON, not `[object Object]`. */
+export function summarize(metadata: unknown): string {
   if (!metadata || typeof metadata !== "object") return "";
   return Object.entries(metadata as Record<string, unknown>)
-    .map(([k, v]) => `${k}: ${String(v)}`)
+    .map(
+      ([k, v]) =>
+        `${k}: ${v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)}`,
+    )
     .join(", ");
 }
 

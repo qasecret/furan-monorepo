@@ -236,9 +236,15 @@ export const HATCH_TOOLTIP: Record<HatchedImage, string> = {
 const CARD =
   "flex max-w-md items-center gap-3 rounded-lg border border-edge bg-overlay px-3 py-2 text-left text-xs text-fg-secondary shadow-overlay";
 
-/** A sentence and nothing to press: the pointer goes through to the canvas. */
+/** A sentence and nothing to press: the pointer goes through to the canvas.
+ * The sentence is one span, so CARD's flex row doesn't split its text and
+ * its <strong> into columns. */
 function Message({ children }: { children: ReactNode }) {
-  return <p className={cn(CARD, "pointer-events-none")}>{children}</p>;
+  return (
+    <p className={cn(CARD, "pointer-events-none")}>
+      <span>{children}</span>
+    </p>
+  );
 }
 
 /**
