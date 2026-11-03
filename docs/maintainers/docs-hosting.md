@@ -4,13 +4,13 @@ The portal (`apps/docs`, ADR-081) is one Docusaurus source with three builds.
 Each build sets `DOCS_BASE_URL` and `DOCS_SITE_URL` (read by
 [`apps/docs/docusaurus.config.ts`](../../apps/docs/docusaurus.config.ts)):
 
-| Build             | Where                                            | Built by                                                         | When                      | `DOCS_BASE_URL`    | `DOCS_SITE_URL`              |
-| ----------------- | ------------------------------------------------ | ---------------------------------------------------------------- | ------------------------- | ------------------ | ---------------------------- |
-| Bundled           | `/docs` on every install                         | [`apps/dashboard/Dockerfile`](../../apps/dashboard/Dockerfile)   | each image build          | unset (`/docs/`)   | unset                        |
-| GitHub Pages      | <https://qasecret.github.io/furan-monorepo/>     | [`.github/workflows/docs.yml`](../../.github/workflows/docs.yml) | `v*` release tags         | `/furan-monorepo/` | `https://qasecret.github.io` |
-| Cloudflare Worker | `https://furan-monorepo.<subdomain>.workers.dev` | Cloudflare Workers Builds (settings below)                       | every push to `main`, PRs | `/`                | the Worker's URL             |
+| Build             | Where                                                  | Built by                                                         | When                      | `DOCS_BASE_URL`    | `DOCS_SITE_URL`              |
+| ----------------- | ------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------- | ------------------ | ---------------------------- |
+| Bundled           | `/docs` on every install                               | [`apps/dashboard/Dockerfile`](../../apps/dashboard/Dockerfile)   | each image build          | unset (`/docs/`)   | unset                        |
+| GitHub Pages      | <https://qasecret.github.io/furan-monorepo/>           | [`.github/workflows/docs.yml`](../../.github/workflows/docs.yml) | `v*` release tags         | `/furan-monorepo/` | `https://qasecret.github.io` |
+| Cloudflare Worker | <https://furan-monorepo.rabindrabiswal404.workers.dev> | Cloudflare Workers Builds (settings below)                       | every push to `main`, PRs | `/`                | the Worker's URL             |
 
-GitHub Pages describes the latest release. The Cloudflare Worker follows
+GitHub Pages describes the latest release, once Pages is enabled for the repository (Settings → Pages → Source: GitHub Actions; until then the `docs` workflow's release run fails at `configure-pages`). The Cloudflare Worker follows
 `main`, so between releases it can document features the published images
 don't have yet, and each pull request gets its own preview URL.
 
@@ -40,12 +40,12 @@ Cloudflare's GitHub app on the org), name the Worker `furan-monorepo` (the
 
 Build variables:
 
-| Variable                  | Value                                            | Why                                                                                  |
-| ------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `PNPM_VERSION`            | `9.15.0`                                         | The repo pins pnpm 9.15.0 (`packageManager`); the build image's default differs.     |
-| `SKIP_DEPENDENCY_INSTALL` | `1`                                              | Skips Cloudflare's full-workspace install; the build command installs only the docs. |
-| `DOCS_BASE_URL`           | `/`                                              | The site is served at the root of its hostname.                                      |
-| `DOCS_SITE_URL`           | `https://furan-monorepo.<subdomain>.workers.dev` | Canonical links and the sitemap. Use the custom domain instead once one is attached. |
+| Variable                  | Value                                                  | Why                                                                                  |
+| ------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `PNPM_VERSION`            | `9.15.0`                                               | The repo pins pnpm 9.15.0 (`packageManager`); the build image's default differs.     |
+| `SKIP_DEPENDENCY_INSTALL` | `1`                                                    | Skips Cloudflare's full-workspace install; the build command installs only the docs. |
+| `DOCS_BASE_URL`           | `/`                                                    | The site is served at the root of its hostname.                                      |
+| `DOCS_SITE_URL`           | <https://furan-monorepo.rabindrabiswal404.workers.dev> | Canonical links and the sitemap. Use the custom domain instead once one is attached. |
 
 Node comes from [`.nvmrc`](../../.nvmrc). Under **Settings → Build → Build
 watch paths**, include `docs/*`, `apps/docs/*`,

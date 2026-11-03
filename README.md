@@ -12,11 +12,12 @@ every pixel change in a fast dashboard, on infrastructure you control.
 [![Release](https://img.shields.io/docker/v/qasecret/furan-api?sort=semver&label=release&logo=docker&logoColor=white)](https://hub.docker.com/u/qasecret)
 [![CI](https://img.shields.io/github/actions/workflow/status/qasecret/furan-monorepo/ci.yml?branch=main&label=CI&logo=github)](https://github.com/qasecret/furan-monorepo/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.qasecret/furan-selenium?label=Kotlin%20SDK&logo=apachemaven)](https://central.sonatype.com/namespace/io.github.qasecret)
+[![npm](https://img.shields.io/npm/v/@furan/cli?label=npm&logo=npm)](https://www.npmjs.com/package/@furan/cli)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 [![Signed images](https://img.shields.io/badge/images-cosign_signed-6f42c1?logo=sigstore&logoColor=white)](#-security)
 
 [**Quick start**](#-quick-start) ·
-[**Documentation**](docs/README.md) ·
+[**Documentation**](https://furan-monorepo.rabindrabiswal404.workers.dev) ·
 [**SDKs**](#-sdks-and-integrations) ·
 [**Architecture**](ARCHITECTURE.md) ·
 [**Changelog**](CHANGELOG.md) ·
@@ -140,27 +141,27 @@ fun `checkout page looks right`() {
 **Any CI, from a folder of PNGs**
 
 ```bash
-npx furan upload screenshots/
+npx @furan/cli upload screenshots/
 ```
 
 The first run creates a **new** checkpoint. Approve it in the dashboard to make it the baseline, and every later run is compared against it. The [getting-started guide](docs/getting-started/install.md) walks the whole path in seven short pages.
 
 ## 🧩 SDKs and integrations
 
-| Integration                           | Package or guide                                                                     | Status                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------- |
-| Selenium (JVM)                        | `io.github.qasecret:furan-selenium`                                                  | ✅ Stable, on Maven Central       |
-| Playwright (JVM)                      | `io.github.qasecret:furan-playwright`                                                | ✅ Stable, on Maven Central       |
-| Appium (native mobile)                | `io.github.qasecret:furan-appium`                                                    | ✅ Stable, on Maven Central       |
-| JUnit 5 `@FuranTest`                  | `io.github.qasecret:furan-junit5`                                                    | ✅ Stable, on Maven Central       |
-| Any CI, from PNG folders              | [`@furan/cli`](docs/integrations/javascript.md#furan-upload)                         | 🧪 In this repo, npm release soon |
-| Playwright Test                       | [`@furan/playwright`](docs/integrations/javascript.md#playwright-test)               | 🧪 In this repo, npm release soon |
-| JS / TS client                        | [`@furan/client`](docs/integrations/javascript.md#the-client-library)                | 🧪 In this repo, npm release soon |
-| REST API                              | [REST upload guide](docs/sdk/rest.md)                                                | ✅ Stable, OpenAPI 3.1            |
-| GitHub Actions                        | [`furan upload` action](docs/integrations/github-actions.md)                         | ✅ Stable                         |
-| GitHub App                            | [PR comment + status check](docs/integrations/github-app.md)                         | ✅ Stable                         |
-| Jenkins, GitLab CI                    | [Jenkins](docs/integrations/jenkins.md), [GitLab CI](docs/integrations/gitlab-ci.md) | ✅ Guides                         |
-| Python, C#, Cypress plugin, Storybook | —                                                                                    | 🗺️ Planned                        |
+| Integration                           | Package or guide                                                                     | Status                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------- |
+| Selenium (JVM)                        | `io.github.qasecret:furan-selenium`                                                  | ✅ Stable, on Maven Central |
+| Playwright (JVM)                      | `io.github.qasecret:furan-playwright`                                                | ✅ Stable, on Maven Central |
+| Appium (native mobile)                | `io.github.qasecret:furan-appium`                                                    | ✅ Stable, on Maven Central |
+| JUnit 5 `@FuranTest`                  | `io.github.qasecret:furan-junit5`                                                    | ✅ Stable, on Maven Central |
+| Any CI, from PNG folders              | [`@furan/cli`](docs/integrations/javascript.md#furan-upload)                         | ✅ On npm                   |
+| Playwright Test                       | [`@furan/playwright`](docs/integrations/javascript.md#playwright-test)               | ✅ On npm                   |
+| JS / TS client                        | [`@furan/client`](docs/integrations/javascript.md#the-client-library)                | ✅ On npm                   |
+| REST API                              | [REST upload guide](docs/sdk/rest.md)                                                | ✅ Stable, OpenAPI 3.1      |
+| GitHub Actions                        | [`furan upload` action](docs/integrations/github-actions.md)                         | ✅ Stable                   |
+| GitHub App                            | [PR comment + status check](docs/integrations/github-app.md)                         | ✅ Stable                   |
+| Jenkins, GitLab CI                    | [Jenkins](docs/integrations/jenkins.md), [GitLab CI](docs/integrations/gitlab-ci.md) | ✅ Guides                   |
+| Python, C#, Cypress plugin, Storybook | —                                                                                    | 🗺️ Planned                  |
 
 ## 🔍 How it works
 
@@ -195,7 +196,7 @@ Furan is not there yet if you need SSO, SCIM, SAML, or multi-organization tenanc
 
 ## 📚 Documentation
 
-The documentation lives in [`docs/`](docs/README.md). From v1.1.34, every install also serves it at `/docs` (for example `http://localhost:8080/docs`), matching the version you run.
+Read the documentation online at **[furan-monorepo.rabindrabiswal404.workers.dev](https://furan-monorepo.rabindrabiswal404.workers.dev)**, which follows `main`. From v1.1.34, every install also serves it at `/docs` (for example `http://localhost:8080/docs`), matching the version you run. Its source is in [`docs/`](docs/README.md).
 
 | I want to…                        | Read                                                                                                                                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
