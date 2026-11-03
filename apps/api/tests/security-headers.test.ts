@@ -70,6 +70,16 @@ describe("security headers", () => {
       expect(res.headers["content-security-policy"]).toBe(STRICT_CSP);
     });
 
+    test("/docs redirects relatively, so a proxy prefix such as /api survives", async () => {
+      const res = await h.app.inject({ method: "GET", url: "/docs" });
+      expect(res.headers.location).toBe("docs/");
+      const withQuery = await h.app.inject({
+        method: "GET",
+        url: "/docs?theme=dark",
+      });
+      expect(withQuery.headers.location).toBe("docs/?theme=dark");
+    });
+
     test("/docs/ gets the docs CSP, not the strict one", async () => {
       const res = await h.app.inject({ method: "GET", url: "/docs/" });
       expect(res.statusCode).toBe(200);

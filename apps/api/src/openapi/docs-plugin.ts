@@ -74,6 +74,19 @@ const docsPlugin: FastifyPluginAsync = async (app) => {
       return payload;
     });
 
+    // Scalar answers `/docs` with `301 /docs/`, an absolute path. Behind a
+    // proxy that mounts the API under a prefix (the one-file install serves
+    // it at `/api`), that leaves the prefix: `/api/docs` landed on the
+    // dashboard's docs portal. A relative `docs/` resolves against wherever
+    // the request came from. The page itself loads only relative URLs.
+    docs.addHook("onRequest", async (req, reply) => {
+      const queryAt = req.url.indexOf("?");
+      const path = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
+      if (path !== "/docs") return;
+      const query = queryAt === -1 ? "" : req.url.slice(queryAt);
+      return reply.redirect(`docs/${query}`, 301);
+    });
+
     await docs.register(fastifyApiReference, {
       routePrefix: "/docs",
       // Scalar 1.57+ uses configuration.content directly (not configuration.spec.content).
