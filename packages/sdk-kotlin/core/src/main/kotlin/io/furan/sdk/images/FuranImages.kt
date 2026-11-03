@@ -9,6 +9,7 @@ import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
+import io.furan.sdk.endRunAfterFailure
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,8 +25,8 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Lifecycle mirrors the Selenium adapter 1:1 — open a run, check one or more
  * images, then close (or abort). Prefer the [use] companion, which opens,
- * runs your block, closes on success / aborts on exception, and releases the
- * underlying client:
+ * runs your block, closes on success / ends the run with [endRunAfterFailure]
+ * on exception, and releases the underlying client:
  *
  * ```kotlin
  * val result = FuranImages.use(FuranConfig.fromEnv(), "checkout page") { furan ->
@@ -220,7 +221,8 @@ class FuranImages(val config: FuranConfig) {
 
     companion object {
         /**
-         * Open a run, run [block], close on success / abort on exception, and
+         * Open a run, run [block], close on success, end the run with
+         * [endRunAfterFailure] on exception, and
          * release the client. The blessed path for one run per test.
          */
         fun <R> use(config: FuranConfig, testName: String, block: (FuranImages) -> R): R {
@@ -231,7 +233,7 @@ class FuranImages(val config: FuranConfig) {
                 furan.close()
                 result
             } catch (e: Throwable) {
-                runCatching { furan.abort() }
+                endRunAfterFailure(e, close = { furan.close() }, abort = { furan.abort() })
                 throw e
             } finally {
                 runCatching { furan.closeClient() }
