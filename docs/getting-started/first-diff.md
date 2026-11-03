@@ -16,11 +16,7 @@ With baselines in place, every run is compared with them. A step that matches
 
 1. Change something visible in the page your test opens (a heading, a
    colour), or point the test at a slightly different page, keeping the same
-   test and step names. A new project passes a step when at most **0.1%** of
-   its pixels differ (project Settings → Diff behavior → **Diff threshold**):
-   on a 1280×720 screenshot that is about 920 pixels, so a few changed words
-   can pass. For this walkthrough change something larger, or set the
-   threshold to 0%.
+   test and step names.
 2. Run the same test again.
 3. In **Batches**, the new batch shows **Unresolved**. Open it, then open the
    changed step.
@@ -44,10 +40,8 @@ compares against whatever you approved.
 ## If it doesn't work
 
 - **The run passed although something changed:** the change may be under the
-  project's diff threshold (0.1% of the pixels by default, which a short text
-  change such as a price can stay under), or inside an ignore region. Both are
-  in project Settings. The viewer's toolbar shows the threshold it applied as
-  **Sensitivity**.
+  project's diff threshold, or inside an ignore region. Both are in project
+  Settings.
 - **Every run shows small differences:** dynamic content (dates, ads,
   animations) differs on every capture. Ignore those areas, or make the page
   deterministic in the test.
