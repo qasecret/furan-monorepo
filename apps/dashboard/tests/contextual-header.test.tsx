@@ -153,6 +153,22 @@ describe("ContextualHeader: a narrow header", () => {
     expect(badge.closest(".shrink-0")).not.toBeNull();
   });
 
+  test("the branch is shown from xl up, leaving a narrower header to the title", () => {
+    renderHeader(loop());
+    const branch = screen.getByText("main").parentElement!;
+    expect(branch.className).toContain("hidden");
+    expect(branch.className).toContain("xl:flex");
+  });
+
+  test("Next pending is icon-only below xl, still named", () => {
+    renderHeader(loop());
+    const next = screen.getByTestId("header-next-pending");
+    expect(next.getAttribute("aria-label")).toBe("Next pending step");
+    const label = screen.getByText("Next pending");
+    expect(label.className).toContain("sr-only");
+    expect(label.className).toContain("xl:not-sr-only");
+  });
+
   test("the left-in-batch count is visible from xl up and always read out", () => {
     renderHeader(loop());
     const remaining = screen.getByTestId("header-loop-remaining");

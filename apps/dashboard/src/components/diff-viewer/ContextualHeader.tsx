@@ -112,12 +112,13 @@ export function ContextualHeader({
         ) : null}
         <div className="flex min-w-0 items-center gap-2 text-sm">
           {branch ? (
-            <>
+            // From xl up: a narrower header gives its room to the title.
+            <span className="hidden min-w-0 items-center gap-2 xl:flex">
               <span className="truncate font-mono text-fg-muted">{branch}</span>
               <span className="text-edge-strong" aria-hidden>
                 /
               </span>
-            </>
+            </span>
           ) : null}
           <h1
             className="truncate font-medium text-fg"
@@ -251,7 +252,9 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
         onClick={onNextPending}
         disabled={!onNextPending}
       >
-        {nextLabel}
+        {/* Icon-only below xl (the button keeps its aria-label), so a
+            narrow header keeps room for the step's title and status. */}
+        <span className="sr-only xl:not-sr-only">{nextLabel}</span>
         {pending ? (
           // Turns only when motion is allowed; still, it reads as busy.
           <Loader2
