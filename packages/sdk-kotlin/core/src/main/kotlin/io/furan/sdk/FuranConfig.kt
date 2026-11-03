@@ -6,7 +6,22 @@ data class FuranConfig(
     val apiUrl: String,
     val apiToken: String,
     val projectId: String,
+    /**
+     * An existing Furan build to attach every run to: the build's id (a
+     * UUID), e.g. one a CI step created with `POST /projects/:id/builds`.
+     * From `FURAN_BUILD_ID`. Null = the SDK creates (or, with [ciBuildId],
+     * finds) the build itself.
+     */
     val buildId: String? = null,
+    /**
+     * Your CI's id for this pipeline run, e.g. GitHub Actions'
+     * `<run_id>-<run_attempt>`. Every `Furan` instance (every test, job and
+     * shard) that sends the same value joins one build, so the whole suite
+     * is one batch; a re-run with a new value gets a fresh one. From
+     * `FURAN_CI_BUILD_ID`. Ignored when [buildId] is set. Null = each
+     * instance creates its own build.
+     */
+    val ciBuildId: String? = null,
     val branchName: String = "main",
     /**
      * Parent branch in the branch hierarchy (the parent-branch hint).
@@ -110,6 +125,13 @@ data class FuranConfig(
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
         require(apiToken.isNotBlank()) { "apiToken must be non-blank" }
         require(projectId.isNotBlank()) { "projectId must be non-blank" }
+        require(buildId == null || UUID.matches(buildId)) {
+            "FURAN_BUILD_ID must be a Furan build id (a UUID); to group the tests of a CI " +
+                "pipeline into one build, set FURAN_CI_BUILD_ID instead"
+        }
+        require(ciBuildId == null || ciBuildId.length in 1..200) {
+            "FURAN_CI_BUILD_ID must be 1 to 200 characters"
+        }
         require(batchSize >= 1) { "batchSize must be >= 1" }
         require(pollTimeoutSeconds >= 1) { "pollTimeoutSeconds must be >= 1" }
         require(pollIntervalSeconds >= 1) { "pollIntervalSeconds must be >= 1" }
@@ -119,6 +141,8 @@ data class FuranConfig(
     }
 
     companion object {
+        private val UUID = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
         /**
          * Build a config from FURAN_* env vars. Throws
          * [FuranConfigException] on missing/invalid env (wraps any
@@ -153,7 +177,8 @@ data class FuranConfig(
                 apiUrl = apiUrl,
                 apiToken = apiToken,
                 projectId = projectId,
-                buildId = env["FURAN_BUILD_ID"],
+                buildId = env["FURAN_BUILD_ID"]?.trim()?.takeIf { it.isNotEmpty() },
+                ciBuildId = env["FURAN_CI_BUILD_ID"]?.trim()?.takeIf { it.isNotEmpty() },
                 branchName = env["FURAN_BRANCH"] ?: "main",
                 parentBranchName = env["FURAN_PARENT_BRANCH"]?.trim()?.takeIf { it.isNotEmpty() },
                 name = env["FURAN_BUILD_NAME"]?.trim()?.takeIf { it.isNotEmpty() },
@@ -319,7 +344,9 @@ data class FuranConfig(
                 apiUrl = apiUrl,
                 apiToken = apiToken,
                 projectId = projectId,
-                buildId = env["FURAN_BUILD_ID"] ?: yamlString("buildId"),
+                buildId = (env["FURAN_BUILD_ID"] ?: yamlString("buildId"))?.trim()?.takeIf { it.isNotEmpty() },
+                ciBuildId = (env["FURAN_CI_BUILD_ID"] ?: yamlString("ciBuildId"))
+                    ?.trim()?.takeIf { it.isNotEmpty() },
                 branchName = env["FURAN_BRANCH"] ?: yamlString("branchName") ?: "main",
                 parentBranchName = (env["FURAN_PARENT_BRANCH"] ?: yamlString("parentBranchName"))
                     ?.trim()?.takeIf { it.isNotEmpty() },

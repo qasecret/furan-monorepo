@@ -264,26 +264,30 @@ sequenceDiagram
 
 ## Configuration
 
-| Field                 | Env var                       | Default    | Notes                                                                                                             |
-| --------------------- | ----------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| **`apiUrl`**          | `FURAN_API_URL`               | —          | Required. Your Furan API endpoint.                                                                                |
-| **`apiToken`**        | `FURAN_API_TOKEN`             | —          | Required. `furan_pat_*` from the dashboard.                                                                       |
-| **`projectId`**       | `FURAN_PROJECT_ID`            | —          | Required. UUID from the project URL.                                                                              |
-| `buildId`             | `FURAN_BUILD_ID`              | —          | Groups runs into a build. Typically `$GITHUB_RUN_ID`.                                                             |
-| `branchName`          | `FURAN_BRANCH`                | `"main"`   | Branch the snapshot was captured from.                                                                            |
-| `parentBranchName`    | `FURAN_PARENT_BRANCH`         | —          | Parent branch; its baseline is inherited when this branch has none. Set to the PR base (`github.base_ref`) in CI. |
-| `scm.repo`            | `FURAN_REPO`                  | —          | Repository as `owner/name`, sent with each run for the GitHub App. GitHub Actions: `GITHUB_REPOSITORY`.           |
-| `scm.prNumber`        | `FURAN_PR_NUMBER`             | —          | Pull request number. GitHub Actions: read from the `pull_request` event file.                                     |
-| `scm.commitSha`       | `FURAN_COMMIT_SHA`            | —          | PR head commit (7 to 64 hex). GitHub Actions: the event's head commit, else `GITHUB_SHA`.                         |
-| `name`                | `FURAN_BUILD_NAME`            | —          | Human-readable build label (e.g. `"nightly main"`).                                                               |
-| `properties`          | `FURAN_BUILD_PROPERTIES`      | empty      | Comma-separated `key=value` pairs for filtering.                                                                  |
-| `softAssert`          | `FURAN_SOFT_ASSERT`           | `false`    | If `true`, `snapshotAndAwait` returns the failed result instead of throwing.                                      |
-| `pollTimeoutSeconds`  | `FURAN_POLL_TIMEOUT_SECONDS`  | `60`       | How long `snapshotAndAwait` waits for the diff worker.                                                            |
-| `pollIntervalSeconds` | `FURAN_POLL_INTERVAL_SECONDS` | `1`        | Polling cadence.                                                                                                  |
-| `dashboardUrl`        | `FURAN_DASHBOARD_URL`         | —          | Where `SnapshotResult.diffViewerUrl` points; usually the dashboard host.                                          |
-| `viewports`           | —                             | `1280×720` | Per-test override available; multi-viewport snapshots loop internally.                                            |
-| `logLevel`            | `FURAN_LOG_LEVEL`             | `"info"`   | `trace` / `debug` / `info` / `none`.                                                                              |
-| `caCertPath`          | `FURAN_CA_CERT_PATH`          | —          | PEM file for custom CA (corporate-proxy / self-signed TLS).                                                       |
+| Field                       | Env var                                       | Default    | Notes                                                                                                                                                                                                                                 |
+| --------------------------- | --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`apiUrl`**                | `FURAN_API_URL`                               | —          | Required. Your Furan API endpoint.                                                                                                                                                                                                    |
+| **`apiToken`**              | `FURAN_API_TOKEN`                             | —          | Required. `furan_pat_*` from the dashboard.                                                                                                                                                                                           |
+| **`projectId`**             | `FURAN_PROJECT_ID`                            | —          | Required. UUID from the project URL.                                                                                                                                                                                                  |
+| `buildId`                   | `FURAN_BUILD_ID`                              | —          | Attach every run to an existing build by its Furan id (a UUID), e.g. one a CI step created. Not a CI run number.                                                                                                                      |
+| `ciBuildId`                 | `FURAN_CI_BUILD_ID`                           | —          | Your CI's id for the pipeline run (SDK 5.1+). Every test, job and shard with the same value joins one build (batch). GitHub Actions: `${{ github.run_id }}-${{ github.run_attempt }}`. Unset: each `Furan.use` creates its own build. |
+| `branchName`                | `FURAN_BRANCH`                                | `"main"`   | Branch the snapshot was captured from.                                                                                                                                                                                                |
+| `parentBranchName`          | `FURAN_PARENT_BRANCH`                         | —          | Parent branch; its baseline is inherited when this branch has none. Set to the PR base (`github.base_ref`) in CI.                                                                                                                     |
+| `scm.repo`                  | `FURAN_REPO`                                  | —          | Repository as `owner/name`, sent with each run for the GitHub App. GitHub Actions: `GITHUB_REPOSITORY`.                                                                                                                               |
+| `scm.prNumber`              | `FURAN_PR_NUMBER`                             | —          | Pull request number. GitHub Actions: read from the `pull_request` event file.                                                                                                                                                         |
+| `scm.commitSha`             | `FURAN_COMMIT_SHA`                            | —          | PR head commit (7 to 64 hex). GitHub Actions: the event's head commit, else `GITHUB_SHA`.                                                                                                                                             |
+| `name`                      | `FURAN_BUILD_NAME`                            | —          | Human-readable build label (e.g. `"nightly main"`).                                                                                                                                                                                   |
+| `properties`                | `FURAN_BUILD_PROPERTIES`                      | empty      | Comma-separated `key=value` pairs for filtering.                                                                                                                                                                                      |
+| `softAssert`                | `FURAN_SOFT_ASSERT`                           | `false`    | If `true`, `snapshotAndAwait` returns the failed result instead of throwing.                                                                                                                                                          |
+| `saveNewTests`              | `FURAN_SAVE_NEW_TESTS`                        | `false`    | `true` saves the first capture of a step with no baseline as its baseline when the run closes. An SDK & CI token never approves a change against an existing baseline.                                                                |
+| `failOnDiff`                | `FURAN_FAIL_ON_DIFF`                          | `None`     | `AfterEach` makes `close()` throw `FuranDiffException` when the run needs review; `AfterAll` fails the suite once (JUnit 5 extension).                                                                                                |
+| `browser` / `os` / `device` | `FURAN_BROWSER` / `FURAN_OS` / `FURAN_DEVICE` | detected   | Environment labels. Part of the baseline identity, so keep them stable between runs.                                                                                                                                                  |
+| `pollTimeoutSeconds`        | `FURAN_POLL_TIMEOUT_SECONDS`                  | `60`       | How long `snapshotAndAwait` waits for the diff worker.                                                                                                                                                                                |
+| `pollIntervalSeconds`       | `FURAN_POLL_INTERVAL_SECONDS`                 | `2`        | Polling cadence.                                                                                                                                                                                                                      |
+| `dashboardUrl`              | `FURAN_DASHBOARD_URL`                         | —          | Where `SnapshotResult.diffViewerUrl` points; usually the dashboard host.                                                                                                                                                              |
+| `viewports`                 | `FURAN_VIEWPORTS`                             | `1280×720` | Per-test override available; multi-viewport snapshots loop internally.                                                                                                                                                                |
+| `logLevel`                  | `FURAN_LOG_LEVEL`                             | `"info"`   | `trace` / `debug` / `info` / `none`.                                                                                                                                                                                                  |
+| `caCertPath`                | `FURAN_CA_CERT_PATH`                          | —          | PEM file for custom CA (corporate-proxy / self-signed TLS).                                                                                                                                                                           |
 
 Four ways to build a `FuranConfig`:
 
@@ -328,6 +332,10 @@ Env vars still override every YAML entry, so CI doesn't have to rewrite the file
 Captures and uploads in the background. Returns immediately. Use when you have **many** snapshots in one test and only want to review failures asynchronously in the dashboard.
 
 ```kotlin
+import io.furan.sdk.Viewport
+import io.furan.sdk.dto.CheckpointOptions
+import io.furan.sdk.dto.Region
+
 furan.snapshot("homepage")
 // Ignore a region by CSS selector via CheckpointOptions:
 furan.snapshot("login-page", CheckpointOptions(ignoreRegions = listOf(Region.bySelector("[data-test=session-id]"))))

@@ -320,4 +320,32 @@ class FuranConfigTest {
     fun `direct construction defaults scm to empty`() {
         assertEquals(ScmContext(), FuranConfig(apiUrl = "u", apiToken = "t", projectId = "p").scm)
     }
+
+    @Test
+    fun `fromEnv reads FURAN_CI_BUILD_ID so a pipeline's tests share one build`() {
+        val base = mapOf("FURAN_API_URL" to "u", "FURAN_API_TOKEN" to "t", "FURAN_PROJECT_ID" to "p")
+        assertNull(FuranConfig.fromEnv(base).ciBuildId)
+        assertNull(FuranConfig.fromEnv(base + ("FURAN_CI_BUILD_ID" to "  ")).ciBuildId)
+        assertEquals("9012345678-1", FuranConfig.fromEnv(base + ("FURAN_CI_BUILD_ID" to "9012345678-1")).ciBuildId)
+    }
+
+    @Test
+    fun `FURAN_BUILD_ID must be a build UUID, and the error points at FURAN_CI_BUILD_ID`() {
+        val base = mapOf("FURAN_API_URL" to "u", "FURAN_API_TOKEN" to "t", "FURAN_PROJECT_ID" to "p")
+        val uuid = "3f1c9a2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b"
+        assertEquals(uuid, FuranConfig.fromEnv(base + ("FURAN_BUILD_ID" to uuid)).buildId)
+        // A CI run number or commit SHA used to fail every upload with a 400.
+        val ex = assertThrows<FuranConfigException> {
+            FuranConfig.fromEnv(base + ("FURAN_BUILD_ID" to "9012345678"))
+        }
+        assertTrue(ex.message!!.contains("FURAN_CI_BUILD_ID"))
+    }
+
+    @Test
+    fun `FURAN_CI_BUILD_ID longer than the api accepts is a config error`() {
+        val base = mapOf("FURAN_API_URL" to "u", "FURAN_API_TOKEN" to "t", "FURAN_PROJECT_ID" to "p")
+        assertThrows<FuranConfigException> {
+            FuranConfig.fromEnv(base + ("FURAN_CI_BUILD_ID" to "x".repeat(201)))
+        }
+    }
 }
