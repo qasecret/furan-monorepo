@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { UserRole } from "../src/plugins/auth.js";
 import {
   checkUserUpdateGuards,
+  grantsOwner,
+  mayCreateOwner,
   type UserUpdateGuardInput,
   updateMayRemoveAdmin,
   updateMayRemoveOwner,
@@ -148,12 +150,13 @@ describe("checkUserUpdateGuards — admin invariants", () => {
 });
 
 describe("checkUserUpdateGuards — owner separation of duties", () => {
-  it("lets an admin PROMOTE an editor to owner (bootstrap path)", () => {
+  it("lets an admin PROMOTE an editor to owner (bootstrap path: no active owner)", () => {
     expect(
       guard({
         actorId: ADMIN_A,
         target: activeEditor(EDITOR),
         update: { role: "owner" },
+        otherActiveOwnerCount: 0,
       }),
     ).toEqual({ ok: true });
   });
@@ -358,5 +361,62 @@ describe("updateMayRemoveOwner", () => {
         { role: "owner" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("granting the owner role", () => {
+  it("rejects an admin promoting anyone to owner while another owner is active", () => {
+    expect(
+      guard({
+        actorId: ADMIN_A,
+        target: activeEditor(EDITOR),
+        update: { role: "owner" },
+        otherActiveOwnerCount: 1,
+      }),
+    ).toEqual({ ok: false, status: 403, error: "owner_protected" });
+    expect(
+      guard({
+        actorId: ADMIN_A,
+        target: activeAdmin(ADMIN_B),
+        update: { role: "owner" },
+        otherActiveOwnerCount: 1,
+      }),
+    ).toEqual({ ok: false, status: 403, error: "owner_protected" });
+  });
+
+  it("lets an admin promote the first owner when no owner is active", () => {
+    expect(
+      guard({
+        actorId: ADMIN_A,
+        target: activeAdmin(ADMIN_B),
+        update: { role: "owner" },
+        otherActiveOwnerCount: 0,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("lets an owner promote another owner", () => {
+    expect(
+      guard({
+        actorId: OWNER_A,
+        actorRole: "owner",
+        target: activeAdmin(ADMIN_B),
+        update: { role: "owner" },
+        otherActiveOwnerCount: 1,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("grantsOwner is true only for a non-owner target given the owner role", () => {
+    expect(grantsOwner(activeEditor(EDITOR), { role: "owner" })).toBe(true);
+    expect(grantsOwner(activeOwner(OWNER_B), { role: "owner" })).toBe(false);
+    expect(grantsOwner(activeEditor(EDITOR), { role: "admin" })).toBe(false);
+    expect(grantsOwner(activeEditor(EDITOR), { isActive: false })).toBe(false);
+  });
+
+  it("mayCreateOwner: an owner always, an admin only while no owner is active", () => {
+    expect(mayCreateOwner("owner", 3)).toBe(true);
+    expect(mayCreateOwner("admin", 0)).toBe(true);
+    expect(mayCreateOwner("admin", 1)).toBe(false);
   });
 });

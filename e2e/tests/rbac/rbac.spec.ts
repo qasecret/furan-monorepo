@@ -106,6 +106,18 @@ test.describe.serial("rbac", () => {
     });
     expect(protectedRes.status).toBe(403);
     expect(protectedRes.body).toMatchObject({ code: "owner_protected" });
+    // Nor make anyone an owner while an owner exists: an owner it appointed
+    // could demote the real one.
+    const promoteRes = await api.probe(
+      "PATCH",
+      `/users/${byRole("editor").id}`,
+      {
+        auth: admin,
+        body: { role: "owner" },
+      },
+    );
+    expect(promoteRes.status).toBe(403);
+    expect(promoteRes.body).toMatchObject({ code: "owner_protected" });
     // Nobody can change their OWN role → cannot_change_own_role (400). This
     // fires before the last_owner check, so it's the reachable self-service SoD
     // guard for the sole owner.

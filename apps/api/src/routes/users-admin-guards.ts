@@ -27,8 +27,8 @@ export interface UserUpdateGuardInput {
   otherActiveAdminCount: number;
   /**
    * Count of OTHER active OWNERS (role='owner' AND is_active, excluding the
-   * target). Consulted only when the change would remove the target's active
-   * owner status.
+   * target). Consulted when the change would remove the target's active owner
+   * status, or would grant the owner role.
    */
   otherActiveOwnerCount: number;
 }
@@ -83,8 +83,9 @@ function affectsOwnerStatus(
  * - Self-protection (friendly, common footgun): a caller can neither deactivate
  *   nor change the role of their own account (so no self-promotion to owner).
  * - Owner-protection (separation of duties): only an owner may demote,
- *   deactivate, or reactivate an owner; a non-owner acting on an owner is
- *   rejected `403`.
+ *   deactivate, or reactivate an owner, or promote someone to owner; a
+ *   non-owner doing so is rejected `403`. While no active owner exists, an
+ *   admin may promote the first one.
  * - Last-active-owner invariant: an operation may never remove the last active
  *   owner (count-based; the route also enforces it atomically).
  * - Last-active-admin invariant (system integrity backstop, count-based so it
@@ -119,6 +120,18 @@ export function checkUserUpdateGuards(
   // integrity invariants — a non-owner shouldn't even learn whether it's the
   // last owner).
   if (affectsOwnerStatus(target, update) && !isOwner(actorRole)) {
+    return { ok: false, status: 403, error: "owner_protected" };
+  }
+
+  // Granting the owner role: only an owner may make someone an owner, or an
+  // admin could appoint an owner it controls and use it to demote the real
+  // owners. The one exception is a deployment with no active owner (bootstrap
+  // seeds an admin), where an admin appoints the first owner.
+  if (
+    grantsOwner(target, update) &&
+    !isOwner(actorRole) &&
+    otherActiveOwnerCount > 0
+  ) {
     return { ok: false, status: 403, error: "owner_protected" };
   }
 
@@ -162,6 +175,31 @@ export function updateMayRemoveAdmin(
  * Whether a pending update could remove the target's active-owner status — i.e.
  * whether the route needs to run the owner-count query + atomic owner guard.
  */
+/**
+ * Whether `update` makes a non-owner target an owner — i.e. whether the route
+ * needs the owner count and, for a non-owner actor, the atomic no-owner guard.
+ */
+export function grantsOwner(
+  target: TargetState,
+  update: UpdateFields,
+): boolean {
+  return (
+    update.role !== undefined && isOwner(update.role) && !isOwner(target.role)
+  );
+}
+
+/**
+ * Whether a non-owner `actorRole` may give the owner role to a NEW user:
+ * only while no active owner exists (the bootstrap admin appoints the first
+ * owner). An owner always may.
+ */
+export function mayCreateOwner(
+  actorRole: UserRole,
+  activeOwnerCount: number,
+): boolean {
+  return isOwner(actorRole) || activeOwnerCount === 0;
+}
+
 export function updateMayRemoveOwner(
   target: TargetState,
   update: UpdateFields,

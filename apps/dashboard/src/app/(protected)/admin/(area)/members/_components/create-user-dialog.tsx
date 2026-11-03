@@ -7,6 +7,8 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { USER_MUTATION_ERROR } from "./user-mutation-errors";
+
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -75,7 +77,11 @@ export function CreateUserDialog({ onCreated }: CreateUserDialogProps) {
     }
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { code?: string };
-      toast.error(body?.code ?? "Failed to create user");
+      toast.error(
+        (body?.code && USER_MUTATION_ERROR[body.code]) ??
+          body?.code ??
+          "Failed to create user",
+      );
       return;
     }
     toast.success("User created");
