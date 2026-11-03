@@ -14,6 +14,11 @@ API at `/api`. Set `FURAN_API_URL=http://<host>:8080/api`.
 **Port `8080` is already taken.** Set `FURAN_HTTP_PORT` to a free port before
 `up`, and set `FURAN_DASHBOARD_ORIGIN=http://<host>:<port>` to match.
 
+**Every page and API call answers `502 Bad Gateway` after an upgrade.** nginx
+still points at the containers the upgrade replaced. `docker compose -f
+furan-compose.yml restart nginx` fixes it. A `furan-compose.yml` downloaded
+after v1.1.35 restarts nginx by itself when the app containers change.
+
 **Sign-in fails with the default password.** The admin is created once, on
 the first boot, from `FURAN_BOOTSTRAP_ADMIN_PASSWORD` (default
 `FuranAdmin123!`). Exporting a different value later doesn't change it.
