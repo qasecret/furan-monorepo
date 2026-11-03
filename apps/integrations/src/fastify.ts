@@ -86,36 +86,48 @@ export async function buildFastify(
 
   const githubApp = deps.githubApp;
 
-  app.post("/webhooks/github", async (request, reply) => {
-    if (!githubApp) {
-      return reply.code(503).send({ error: "github_app_not_configured" });
-    }
-    const id = request.headers["x-github-delivery"];
-    const name = request.headers["x-github-event"];
-    const signature = request.headers["x-hub-signature-256"];
-    if (
-      typeof id !== "string" ||
-      typeof name !== "string" ||
-      typeof signature !== "string"
-    ) {
-      return reply.code(400).send({ error: "missing_github_headers" });
-    }
-    try {
-      await githubApp.webhooks.verifyAndReceive({
-        id,
-        // octokit's webhook event-name union is wide; the runtime check
-        // is the HMAC verify call below, so the cast is safe.
-        name: name as Parameters<
-          typeof githubApp.webhooks.verifyAndReceive
-        >[0]["name"],
-        signature,
-        payload: JSON.stringify(request.body),
-      });
-      return reply.code(204).send();
-    } catch (err) {
-      request.log.error({ err }, "github_webhook_verify_failed");
-      return reply.code(400).send({ error: "invalid_signature" });
-    }
+  // The HMAC GitHub sends signs the body's exact bytes, so the route keeps the
+  // raw body: parsing and re-serializing it changes the bytes whenever the
+  // sender escapes differently (`\u003c` for `<`, `\/`, spacing), and a
+  // genuine delivery would fail verification. Encapsulated, so only this
+  // route's JSON parser changes.
+  await app.register(async (hooks) => {
+    hooks.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_req, body, done) => done(null, body),
+    );
+    hooks.post("/webhooks/github", async (request, reply) => {
+      if (!githubApp) {
+        return reply.code(503).send({ error: "github_app_not_configured" });
+      }
+      const id = request.headers["x-github-delivery"];
+      const name = request.headers["x-github-event"];
+      const signature = request.headers["x-hub-signature-256"];
+      if (
+        typeof id !== "string" ||
+        typeof name !== "string" ||
+        typeof signature !== "string"
+      ) {
+        return reply.code(400).send({ error: "missing_github_headers" });
+      }
+      try {
+        await githubApp.webhooks.verifyAndReceive({
+          id,
+          // octokit's webhook event-name union is wide; the runtime check
+          // is the HMAC verify call below, so the cast is safe.
+          name: name as Parameters<
+            typeof githubApp.webhooks.verifyAndReceive
+          >[0]["name"],
+          signature,
+          payload: typeof request.body === "string" ? request.body : "",
+        });
+        return reply.code(204).send();
+      } catch (err) {
+        request.log.error({ err }, "github_webhook_verify_failed");
+        return reply.code(400).send({ error: "invalid_signature" });
+      }
+    });
   });
 
   // Placeholder: filled in by Phase 4 Task 9 if/when inbound Slack
