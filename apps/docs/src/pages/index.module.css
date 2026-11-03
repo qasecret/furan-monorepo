@@ -1,0 +1,248 @@
+/*
+ * The home page. Colours come from the Infima variables that custom.css maps
+ * to the dashboard's tokens, so light and dark follow the site. The two
+ * screenshots are of the dark dashboard, so their frame stays dark in both.
+ */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 5rem 0 4.5rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    60% 55% at 70% 0%,
+    color-mix(in srgb, var(--ifm-color-primary) 16%, transparent),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.heroInner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 3.5rem;
+  align-items: center;
+}
+
+.eyebrow {
+  margin-bottom: 1rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-content-secondary);
+}
+
+.title {
+  margin-bottom: 1.25rem;
+  font-size: clamp(2.25rem, 2.5vw + 1.5rem, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.lede {
+  max-width: 34rem;
+  font-size: 1.125rem;
+  color: var(--ifm-color-content-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.frame {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #26262b;
+  border-radius: 12px;
+  background: #0b0b0d;
+  box-shadow: 0 24px 64px -28px rgb(0 0 0 / 45%);
+}
+
+.frameBar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #26262b;
+}
+
+.frameBar span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3f3f46;
+}
+
+.frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.section,
+.band {
+  padding: 4.5rem 0;
+}
+
+.band {
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  background: var(--ifm-background-surface-color);
+}
+
+.section {
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.sectionTitle {
+  margin-bottom: 2rem;
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+}
+
+.muted {
+  color: var(--ifm-color-content-secondary);
+}
+
+.trustGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trustItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  height: 100%;
+  padding: 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  background: var(--ifm-background-color);
+  font-size: 0.9375rem;
+  transition: border-color 150ms ease;
+}
+
+.trustItem:hover {
+  border-color: var(--ifm-color-primary);
+  text-decoration: none;
+}
+
+.trustTitle {
+  font-weight: 600;
+  color: var(--ifm-font-color-base);
+}
+
+.how {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 3.5rem;
+  align-items: center;
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  gap: 1rem;
+}
+
+.step + .step {
+  margin-top: 1.5rem;
+}
+
+.stepNumber {
+  flex: none;
+  padding-top: 0.15rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
+  color: var(--ifm-color-primary);
+}
+
+.stepTitle {
+  margin-bottom: 0.25rem;
+  font-size: 1.125rem;
+}
+
+.step p {
+  margin: 0;
+}
+
+/* Columns rather than a grid: the sections differ in length, and a grid
+   leaves the fifth card alone on a row. */
+.cards {
+  columns: 3 16rem;
+  column-gap: 1rem;
+}
+
+.card {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  background: var(--ifm-background-color);
+}
+
+.cardTitle {
+  margin-bottom: 0.5rem;
+  font-size: 1.125rem;
+}
+
+.card p {
+  font-size: 0.9375rem;
+}
+
+.cardLinks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9375rem;
+}
+
+.cardLinks li + li {
+  margin-top: 0.375rem;
+}
+
+@media (max-width: 996px) {
+  .hero {
+    padding: 3rem 0;
+  }
+
+  .heroInner,
+  .how {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+  }
+
+  .trustGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .section,
+  .band {
+    padding: 3rem 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .trustGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
