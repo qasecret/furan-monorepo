@@ -9,6 +9,57 @@ Earlier app releases are listed under
 
 All images are cosign-signed, Trivy-scanned, and multi-arch (amd64 / arm64).
 
+## v1.1.35 — 2026-11-03
+
+Fixes from an end-to-end run of the documentation against a real install: a
+privilege escalation, small changes that failed with nothing to review, and a
+stricter default for new projects. It applies one database migration.
+
+### Security
+
+- Only an owner can make someone an owner. An admin could create an owner, or
+  promote anyone to owner, and then demote or deactivate the real owners.
+  While no active owner exists, an admin still appoints the first one.
+- The GitHub App verifies webhook signatures over the exact bytes GitHub
+  sent. Re-serializing the body first rejected genuine deliveries whose JSON
+  escaped characters differently, so their PR comment and status never came.
+
+### Changed
+
+- **New projects count any changed pixel as a change** (diff threshold 0%).
+  Before, they started at 0.1%, under which a changed heading or price at
+  1280×720 passed. Existing projects keep their threshold: check it under
+  project Settings → Diff behavior.
+
+### Fixes
+
+- A step that fails on a small change (a timestamp, a price) now gets a region
+  for it. It used to fail with no region: the viewer outlined nothing, and an
+  auto rule had nothing to match, so a rule such as "Ignore timestamps" never
+  resolved it. Changes inside ignore areas no longer show as regions.
+- `/api/docs` opens the API reference on the one-file install. It redirected
+  to `/docs/`, the documentation portal.
+- An expired session, or one from a previous install, sends you to sign in
+  instead of showing "No project assigned".
+- The audit log shows a project change's details instead of
+  `[object Object]`. The viewer's "No baseline yet" card reads as one sentence,
+  and its header fits a 1024 px window.
+
+### Kotlin SDK 5.1.0
+
+Released alongside (Maven Central, `io.github.qasecret:furan-*:5.1.0`): a run
+stays reviewable when `snapshotAndAwait` fails the test (before, it was aborted,
+so the first baseline could not be saved and a change could not be approved),
+and `FURAN_CI_BUILD_ID` puts a CI pipeline's tests into one batch. See
+[`packages/sdk-kotlin/CHANGELOG.md`](packages/sdk-kotlin/CHANGELOG.md).
+
+### Upgrading
+
+- From v1.1.34: applies one migration (0047, a column default only); no
+  downtime needed. Back up first as usual.
+- From v1.1.33 or earlier: also read [v1.1.34](#v1134--2026-11-03)'s upgrade
+  notes (four migrations, Legacy tokens).
+
 ## v1.1.34 — 2026-11-03
 
 Scoped CI tokens, pull request feedback from CI runs, faster review on large

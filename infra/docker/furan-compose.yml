@@ -125,7 +125,7 @@ services:
   # Because the volume `name:` is scoped by FURAN_VERSION, bumping the version
   # yields a fresh empty volume → fresh migrations for the new image.
   migrations-seed:
-    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.34}
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.35}
     entrypoint: ["/nodejs/bin/node", "--version"]
     volumes:
       - migrations:/app/packages/db/migrations
@@ -155,7 +155,7 @@ services:
     restart: "no"
 
   api:
-    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.34}
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.35}
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,7 +196,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: docker.io/qasecret/furan-capture-worker:${FURAN_VERSION:-v1.1.34}
+    image: docker.io/qasecret/furan-capture-worker:${FURAN_VERSION:-v1.1.35}
     depends_on:
       postgres:
         condition: service_healthy
@@ -219,7 +219,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: docker.io/qasecret/furan-diff-worker:${FURAN_VERSION:-v1.1.34}
+    image: docker.io/qasecret/furan-diff-worker:${FURAN_VERSION:-v1.1.35}
     depends_on:
       postgres:
         condition: service_healthy
@@ -242,7 +242,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: docker.io/qasecret/furan-integrations:${FURAN_VERSION:-v1.1.34}
+    image: docker.io/qasecret/furan-integrations:${FURAN_VERSION:-v1.1.35}
     depends_on:
       postgres:
         condition: service_healthy
@@ -263,7 +263,7 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: docker.io/qasecret/furan-dashboard:${FURAN_VERSION:-v1.1.34}-proxy
+    image: docker.io/qasecret/furan-dashboard:${FURAN_VERSION:-v1.1.35}-proxy
     depends_on:
       - api
     environment:
@@ -373,4 +373,4 @@ volumes:
   minio_data:
   migrations:
     # Version-scoped so a FURAN_VERSION bump seeds fresh migrations.
-    name: furan_migrations_${FURAN_VERSION:-v1.1.34}
+    name: furan_migrations_${FURAN_VERSION:-v1.1.35}

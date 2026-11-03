@@ -227,7 +227,7 @@ Read the documentation online at **[furan-monorepo.rabindrabiswal404.workers.dev
 
 ## 🧭 Roadmap
 
-**Current release: v1.1.34** (2026-11-03). The [changelog](CHANGELOG.md) covers what's new and how to upgrade.
+**Current release: v1.1.35** (2026-11-03). The [changelog](CHANGELOG.md) covers what's new and how to upgrade.
 
 Planned, prioritized by user demand:
 
