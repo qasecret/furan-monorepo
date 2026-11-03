@@ -50,8 +50,8 @@ every pixel change in a fast dashboard, on infrastructure you control.
 - [Documentation](#-documentation)
 - [Roadmap](#-roadmap)
 - [Security](#-security)
-- [Contributing](#-contributing)
 - [Getting help](#-getting-help)
+- [Contributing](#-contributing)
 - [License](#-license)
 
 </details>
@@ -75,12 +75,12 @@ every pixel change in a fast dashboard, on infrastructure you control.
 **Workflow**
 
 - **Branch-aware baselines.** A feature branch falls back to its pull request's base branch, then the default branch, so feature work never pollutes `main`'s baselines.
-- **GitHub App** with a sticky pull request comment and a `furan/baselines` status check.
+- **GitHub App** with a sticky pull request comment and a `furan/baselines` status check, plus optional Slack notifications through an incoming webhook.
 - **CI-native verdicts.** The SDKs and `furan upload` wait for the result and fail the job when a screenshot needs review.
 
 **Operations and security**
 
-- **Role-based access control** with four tiers (owner, admin, editor, guest), an admin audit log, and an opt-in Postgres row-level-security backstop.
+- **Role-based access control** with four tiers (owner, admin, editor, guest), an admin audit log, and an opt-in Postgres [row-level-security backstop](docs/runbooks/rls-enable.md).
 - **Production-ready images.** Multi-arch (amd64 / arm64), cosign-signed, Trivy-scanned, with an SBOM attached to every release.
 - **Flexible storage.** S3-compatible object storage (MinIO included) or plain local disk.
 - **Observability.** Prometheus `/metrics`, OpenTelemetry tracing, structured logs, retention policies, and a nightly Postgres backup sidecar.
@@ -95,7 +95,7 @@ every pixel change in a fast dashboard, on infrastructure you control.
 You need Docker 24 or later with Compose v2, about 4 GB of free RAM, and port `8080` free.
 
 ```bash
-curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
 docker compose -f furan-compose.yml up -d
 ```
 
@@ -110,41 +110,55 @@ nginx serves the dashboard and the API from one origin on `:8080`, so the dashbo
 
 ## 📸 Send your first screenshot
 
-In the dashboard, create a project and mint a personal access token on your account's tokens page. Then point your tests at Furan:
+1. In the dashboard, create a project. Its id is the UUID in the project's URL (`/projects/<id>/builds`).
+2. Mint a token at **`/account/tokens`**. For CI, pick **Access: SDK & CI** and bind it to the project.
+3. Point your tests at Furan:
 
 ```bash
-export FURAN_API_URL=http://localhost:8080/api
+export FURAN_API_URL=http://localhost:8080/api   # one-file install; production compose.yml: http://<host>:3000
 export FURAN_API_TOKEN=furan_pat_...
 export FURAN_PROJECT_ID=<your project id>
 ```
 
-**Kotlin / Java (JUnit 5 + Selenium)**
+**Kotlin / Java (JUnit 5 + Selenium, JDK 21+)**
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:4.3.0")
+testImplementation("io.github.qasecret:furan-selenium:5.0.0")
 ```
 
 ```kotlin
-@Test
-fun `checkout page looks right`() {
-    val driver = ChromeDriver()
-    Furan.use(FuranConfig.fromEnv(), driver, "checkout-page") { furan ->
-        driver.get("https://app.example.com/checkout")
-        val result = furan.snapshotAndAwait("checkout-page")
-        assertEquals(RunStatus.PASSED, result.status)
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.selenium.Furan
+import org.junit.jupiter.api.Test
+import org.openqa.selenium.chrome.ChromeDriver
+import org.openqa.selenium.chrome.ChromeOptions
+
+class HomePageTest {
+    @Test
+    fun `home page looks right`() {
+        val driver = ChromeDriver(ChromeOptions().addArguments("--headless=new"))
+        try {
+            Furan.use(FuranConfig.fromEnv(), driver, testName = "home page") { furan ->
+                driver.get("https://example.com")
+                furan.snapshot("home")
+            }
+        } finally {
+            driver.quit()
+        }
     }
-    driver.quit()
 }
 ```
 
-**Any CI, from a folder of PNGs**
+**Any CI, from a folder of PNGs (Node 20.19+)**
 
 ```bash
 npx @furan/cli upload screenshots/
 ```
 
-The first run creates a **new** checkpoint. Approve it in the dashboard to make it the baseline, and every later run is compared against it. The [getting-started guide](docs/getting-started/install.md) walks the whole path in seven short pages.
+The first run creates a **new** checkpoint with no baseline. Approve it in the dashboard to make it the baseline, and every later run is compared against it. Once baselines exist, switch to `snapshotAndAwait` (or rely on `furan upload`'s exit code) to fail the CI job when a screenshot needs review.
+
+The [getting-started guide](docs/getting-started/install.md) walks the whole path in seven short pages.
 
 ## 🧩 SDKs and integrations
 
@@ -156,12 +170,15 @@ The first run creates a **new** checkpoint. Approve it in the dashboard to make 
 | JUnit 5 `@FuranTest`                  | `io.github.qasecret:furan-junit5`                                                    | ✅ Stable, on Maven Central |
 | Any CI, from PNG folders              | [`@furan/cli`](docs/integrations/javascript.md#furan-upload)                         | ✅ On npm                   |
 | Playwright Test                       | [`@furan/playwright`](docs/integrations/javascript.md#playwright-test)               | ✅ On npm                   |
+| Cypress                               | [`cy.screenshot()` + `furan upload`](docs/integrations/javascript.md#cypress)        | ✅ Guide                    |
 | JS / TS client                        | [`@furan/client`](docs/integrations/javascript.md#the-client-library)                | ✅ On npm                   |
 | REST API                              | [REST upload guide](docs/sdk/rest.md)                                                | ✅ Stable, OpenAPI 3.1      |
 | GitHub Actions                        | [`furan upload` action](docs/integrations/github-actions.md)                         | ✅ Stable                   |
 | GitHub App                            | [PR comment + status check](docs/integrations/github-app.md)                         | ✅ Stable                   |
 | Jenkins, GitLab CI                    | [Jenkins](docs/integrations/jenkins.md), [GitLab CI](docs/integrations/gitlab-ci.md) | ✅ Guides                   |
 | Python, C#, Cypress plugin, Storybook | —                                                                                    | 🗺️ Planned                  |
+
+The JVM SDK needs JDK 21 or later (Kotlin projects: Kotlin 2.3+); the npm packages need Node 20.19 or later.
 
 ## 🔍 How it works
 
@@ -174,12 +191,14 @@ flowchart LR
     API -->|diff jobs| R[(Redis)]
     R --> W[diff-worker]
     W -->|regions + verdict| PG
-    API --> GH["GitHub App<br/>PR comment + status"]
+    API -->|run events| I[integrations]
+    I --> GH["GitHub<br/>PR comment + status"]
+    I --> SL["Slack<br/>(optional)"]
 ```
 
 1. Your tests upload each checkpoint screenshot to the **api**, which stores the image and queues a diff job.
 2. The **diff-worker** finds the baseline for that checkpoint's branch and environment, compares the images, and records the changed regions and a verdict.
-3. The SDK or CLI waits for the verdict and passes or fails your CI job, and the GitHub App updates the pull request.
+3. The SDK or CLI waits for the verdict and passes or fails your CI job, and the **integrations** service updates the pull request through the GitHub App.
 4. Reviewers **approve** a change to make it the new baseline, or **reject** it to keep the old one.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers the services, data flow, and key design decisions in depth.
@@ -218,10 +237,32 @@ Planned, prioritized by user demand:
 
 Want one of these sooner? [Open or upvote a feature request](https://github.com/qasecret/furan-monorepo/issues/new?template=feature_request.yml).
 
+## 🔒 Security
+
+Release images are cosign-signed (keyless OIDC), scanned with Trivy for CRITICAL and HIGH findings, and published with an SPDX SBOM. Furan's server sends no telemetry.
+
+Found a vulnerability? Please **don't open a public issue**. Follow the private disclosure process in [SECURITY.md](SECURITY.md).
+
+## 💬 Getting help
+
+- **Bug?** Open a [bug report](https://github.com/qasecret/furan-monorepo/issues/new?template=bug_report.yml).
+- **Idea?** Open a [feature request](https://github.com/qasecret/furan-monorepo/issues/new?template=feature_request.yml).
+- **Question, or stuck on an install?** See [SUPPORT.md](SUPPORT.md) and [first-install problems](docs/troubleshooting/first-install.md).
+
+If Furan saves your team from a broken release, a ⭐ on the repo helps others find it.
+
+## 🤝 Contributing
+
+Contributions are welcome, from typo fixes to new SDK adapters. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, conventions, and the DCO sign-off (`git commit -s`), and see the [maintainer guide](docs/maintainers/development.md) for running the stack locally.
+
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 <details>
 <summary><strong>Repository layout</strong></summary>
 
-```
+A Turborepo + pnpm workspace (Node 22 for development).
+
+```text
 furan-monorepo/
 ├── apps/
 │   ├── api/              Fastify + tRPC + Drizzle backend (REST + /trpc)
@@ -234,39 +275,22 @@ furan-monorepo/
 │   ├── client/           @furan/client: JS/TS REST client
 │   ├── cli/              @furan/cli: `furan upload` + the GitHub Action
 │   ├── playwright/       @furan/playwright: Playwright Test fixture
+│   ├── sdk-kotlin/       Kotlin/JVM SDK (core + Selenium/Playwright/Appium/JUnit 5)
 │   ├── db/               Drizzle schema, migrations, scope helpers
 │   ├── diff-engine/      Pixel (odiff/pixelmatch/looks-same) + VLM + axe
 │   ├── rules-engine/     Project auto-rules that resolve known diffs
-│   ├── sdk-kotlin/       Kotlin/JVM SDK (core + Selenium/Playwright/Appium)
 │   ├── storage/          S3 (MinIO-compatible) + local-disk backends
 │   ├── queue/            BullMQ wrappers
 │   ├── telemetry/        pino + OpenTelemetry + prom-client
-│   └── shared-types/     Zod schemas shared across apps
+│   ├── config/           Zod env schema every app boots through
+│   ├── shared-types/     Zod schemas shared across apps
+│   └── eslint-config/, tsconfig/   Shared lint and TypeScript presets
+├── e2e/                  End-to-end suite (Docker stack + Playwright)
 ├── infra/docker/         Compose files: one-file install, production, dev overlay, backup
-└── docs/                 Documentation: getting started, install, SDKs, runbooks
+└── docs/                 Documentation source: getting started, install, SDKs, runbooks
 ```
 
 </details>
-
-## 🔒 Security
-
-Release images are cosign-signed (keyless OIDC), scanned with Trivy for CRITICAL and HIGH findings, and published with an SPDX SBOM. Furan's server sends no telemetry.
-
-Found a vulnerability? Please **don't open a public issue**. Follow the private disclosure process in [SECURITY.md](SECURITY.md).
-
-## 🤝 Contributing
-
-Contributions are welcome, from typo fixes to new SDK adapters. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, conventions, and the DCO sign-off (`git commit -s`), and see the [maintainer guide](docs/maintainers/development.md) for running the stack locally.
-
-Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
-
-## 💬 Getting help
-
-- **Bug?** Open a [bug report](https://github.com/qasecret/furan-monorepo/issues/new?template=bug_report.yml).
-- **Idea?** Open a [feature request](https://github.com/qasecret/furan-monorepo/issues/new?template=feature_request.yml).
-- **Question, or stuck on an install?** See [SUPPORT.md](SUPPORT.md) and [first-install problems](docs/troubleshooting/first-install.md).
-
-If Furan saves your team from a broken release, a ⭐ on the repo helps others find it.
 
 ## 📄 License
 
