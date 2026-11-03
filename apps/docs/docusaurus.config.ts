@@ -33,7 +33,7 @@ const sdkVersion = readFileSync(
 
 const config: Config = {
   title: "Furan",
-  tagline: "Self-hosted visual regression testing",
+  tagline: "Self-hosted visual testing",
   favicon: "img/furan-mark.svg",
 
   url: process.env.DOCS_SITE_URL ?? "http://localhost:8080",

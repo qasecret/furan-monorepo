@@ -18,17 +18,15 @@ const REPO = "https://github.com/qasecret/furan-monorepo";
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Self-hosted visual regression testing"
-      description="Furan compares the screenshots your tests take against approved baselines and puts every change in front of a reviewer, on your own servers."
+      title="Self-hosted visual testing"
+      description="Self-hosted visual testing. Furan catches visual regressions by comparing the screenshots your tests take against approved baselines and putting every change in front of a reviewer, on your own servers."
     >
       <main>
         <header className={styles.hero}>
           <div className={`container ${styles.heroInner}`}>
             <div>
               <p className={styles.eyebrow}>Self-hosted · Apache-2.0</p>
-              <h1 className={styles.title}>
-                Visual regression testing you host yourself
-              </h1>
+              <h1 className={styles.title}>Visual testing you host yourself</h1>
               <p className={styles.lede}>
                 Furan compares every screenshot your tests take against an
                 approved baseline and puts each change in front of a reviewer.
