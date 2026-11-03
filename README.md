@@ -25,7 +25,7 @@ every pixel change in a fast dashboard, on infrastructure you control.
 
 <br>
 
-<img src="docs/images/demo-03-diff.png" alt="Furan diff viewer showing baseline and current screenshots side by side, with the changed regions highlighted and a 2.01% pixel diff, 2 regions, Minor severity summary" width="900">
+<img src="docs/images/demo-03-diff.png" alt="Furan diff viewer showing baseline and current screenshots of a pricing page side by side, with the changed region highlighted and a 1.10% pixel diff, 1 region, Minor severity summary" width="900">
 
 </div>
 
@@ -87,7 +87,7 @@ every pixel change in a fast dashboard, on infrastructure you control.
 - **OpenAPI 3.1** spec at `GET /openapi.json`, with an interactive API reference at `/api/docs`.
 
 <p align="center">
-  <img src="docs/images/demo-02-review.png" alt="Furan review queue listing recent batch runs, one unresolved and one passed, with a per-checkpoint results table" width="900">
+  <img src="docs/images/demo-02-review.png" alt="A Furan batch with two recent batch runs, one unresolved and one passed, and its tests listed with a screenshot for each step" width="900">
 </p>
 
 ## 🚀 Quick start

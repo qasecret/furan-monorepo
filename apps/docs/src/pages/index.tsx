@@ -95,7 +95,7 @@ export default function Home(): ReactNode {
             <Screenshot
               src="/img/demo-review.png"
               lazy
-              alt="A batch in the Furan dashboard: recent batch runs on the left, and the unresolved pricing test with its screenshot on the right."
+              alt="A batch in the Furan dashboard: recent batch runs on the left, and its tests on the right with a screenshot for each step."
             />
           </div>
         </section>
