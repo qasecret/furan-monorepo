@@ -140,3 +140,23 @@ describe("ContextualHeader: the review loop", () => {
     ).toBe("/projects/p1/builds/b1?status=failed#run-r1");
   });
 });
+
+describe("ContextualHeader: a narrow header", () => {
+  // At 1024 px with the sidebar open the actions leave the left side about
+  // 120 px: the status badge used to be painted under "N left in batch".
+  test("the left side clips instead of overlapping, and the status keeps its width", () => {
+    renderHeader(loop());
+    const header = screen.getByTestId("contextual-header");
+    const left = header.firstElementChild!;
+    expect(left.className).toContain("overflow-hidden");
+    const badge = screen.getByText("Unresolved");
+    expect(badge.closest(".shrink-0")).not.toBeNull();
+  });
+
+  test("the left-in-batch count is visible from xl up and always read out", () => {
+    renderHeader(loop());
+    const remaining = screen.getByTestId("header-loop-remaining");
+    expect(remaining.className).toMatch(/(^|\s)sr-only(\s|$)/);
+    expect(remaining.className).toContain("xl:not-sr-only");
+  });
+});

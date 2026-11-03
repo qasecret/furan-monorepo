@@ -681,6 +681,10 @@ describe("StageStates: the copy (spec §8)", () => {
     expect(within(message).getByText("Save as baseline").tagName).toBe(
       "STRONG",
     );
+    // One flex item: the card is a flex row, and loose text beside the
+    // <strong> would lay out as three squeezed columns.
+    expect(message.children).toHaveLength(1);
+    expect(message.firstElementChild!.tagName).toBe("SPAN");
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -745,7 +749,10 @@ describe("StageStates: the copy (spec §8)", () => {
         onRetry={() => {}}
       />,
     );
-    const message = screen.getByText("No diff image was kept for this step.");
+    const message = screen.getByText(
+      "No diff image was kept for this step.",
+    ).parentElement!;
+    expect(message.tagName).toBe("P");
     expect(message.className).toContain("pointer-events-none");
     expect(message.className).not.toContain("pointer-events-auto");
     const retryCard = screen.getByRole("button", {

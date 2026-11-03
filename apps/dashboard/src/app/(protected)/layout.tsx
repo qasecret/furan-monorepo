@@ -67,6 +67,13 @@ export default async function ProtectedLayout({
   if (me.status === 403) {
     redirect("/login?reason=account_inactive");
   }
+  // The JWT cookie is present but the API refuses it: it expired (7 days), or
+  // it was signed for a user this install doesn't have (a reinstall with the
+  // same JWT_SECRET). A guest shell would only say "No project assigned", so
+  // send the user to sign in again; signing in replaces the cookie.
+  if (me.status === 401) {
+    redirect("/login");
+  }
   const userRole: Me["role"] = me.data?.role ?? "guest";
   const userEmail = me.data?.email ?? "";
   const userInitial = (me.data?.email ?? me.data?.role ?? "U")
