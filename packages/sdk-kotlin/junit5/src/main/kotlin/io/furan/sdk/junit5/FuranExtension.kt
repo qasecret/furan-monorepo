@@ -7,6 +7,7 @@ import io.furan.sdk.FuranConfigException
 import io.furan.sdk.FuranSuiteException
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
+import io.furan.sdk.endRunAfterFailure
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
@@ -27,7 +28,7 @@ import org.junit.jupiter.api.extension.ParameterResolver
  *     // beforeEach calls furan.open(context.displayName) and stores the
  *     // Furan in the ExtensionContext.Store. The parameter resolver returns
  *     // the stored instance. afterEach calls furan.close() on success or
- *     // furan.abort() on test failure.
+ *     // ends the run with endRunAfterFailure() on test failure.
  *     //
  *     // To use this path, store a Furan instance in the Store before
  *     // beforeEach runs (e.g. via @BeforeEach + store.put(FURAN_KEY, furan))
@@ -122,8 +123,9 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
 
     /**
      * Closes or aborts the open `Furan` run depending on test outcome.
-     * If [ExtensionContext.executionException] is present the test failed;
-     * `furan.abort()` is called to mark the run as aborted on the server.
+     * If [ExtensionContext.executionException] is present the test failed,
+     * and [endRunAfterFailure] ends the run: a `snapshotAndAwait` verdict
+     * closes it so it stays reviewable, any other failure aborts it.
      * Otherwise `furan.close()` is called. If [FailOnDiff.AfterEach] is
      * configured, `close()` may throw [io.furan.sdk.FuranDiffException],
      * which propagates as a JUnit5 assertion failure on the test.
@@ -146,7 +148,11 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
             }
         }
         if (context.executionException.isPresent) {
-            runCatching { invokeMethod(furan, "abort", emptyArray(), emptyArray()) }
+            endRunAfterFailure(
+                context.executionException.get(),
+                close = { invokeMethod(furan, "close", emptyArray(), emptyArray()) },
+                abort = { invokeMethod(furan, "abort", emptyArray(), emptyArray()) },
+            )
         } else {
             val result = invokeMethod(furan, "close", emptyArray(), emptyArray())
             // Tier 1.5: stash each successful close()'s RunResult on the

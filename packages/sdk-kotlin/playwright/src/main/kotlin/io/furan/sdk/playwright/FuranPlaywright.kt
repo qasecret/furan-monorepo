@@ -9,6 +9,7 @@ import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
+import io.furan.sdk.endRunAfterFailure
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -54,7 +55,7 @@ class FuranPlaywright(val config: FuranConfig, private val page: Page) {
     companion object {
         /**
          * Convenience factory: opens a run, runs [block], closes on success,
-         * aborts on exception. Returns the block's result.
+         * and on exception ends the run with [endRunAfterFailure]. Returns the block's result.
          *
          * ```kotlin
          * FuranPlaywright.use(config, page, "MyTest") { furan ->
@@ -70,7 +71,7 @@ class FuranPlaywright(val config: FuranConfig, private val page: Page) {
                 furan.close()
                 result
             } catch (e: Throwable) {
-                runCatching { furan.abort() }
+                endRunAfterFailure(e, close = { furan.close() }, abort = { furan.abort() })
                 throw e
             }
         }
