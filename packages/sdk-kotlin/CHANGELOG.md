@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v5.0.0...sdk/v5.1.0) (2026-11-03)
+
+
+### Features
+
+* **sdk:** group a CI pipeline's tests into one batch with FURAN_CI_BUILD_ID ([#531](https://github.com/qasecret/furan-monorepo/issues/531)) ([38c35b9](https://github.com/qasecret/furan-monorepo/commit/38c35b9ee612b848388190ecf6d36b2ba0ab77ae))
+
+
+### Bug Fixes
+
+* **sdk:** keep a run reviewable when snapshotAndAwait reports its verdict ([#530](https://github.com/qasecret/furan-monorepo/issues/530)) ([1004739](https://github.com/qasecret/furan-monorepo/commit/10047393c1d7f2f2fd3284c34913a27e55f91bfb))
+
 ## [5.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.3.0...sdk/v5.0.0) (2026-11-02)
 
 
