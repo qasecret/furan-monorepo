@@ -18,8 +18,9 @@ jobs:
           FURAN_API_URL: ${{ secrets.FURAN_API_URL }}
           FURAN_API_TOKEN: ${{ secrets.FURAN_API_TOKEN }}
           FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
-          FURAN_BUILD_ID: ${{ github.sha }}
+          FURAN_CI_BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
+          FURAN_PARENT_BRANCH: ${{ github.base_ref }}
         run: ./gradlew test --tests "*VisualTest*"
 
   # A JS project: run the tests that write PNGs, then upload them. Each folder

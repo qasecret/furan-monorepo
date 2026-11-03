@@ -21,7 +21,7 @@ Using another CI system? See the [Jenkins](./jenkins.md) and
     FURAN_API_URL: ${{ secrets.FURAN_API_URL }}
     FURAN_API_TOKEN: ${{ secrets.FURAN_API_TOKEN }}
     FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
-    FURAN_BUILD_ID: ${{ github.sha }}
+    FURAN_CI_BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
     FURAN_PARENT_BRANCH: ${{ github.base_ref }}
 ```
@@ -34,14 +34,20 @@ Three repository (or org-level) secrets are required.
 
 | Secret             | Source                                                             |
 | ------------------ | ------------------------------------------------------------------ |
-| `FURAN_API_URL`    | Your self-hosted Furan URL, e.g. `https://furan.your-domain.com`   |
+| `FURAN_API_URL`    | Your Furan api, e.g. `https://furan.your-domain.com/api`           |
 | `FURAN_API_TOKEN`  | Mint at `/account/tokens`: SDK & CI access, this project (see 1.1) |
 | `FURAN_PROJECT_ID` | UUID from the project URL: `/projects/<UUID>`                      |
 
-The `FURAN_BUILD_ID`, `FURAN_BRANCH`, and `FURAN_PARENT_BRANCH` env vars in the
-snippet above are **not** secrets — they come from `github.sha` /
+The `FURAN_CI_BUILD_ID`, `FURAN_BRANCH`, and `FURAN_PARENT_BRANCH` env vars in
+the snippet above are **not** secrets — they come from `github.run_id` /
 `github.head_ref` / `github.base_ref` and are what Furan groups runs by and
-resolves baselines against. `github.base_ref` is set only on `pull_request`
+resolves baselines against. Every test of the workflow run, in every job and
+matrix shard, sends the same `FURAN_CI_BUILD_ID`, so the whole run is one batch;
+a re-run attempt gets a fresh one. `FURAN_CI_BUILD_ID` needs SDK 5.1 or later:
+on older versions leave it out (each test then becomes its own batch). Don't set
+`FURAN_BUILD_ID` to a commit SHA or run number: it takes the id (a UUID) of a
+Furan build that already exists, and anything else fails the run's
+configuration. `github.base_ref` is set only on `pull_request`
 events (empty on a push), so on a branch push no parent is sent and baseline
 resolution falls back to the default branch — exactly as before.
 
@@ -52,7 +58,7 @@ secret** (or use `gh secret set FURAN_API_TOKEN`).
 
 A CI secret can leak (a fork's logs, a compromised runner), so give the token
 only what this workflow needs. In the dashboard's create-token dialog
-(`/account/tokens`, or **Admin → API Keys** for admins):
+(`/account/tokens`, or **Admin → API Tokens** for admins):
 
 - **Access: SDK & CI** (the default). It creates builds and runs, uploads
   screenshots and reads results. With `saveNewTests` it saves the first baseline
@@ -107,7 +113,7 @@ install URL after accepting (`/settings/installations/<id>`) or in the
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.github.qasecret:furan-selenium:4.0.0")
+  testImplementation("io.github.qasecret:furan-selenium:5.1.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -134,18 +140,20 @@ class CheckoutTest {
     val driver = ChromeDriver(ChromeOptions().apply {
       addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
     })
-    val furan = Furan(FuranConfig.fromEnv(), driver)
     try {
-      driver.get("https://staging.example.com/checkout")
-      furan.snapshot("checkout-step-1")
-    } finally { furan.close(); driver.quit() }
+      Furan.use(FuranConfig.fromEnv(), driver, "checkout flow") { furan ->
+        driver.get("https://staging.example.com/checkout")
+        furan.snapshot("checkout-step-1")
+      }
+    } finally { driver.quit() }
   }
 }
 ```
 
 `FuranConfig.fromEnv()` reads `FURAN_API_URL`, `FURAN_API_TOKEN`,
-`FURAN_PROJECT_ID`, `FURAN_BUILD_ID`, `FURAN_BRANCH` from the process env —
-the same vars set in step 1.
+`FURAN_PROJECT_ID`, `FURAN_CI_BUILD_ID`, `FURAN_BRANCH` and
+`FURAN_PARENT_BRANCH` from the process env — the same vars set in the quick
+start.
 
 On GitHub Actions it also detects the repository (`GITHUB_REPOSITORY`), the pull
 request number and the pull request's head commit (from the event file at
@@ -186,20 +194,22 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 
 ## 6. Troubleshooting
 
-| Symptom                                        | Likely cause                                                                                                                                                                                           |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `401 unauthorized` from SDK                    | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                                                                                               |
-| `401 token_expired`                            | The token's lifetime is over: mint a replacement at `/account/tokens` and update the `FURAN_API_TOKEN` secret                                                                                          |
-| `403 token_project_mismatch`                   | The token is bound to a different project than `FURAN_PROJECT_ID`                                                                                                                                      |
-| `403 insufficient_scope`                       | A read-only token tried to upload or approve: mint an SDK & CI token                                                                                                                                   |
-| `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                                                                                            |
-| `FuranNoBaselineException` on a first run      | Expected — the test has no baseline yet. Approve the run in the dashboard (Save as baseline), or set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true` to tolerate first runs in CI |
-| Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                                                                                    |
-| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL; otherwise see check 6 in [github-app.md](./github-app.md#5-check-it-works)                                    |
-| `furan/baselines` check stays `pending`        | A test of the build is still `running`: diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                                          |
-| SDK build can't resolve `io.github.qasecret:*` | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin`                                                                  |
+| Symptom                                                         | Likely cause                                                                                                                                                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `401 unauthorized` from SDK                                     | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                                                                                               |
+| `401 token_expired`                                             | The token's lifetime is over: mint a replacement at `/account/tokens` and update the `FURAN_API_TOKEN` secret                                                                                          |
+| `403 token_project_mismatch`                                    | The token is bound to a different project than `FURAN_PROJECT_ID`                                                                                                                                      |
+| `403 insufficient_scope`                                        | A read-only token tried to upload or approve: mint an SDK & CI token                                                                                                                                   |
+| `404 project not found`                                         | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                                                                                            |
+| `FuranNoBaselineException` on a first run                       | Expected — the test has no baseline yet. Approve the run in the dashboard (Save as baseline), or set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true` to tolerate first runs in CI |
+| Chrome fails to start in CI                                     | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                                                                                    |
+| Sticky comment not appearing on PR                              | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL; otherwise see check 6 in [github-app.md](./github-app.md#5-check-it-works)                                    |
+| `furan/baselines` check stays `pending`                         | A test of the build is still `running`: diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                                          |
+| `FuranConfigException: FURAN_BUILD_ID must be a Furan build id` | `FURAN_BUILD_ID` was set to a commit SHA or run number. Use `FURAN_CI_BUILD_ID` to group a workflow run's tests                                                                                        |
+| Every test is its own batch                                     | `FURAN_CI_BUILD_ID` is not set, or the SDK is older than 5.1                                                                                                                                           |
 
-For deeper debugging, hit `GET /projects/<id>/runs/<runId>/events` (SSE) or
+For deeper debugging, read the run with `GET <FURAN_API_URL>/runs/<runId>`, follow
+its events with `GET <FURAN_API_URL>/api/v1/runs/<runId>/events` (SSE), or
 inspect the `test_runs` and `screenshots` tables directly.
 
 ## JavaScript / TypeScript: the `furan upload` Action

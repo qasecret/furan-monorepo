@@ -208,7 +208,7 @@ class FuranImages(val config: FuranConfig) {
             buildId?.let { return it }
             val build = client.createBuild(
                 CreateBuildRequest(
-                    ciBuildId = config.buildId,
+                    ciBuildId = config.ciBuildId,
                     branchName = config.branchName,
                     name = config.name,
                     properties = config.properties.takeIf { it.isNotEmpty() },
