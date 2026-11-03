@@ -60,8 +60,8 @@ CI's own variables. Every job and shard of one pipeline lands in **one batch**;
 a re-run attempt gets a fresh one. Set the `FURAN_*` variable to override any
 of them.
 
-**Tokens.** The packages use only Furan's REST API, so a personal access token
-works, and so will an `sdk`-scoped token once scoped tokens ship. Store it as a
+**Tokens.** The packages use only Furan's REST API: mint the token with
+**Access: SDK & CI**, bound to the project in `FURAN_PROJECT_ID`. Store it as a
 CI secret; it is never printed (`--dry-run` shows it masked).
 
 ## `furan upload`
@@ -123,6 +123,14 @@ Boxes are in screenshot pixels. The sidecar's regions add to `--ignore`, and
 its `matchLevel` (`Strict`, `Layout`, `Content`, `IgnoreColors`, `Dynamic`)
 wins over `--match-level`. An unknown key or a bad box is an error, so a typo
 never silently drops a region.
+
+**What changes the verdict today.** Only `ignore` regions do. `layout`,
+`content` and `floating` regions are accepted and stored with the step, but the
+comparison does not use them yet. Every match level compares pixels like
+`Strict`: `Layout` relaxes the comparison only with the page's element map,
+which the Kotlin SDK's Selenium and Playwright adapters send and these packages
+don't. Mask dynamic areas with `ignore`, or raise the project's diff threshold
+(project Settings → Diff behavior).
 
 **When regions take effect:** a region masks diffs **once the step is
 approved**. Approving a step saves its regions with the new baseline, and they
@@ -208,7 +216,8 @@ test("adds an item", async ({ page, furan }) => {
 - Screenshots are taken with animations disabled, the caret hidden and
   `scale: "css"`. `ignore`, `layout` and `content` take locators or boxes; a
   locator's elements are found at screenshot time, so the regions follow the
-  page's layout. The browser label is `playwright-<browser>` and the viewport
+  page's layout. Only `ignore` changes the verdict today (see
+  [what changes the verdict](#ignore-regions-and-per-step-options)). The browser label is `playwright-<browser>` and the viewport
   label is the page's viewport size.
 
 **One batch per run.** In CI every worker joins the pipeline's batch on its

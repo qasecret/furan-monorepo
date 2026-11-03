@@ -22,7 +22,9 @@ the first boot, from `FURAN_BOOTSTRAP_ADMIN_PASSWORD` (default
 
 **The dashboard loads, but its data never appears (or an action says "Could not reach the API").** The browser is loading the dashboard but the API host isn't reachable from your browser. Check that `NEXT_PUBLIC_API_URL` in `.env` matches where you're actually serving the API — for the default Compose install that's `http://localhost:3000`.
 
-**`docker compose ... up -d` fails with port conflicts.** The default Compose stack binds ports `3000` (api), `3001` (dashboard), `5432` (postgres), `6379` (redis), and `9000` / `9001` (minio). If you already have something on those ports, either stop it or edit the port mappings in `infra/docker/compose.yml`.
+**`docker compose ... up -d` fails with port conflicts.** The default Compose stack publishes only ports `3000` (api) and `3001` (dashboard); Postgres, Redis and MinIO stay on the Compose network. If you already have something on those ports, either stop it or edit the port mappings in `infra/docker/compose.yml`.
+
+**The api keeps restarting with `startup_failed` … `TypeError: Invalid URL`.** `POSTGRES_PASSWORD` contains a character that breaks the database URL the api is given, typically a `/` from a base64 value. Use a hex password (`openssl rand -hex 24`). Postgres keeps the password it was first started with, so on a fresh install remove the volume (`docker compose … down -v`) before `up` again; on an install with data, change the password inside Postgres first (`ALTER USER furan PASSWORD '…'`).
 
 **API exits at boot with `FURAN_BOOTSTRAP_ADMIN_EMAIL must be replaced from .env.example placeholder` (or the same for `_PASSWORD`).** You forgot to edit the two new keys at the top of `.env`. Either replace `change-me` / `change-me-run: openssl rand -hex 24` with real values (the API will then seed a first admin) — or remove both lines entirely and seed via the `seed-admin` CLI (see [Adding more admins or resetting a password](../install/compose.md#adding-more-admins-or-resetting-a-password)).
 

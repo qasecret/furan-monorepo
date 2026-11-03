@@ -53,8 +53,9 @@ Generate strong secrets:
 # JWT_SECRET (must be ≥32 chars — the api fails closed if shorter)
 openssl rand -hex 32
 
-# Postgres + MinIO passwords (any high-entropy value)
-node -e "console.log(require('crypto').randomBytes(24).toString('base64'))"
+# Postgres + MinIO passwords: hex, not base64. The Postgres password goes into
+# DATABASE_URL unescaped, and a base64 '/' breaks the URL.
+openssl rand -hex 24
 ```
 
 Paste each value into the matching key in `.env`. The shipping defaults
