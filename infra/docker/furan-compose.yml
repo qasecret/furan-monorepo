@@ -276,9 +276,16 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    # nginx resolves `api` and `dashboard` once, at start. An upgrade recreates
+    # them with new addresses, so without `restart: true` nginx kept proxying
+    # to the old ones and every request answered 502 until it was restarted.
     depends_on:
-      - api
-      - dashboard
+      api:
+        condition: service_started
+        restart: true
+      dashboard:
+        condition: service_started
+        restart: true
     ports:
       - "${FURAN_BIND:-0.0.0.0}:${FURAN_HTTP_PORT:-8080}:80"
     configs:
