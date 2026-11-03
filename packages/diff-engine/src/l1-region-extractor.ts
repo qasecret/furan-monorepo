@@ -1,5 +1,6 @@
 import { PNG } from "pngjs";
 
+import type { IgnoreArea } from "./masking.js";
 import type { DiffRegion, Severity } from "./types.js";
 
 /**
@@ -35,9 +36,21 @@ export interface ExtractOptions {
    *  ranked by tile-count (a magnitude proxy) and only the top N survive,
    *  so a busy page yields a clean, scannable handful rather than 60 rows. */
   maxRegions?: number;
+  /** Areas whose pixels are not compared, the same boxes L1 masks. A change
+   *  inside one never makes a region. */
+  ignoreAreas?: ReadonlyArray<IgnoreArea>;
+  /** When no cluster clears the noise floor but some pixels differ, return
+   *  the small changes instead of nothing: one `cosmetic` region per group of
+   *  touching changed tiles, boxed tightly around its changed pixels. The
+   *  engine sets it for a step that fails, so a failing step always says
+   *  where it changed (a timestamp, a price) and auto rules have a region to
+   *  match. */
+  smallChangesWhenEmpty?: boolean;
 }
 
-const DEFAULTS: Required<ExtractOptions> = {
+const DEFAULTS: Required<
+  Omit<ExtractOptions, "ignoreAreas" | "smallChangesWhenEmpty">
+> = {
   // 48×48 tile (2304 px). Bigger than 32 dilutes anti-aliasing + sub-
   // pixel font noise enough that flood-fill stops bridging unrelated
   // diffs into one whole-image blob. Reviewer affordance is unchanged
@@ -83,6 +96,57 @@ type PixelCluster = {
   tileCount: number;
 };
 
+/** The tiles of one 4-connected component of `dirty` tiles. */
+function tileComponents(
+  dirty: Uint8Array,
+  cols: number,
+  rows: number,
+): number[][] {
+  const visited = new Uint8Array(cols * rows);
+  const components: number[][] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < dirty.length; start++) {
+    if (!dirty[start] || visited[start]) continue;
+    const tiles: number[] = [];
+    stack.push(start);
+    visited[start] = 1;
+    while (stack.length > 0) {
+      const idx = stack.pop();
+      if (idx === undefined) break;
+      tiles.push(idx);
+      const cr = (idx / cols) | 0;
+      const cc = idx - cr * cols;
+      const neighbors = [
+        cr > 0 ? idx - cols : -1,
+        cr < rows - 1 ? idx + cols : -1,
+        cc > 0 ? idx - 1 : -1,
+        cc < cols - 1 ? idx + 1 : -1,
+      ];
+      for (const n of neighbors) {
+        if (n >= 0 && dirty[n] && !visited[n]) {
+          visited[n] = 1;
+          stack.push(n);
+        }
+      }
+    }
+    components.push(tiles);
+  }
+  return components;
+}
+
+function inIgnoreArea(
+  x: number,
+  y: number,
+  areas: ReadonlyArray<IgnoreArea>,
+): boolean {
+  for (const a of areas) {
+    if (x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function extractL1PixelRegions(
   baselineBytes: Buffer,
   candidateBytes: Buffer,
@@ -116,8 +180,14 @@ export function extractL1PixelRegions(
   const rows = Math.ceil(H / tile);
   const dirty = new Uint8Array(cols * rows);
 
-  // Count diff pixels per tile in one pass.
+  // Count diff pixels per tile in one pass, and box each tile's changed
+  // pixels (for the small-change fallback).
   const tileCounts = new Uint32Array(cols * rows);
+  const tileMinX = new Int32Array(cols * rows).fill(W);
+  const tileMinY = new Int32Array(cols * rows).fill(H);
+  const tileMaxX = new Int32Array(cols * rows).fill(-1);
+  const tileMaxY = new Int32Array(cols * rows).fill(-1);
+  const ignoreAreas = options.ignoreAreas ?? [];
   const b = baseline.data;
   const c = candidate.data;
   const tol = opts.channelTolerance;
@@ -134,13 +204,18 @@ export function extractL1PixelRegions(
       const cG = c[i + 1] ?? 0;
       const cB = c[i + 2] ?? 0;
       if (
-        Math.abs(bR - cR) > tol ||
-        Math.abs(bG - cG) > tol ||
-        Math.abs(bB - cB) > tol
+        (Math.abs(bR - cR) > tol ||
+          Math.abs(bG - cG) > tol ||
+          Math.abs(bB - cB) > tol) &&
+        (ignoreAreas.length === 0 || !inIgnoreArea(x, y, ignoreAreas))
       ) {
         const tileCol = (x / tile) | 0;
         const tIdx = tileRow * cols + tileCol;
         tileCounts[tIdx] = (tileCounts[tIdx] ?? 0) + 1;
+        if (x < tileMinX[tIdx]!) tileMinX[tIdx] = x;
+        if (y < tileMinY[tIdx]!) tileMinY[tIdx] = y;
+        if (x > tileMaxX[tIdx]!) tileMaxX[tIdx] = x;
+        if (y > tileMaxY[tIdx]!) tileMaxY[tIdx] = y;
       }
     }
   }
@@ -151,51 +226,36 @@ export function extractL1PixelRegions(
   }
 
   // Flood-fill 4-connected tile components.
-  const visited = new Uint8Array(cols * rows);
   const clusters: PixelCluster[] = [];
-  const stack: number[] = [];
-  for (let r = 0; r < rows; r++) {
-    for (let cIdx = 0; cIdx < cols; cIdx++) {
-      const start = r * cols + cIdx;
-      if (!dirty[start] || visited[start]) continue;
-      let minR = r,
-        maxR = r,
-        minC = cIdx,
-        maxC = cIdx,
-        size = 0;
-      stack.push(start);
-      visited[start] = 1;
-      while (stack.length > 0) {
-        const idx = stack.pop();
-        if (idx === undefined) break;
-        const cr = (idx / cols) | 0;
-        const cc = idx - cr * cols;
-        size++;
-        if (cr < minR) minR = cr;
-        if (cr > maxR) maxR = cr;
-        if (cc < minC) minC = cc;
-        if (cc > maxC) maxC = cc;
-        const neighbors = [
-          cr > 0 ? idx - cols : -1,
-          cr < rows - 1 ? idx + cols : -1,
-          cc > 0 ? idx - 1 : -1,
-          cc < cols - 1 ? idx + 1 : -1,
-        ];
-        for (const n of neighbors) {
-          if (n >= 0 && dirty[n] && !visited[n]) {
-            visited[n] = 1;
-            stack.push(n);
-          }
-        }
-      }
-      if (size < opts.minClusterTiles) continue;
-
-      const x = minC * tile;
-      const y = minR * tile;
-      const width = Math.min((maxC + 1) * tile, W) - x;
-      const height = Math.min((maxR + 1) * tile, H) - y;
-      clusters.push({ x, y, width, height, tileCount: size });
+  for (const tiles of tileComponents(dirty, cols, rows)) {
+    if (tiles.length < opts.minClusterTiles) continue;
+    let minR = rows,
+      maxR = -1,
+      minC = cols,
+      maxC = -1;
+    for (const idx of tiles) {
+      const cr = (idx / cols) | 0;
+      const cc = idx - cr * cols;
+      if (cr < minR) minR = cr;
+      if (cr > maxR) maxR = cr;
+      if (cc < minC) minC = cc;
+      if (cc > maxC) maxC = cc;
     }
+    const x = minC * tile;
+    const y = minR * tile;
+    const width = Math.min((maxC + 1) * tile, W) - x;
+    const height = Math.min((maxR + 1) * tile, H) - y;
+    clusters.push({ x, y, width, height, tileCount: tiles.length });
+  }
+
+  if (clusters.length === 0 && options.smallChangesWhenEmpty) {
+    return smallChangeRegions(
+      tileCounts,
+      { tileMinX, tileMinY, tileMaxX, tileMaxY },
+      cols,
+      rows,
+      opts.maxRegions,
+    );
   }
 
   // Rank by magnitude (tile-count), keep the top N, assign severity tiers.
@@ -209,6 +269,53 @@ export function extractL1PixelRegions(
     // "l1_pixel" (vs "l1", the synthetic whole-diff source) tags these as
     // image-derived pixel-cluster regions — the primary "what changed"
     // signal surfaced in the diff viewer's region list + stepper (ADR-047).
+    source: "l1_pixel",
+  }));
+}
+
+/**
+ * The fallback of {@link ExtractOptions.smallChangesWhenEmpty}: every group of
+ * touching tiles with any changed pixel, boxed tightly around those pixels.
+ * Largest (by changed-pixel count) first.
+ */
+function smallChangeRegions(
+  tileCounts: Uint32Array,
+  boxes: {
+    tileMinX: Int32Array;
+    tileMinY: Int32Array;
+    tileMaxX: Int32Array;
+    tileMaxY: Int32Array;
+  },
+  cols: number,
+  rows: number,
+  maxRegions: number,
+): DiffRegion[] {
+  const changed = new Uint8Array(cols * rows);
+  for (let i = 0; i < changed.length; i++) {
+    if ((tileCounts[i] ?? 0) > 0) changed[i] = 1;
+  }
+  const groups = tileComponents(changed, cols, rows).map((tiles) => {
+    let x0 = Infinity,
+      y0 = Infinity,
+      x1 = -Infinity,
+      y1 = -Infinity,
+      pixels = 0;
+    for (const idx of tiles) {
+      x0 = Math.min(x0, boxes.tileMinX[idx]!);
+      y0 = Math.min(y0, boxes.tileMinY[idx]!);
+      x1 = Math.max(x1, boxes.tileMaxX[idx]!);
+      y1 = Math.max(y1, boxes.tileMaxY[idx]!);
+      pixels += tileCounts[idx] ?? 0;
+    }
+    return { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1, pixels };
+  });
+  groups.sort((a, b) => b.pixels - a.pixels);
+  return groups.slice(0, maxRegions).map((g, i) => ({
+    id: `l1-pixel-${i}`,
+    severity: "cosmetic",
+    category: "image",
+    bbox: { x: g.x, y: g.y, width: g.width, height: g.height },
+    description: `Small pixel change (${g.pixels} px, ${g.width}×${g.height})`,
     source: "l1_pixel",
   }));
 }

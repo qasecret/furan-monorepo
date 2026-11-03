@@ -158,4 +158,57 @@ describe("extractL1PixelRegions", () => {
     const minWidth = Math.min(...regions.map((r) => r.bbox.width));
     expect(minWidth).toBeGreaterThan(120);
   });
+
+  // A failing step must say where it changed even when the change is too
+  // small for a cluster (a timestamp, a price): the engine asks for it.
+  describe("smallChangesWhenEmpty", () => {
+    it("boxes a change below the noise floor tightly", () => {
+      const baseline = makeImage(256, 256, [255, 255, 255]);
+      const candidate = paintRect(baseline, 64, 64, 32, 20, [255, 0, 0]);
+      const regions = extractL1PixelRegions(baseline, candidate, {
+        smallChangesWhenEmpty: true,
+      });
+      expect(regions).toHaveLength(1);
+      expect(regions[0]).toMatchObject({
+        severity: "cosmetic",
+        source: "l1_pixel",
+        bbox: { x: 64, y: 64, width: 32, height: 20 },
+      });
+    });
+
+    it("returns separate small changes as separate regions", () => {
+      const baseline = makeImage(512, 256, [255, 255, 255]);
+      const one = paintRect(baseline, 10, 10, 20, 12, [0, 0, 0]);
+      const two = paintRect(one, 400, 200, 30, 10, [0, 0, 0]);
+      const regions = extractL1PixelRegions(baseline, two, {
+        smallChangesWhenEmpty: true,
+      });
+      expect(regions.map((r) => r.bbox)).toEqual([
+        { x: 400, y: 200, width: 30, height: 10 },
+        { x: 10, y: 10, width: 20, height: 12 },
+      ]);
+    });
+
+    it("leaves the clusters alone when one clears the noise floor", () => {
+      const baseline = makeImage(512, 512, [255, 255, 255]);
+      const big = paintRect(baseline, 100, 100, 200, 200, [255, 0, 0]);
+      const both = paintRect(big, 450, 450, 10, 10, [255, 0, 0]);
+      const regions = extractL1PixelRegions(baseline, both, {
+        smallChangesWhenEmpty: true,
+      });
+      expect(regions).toHaveLength(1);
+      expect(regions[0]!.severity).not.toBe("cosmetic");
+    });
+  });
+
+  it("never makes a region from a change inside an ignore area", () => {
+    const baseline = makeImage(256, 256, [255, 255, 255]);
+    const candidate = paintRect(baseline, 64, 64, 32, 20, [255, 0, 0]);
+    expect(
+      extractL1PixelRegions(baseline, candidate, {
+        smallChangesWhenEmpty: true,
+        ignoreAreas: [{ x: 60, y: 60, width: 40, height: 30 }],
+      }),
+    ).toEqual([]);
+  });
 });
