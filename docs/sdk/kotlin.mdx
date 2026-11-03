@@ -157,24 +157,21 @@ runnable JUnit 5 example.
 advertises `isNative`, so the engine uses its degraded path: one full-screen
 device screenshot per snapshot — no DOM, no element-map, and region selectors
 are not resolved (numeric ignore / strict regions still pass through).
-`browserName` is reported as `appium-<platform>` (`appium-android` /
-`appium-ios`), so the platforms keep separate baselines.
+The browser label is the session's platform (`android` / `ios`), or its
+browser for a browser session, so the platforms keep separate baselines.
 
 ```kotlin
 import io.appium.java_client.AppiumDriver
+import io.appium.java_client.android.options.UiAutomator2Options
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.appium.FuranAppium
-import org.openqa.selenium.remote.DesiredCapabilities
 import java.net.URI
 
-val caps = DesiredCapabilities().apply {
-    setCapability("platformName", "Android")
-    setCapability("appium:automationName", "UiAutomator2")
-    setCapability("appium:appPackage", "com.example.app")
-    setCapability("appium:appActivity", "com.example.app.MainActivity")
-}
+val options = UiAutomator2Options()
+    .setAppPackage("com.example.app")
+    .setAppActivity("com.example.app.MainActivity")
 // AppiumDriver is the base type FuranAppium takes; AndroidDriver / IOSDriver work too.
-val driver = AppiumDriver(URI("http://localhost:4723").toURL(), caps)
+val driver = AppiumDriver(URI("http://localhost:4723").toURL(), options)
 
 FuranAppium.use(FuranConfig.fromEnv(), driver, "checkout") { furan ->
     furan.snapshot("home")     // or snapshotAndAwait("home") to block on the diff

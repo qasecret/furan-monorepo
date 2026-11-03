@@ -23,8 +23,9 @@ import kotlin.time.Duration.Companion.seconds
  * ```
  *
  * Captures a full-screen native screenshot per snapshot (no DOM / element-map).
- * `browserName` is reported as `appium-<platform>` (`appium-android` /
- * `appium-ios`) so the platforms keep separate baselines (ADR-054).
+ * The browser label is the session's platform (`android` / `ios`), or its
+ * browser for a browser session, so the platforms keep separate baselines
+ * (see [AppiumSpecDriver.getDriverInfo]).
  *
  * [io.furan.sdk.FailOnDiff.AfterEach] (set on [FuranConfig.failOnDiff]) makes
  * [close] throw [io.furan.sdk.FuranDiffException] when the run ends non-passing.
