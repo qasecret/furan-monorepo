@@ -33,7 +33,7 @@ const sdkVersion = readFileSync(
 
 const config: Config = {
   title: "Furan",
-  tagline: "Self-hosted visual regression testing",
+  tagline: "Self-hosted visual testing",
   favicon: "img/furan-mark.svg",
 
   url: process.env.DOCS_SITE_URL ?? "http://localhost:8080",
@@ -66,7 +66,7 @@ const config: Config = {
           editUrl: ({ docPath }) => `${REPO}/edit/main/docs/${docPath}`,
         },
         blog: false,
-        pages: false,
+        // src/pages holds only the home page (index.tsx) at the root.
         theme: { customCss: "./src/css/custom.css" },
       } satisfies Preset.Options,
     ],
@@ -96,12 +96,46 @@ const config: Config = {
           label: "Docs",
           position: "left",
         },
+        {
+          to: "/getting-started/install",
+          label: "Getting started",
+          position: "left",
+        },
+        {
+          href: `${REPO}/blob/main/CHANGELOG.md`,
+          label: "Release notes",
+          position: "right",
+        },
         { href: REPO, label: "GitHub", position: "right" },
       ],
     },
     footer: {
       style: "light",
-      copyright: `Apache-2.0 · <a href="${REPO}">GitHub</a>`,
+      links: [
+        {
+          title: "Docs",
+          items: [
+            { label: "Getting started", to: "/getting-started/install" },
+            { label: "Production install", to: "/install/compose" },
+            { label: "Kotlin SDK", to: "/sdk/kotlin" },
+            { label: "CI", to: "/integrations/github-actions" },
+          ],
+        },
+        {
+          title: "Project",
+          items: [
+            { label: "GitHub", href: REPO },
+            { label: "Release notes", href: `${REPO}/blob/main/CHANGELOG.md` },
+            { label: "Security policy", href: `${REPO}/blob/main/SECURITY.md` },
+            { label: "Support", href: `${REPO}/blob/main/SUPPORT.md` },
+          ],
+        },
+        {
+          title: "License",
+          items: [{ label: "Apache-2.0", href: `${REPO}/blob/main/LICENSE` }],
+        },
+      ],
+      copyright: "Furan is open source under the Apache-2.0 license.",
     },
     prism: {
       theme: prismThemes.github,

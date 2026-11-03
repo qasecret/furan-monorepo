@@ -1,5 +1,5 @@
 ---
-slug: /
+slug: /overview
 sidebar_label: Overview
 title: Furan documentation
 ---
@@ -33,16 +33,21 @@ one-file install to its first reviewed diff in seven short pages:
 - [Storage backends](runbooks/storage-backends.md)
 - [Backup and restore](runbooks/restore-from-backup.md)
 - [Upgrade notes: per-step review](runbooks/review-model-upgrade.md)
+- [Upgrade notes: server reads](runbooks/server-reads-upgrade.md)
 - [Row-level security](runbooks/rls-enable.md)
 
 ## Send screenshots
 
 - [Kotlin SDK](sdk/kotlin.mdx): Selenium, Playwright and Appium
+- [JavaScript / TypeScript](integrations/javascript.md)
 - [REST API upload](sdk/rest.md)
 
 ## CI
 
 - [GitHub Actions](integrations/github-actions.md)
+- [GitLab CI](integrations/gitlab-ci.md)
+- [Jenkins](integrations/jenkins.md)
+- [GitHub App](integrations/github-app.md)
 
 ## Troubleshooting
 
