@@ -124,7 +124,7 @@ export FURAN_PROJECT_ID=<your project id>
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:5.0.0")
+testImplementation("io.github.qasecret:furan-selenium:5.1.0")
 ```
 
 ```kotlin

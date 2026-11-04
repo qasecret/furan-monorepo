@@ -187,7 +187,7 @@ unset. What gets posted, and how to check it, is in
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.github.qasecret:furan-selenium:5.0.0")
+  testImplementation("io.github.qasecret:furan-selenium:5.1.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
