@@ -52,6 +52,26 @@ The SDK and REST clients use the same port, under `/api`:
 export FURAN_API_URL=http://<host>:8080/api
 ```
 
+## Upgrading
+
+The file pins a release, so upgrade by downloading it again into the same
+directory and starting it. Your data stays in the Docker volumes, and
+migrations apply on start:
+
+```bash
+curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+docker compose -f furan-compose.yml up -d
+```
+
+Read the release's _Upgrading_ notes in the
+[changelog](https://github.com/qasecret/furan-monorepo/blob/main/CHANGELOG.md)
+first: some releases need a backup or a step of their own.
+
+If every page returns `502 Bad Gateway` after an upgrade, nginx is still
+pointing at the containers the upgrade replaced. Files downloaded before
+2026-11-04 don't restart it on their own:
+`docker compose -f furan-compose.yml restart nginx` fixes it.
+
 ## Something more permanent
 
 For a hardened install that generates its secrets, use

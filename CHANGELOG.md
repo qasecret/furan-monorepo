@@ -57,6 +57,10 @@ and `FURAN_CI_BUILD_ID` puts a CI pipeline's tests into one batch. See
 
 - From v1.1.34: applies one migration (0047, a column default only); no
   downtime needed. Back up first as usual.
+- One-file install: download `furan-compose.yml` again before `up -d`. With
+  a copy from before 2026-11-04 (including the one in the `v1.1.35` tag),
+  nginx keeps pointing at the replaced containers and every page returns 502
+  until you run `docker compose -f furan-compose.yml restart nginx`.
 - From v1.1.33 or earlier: also read [v1.1.34](#v1134--2026-11-03)'s upgrade
   notes (four migrations, Legacy tokens).
 
