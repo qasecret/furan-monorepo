@@ -50,7 +50,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@apidevtools/swagger-parser": "^10.1.0",
+    "@apidevtools/swagger-parser": "^13.1.0",
     "@furan/eslint-config": "workspace:*",
     "@furan/tsconfig": "workspace:*",
     "@trpc/client": "^11",
