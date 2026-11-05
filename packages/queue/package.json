@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@furan/config": "workspace:*",
-    "bullmq": "^5.34.0",
+    "bullmq": "^6.5.3",
     "ioredis": "^5.4.1"
   },
   "devDependencies": {
